@@ -1,0 +1,98 @@
+{
+    "id": "",
+    "module_type": "delayOff",
+    "category": "定时模块/延时关",
+    "name": "延时关 (Delay Off)",
+    "description": "延时关模块用于在输入信号消失后，保持输出信号一段时间再关闭。常用于在条件失效后维持设备运行一段时间。",
+    "keywords": [
+        "延时关",
+        "延时关闭",
+        "定时"
+    ],
+    "usage_guides": [
+        "延时关模块用延时一段时间再输出关信号。当输入信号变为False时，延时一定时间输出假信号(False)。",
+        "在参数设定中，可以选择天、小时、分、秒作为“时长”的时间单位。",
+        "其中时间最大值限制:单位为秒，最大2592000:单位为分，最大43200:单位为小时，最大720;单位为天，最大30。"
+    ],
+    "parameters_schema": {
+        "timeout": {
+            "type": "integer",
+            "description": "延时关的时长。",
+            "minimum": 0,
+            "default": 60
+        },
+        "timeoutFromInput": {
+            "type": "boolean",
+            "description": "延时关的时长是否由动态输入提供。",
+            "default": false
+        },
+        "timeoutUnits": {
+            "type": "string",
+            "description": "延时时长的单位。",
+            "enum": ["seconds", "minutes", "hours", "days"],
+            "default": "seconds"
+        },
+        "inputsCount": {
+            "type": "integer",
+            "description": "动态输入时输入端口数量（范围 1~2）。",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "输入",
+            "type": "boolean",
+            "description": "输入信号。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "时长",
+            "type": "integer",
+            "description": "延时时间。",
+            "condition": "timeoutFromInput == true"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "boolean",
+            "description": "输出结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "delayOff",
+            "name": "延时关",
+            "inputs": "{{inputsCount}}",
+            "outputs": 1,
+            "timeout": "{{timeout}}",
+            "timeoutFromInput": "{{timeoutFromInput}}",
+            "timeoutUnits": "{{timeoutUnits}}",
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "debugView": [
+                {
+                    "n": "O1: ",
+                    "v": ""
+                },
+                {
+                    "n": "left:",
+                    "v": ""
+                }
+            ],
+                "x": "{{__POS_X__}}",
+                "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

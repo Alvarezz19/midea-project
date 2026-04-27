@@ -1,0 +1,103 @@
+{
+    "id": "",
+    "module_type": "delayPulse",
+    "category": "定时模块/定时脉冲",
+    "name": "定时脉冲 (Delay Pulse)",
+    "description": "定时脉冲模块用于在产生触发信号后，输出一个固定时长的脉冲信号。无论输入信号持续多久，输出信号只保持设定的时长。",
+    "keywords": [
+        "定时脉冲",
+        "脉冲发生",
+        "单稳态触发",
+        "脉冲输出"
+    ],
+    "usage_guides": [
+        "当输入信号由无效变为有效时，输出信号立即变为有效。",
+        "输出信号保持有效的时间由timeout参数决定。",
+        "在脉冲输出期间，输入信号的变化不会影响输出。",
+        "脉冲时间结束后，输出信号自动复位为无效。",
+        "时间单位可为秒、分、小时或天，每个单位的数值为整数。",
+        "其中时间最大值限制:单位为秒，最大2592000:单位为分，最大43200:单位为小时，最大720;单位为天，最大30。"
+    ],
+    "parameters_schema": {
+        "timeout": {
+            "type": "integer",
+            "description": "脉冲持续的时长。",
+            "minimum": 0,
+            "default": 60
+        },
+        "timeoutFromInput": {
+            "type": "boolean",
+            "description": "脉冲时长是否由动态输入提供。",
+            "default": false
+        },
+        "timeoutUnits": {
+            "type": "string",
+            "description": "脉冲时长的单位。",
+            "enum": ["seconds", "minutes", "hours", "days"],
+            "default": "seconds"
+        },
+        "inputsCount": {
+            "type": "integer",
+            "description": "动态输入时输入端口数量（范围 1~2）。",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "输入",
+            "type": "boolean",
+            "description": "控制使能定时脉冲。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "时长",
+            "type": "integer",
+            "description": "输出真信号(true)的时间长度。",
+            "condition": "timeoutFromInput == true"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "boolean",
+            "description": "输出结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "delayPulse",
+            "name": "定时脉冲",
+            "inputs": "{{inputsCount}}",
+            "outputs": 1,
+            "timeout": "{{timeout}}",
+            "timeoutFromInput": "{{timeoutFromInput}}",
+            "timeoutUnits": "{{timeoutUnits}}",
+            "timeOutput": false,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "debugView": [
+                {
+                    "n": "O1: ",
+                    "v": ""
+                },
+                {
+                    "n": "left:",
+                    "v": ""
+                }
+            ],
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

@@ -1,0 +1,78 @@
+    {
+        "id": "",
+        "module_type": "mqttin",
+        "category": "变量模块/MQTT订阅",
+        "name": "MQTT订阅",
+        "description": "MQTT订阅模块用于通过MQTT协议订阅特定主题（Topic）的消息，并将接收到的数据传递给相应的节点。该模块支持JSON格式的Payload，其中包含序列号（seq）和节点数据（nodes）。每个节点数据包括节点名称（name）和值（value）。需要注意的是，Topic不支持通配符。在获取到有效订阅消息之前，节点将使用默认值或掉电保持值进行输出。如果同一个Topic有多个节点且QoS配置不同，默认使用第一个节点的QoS进行订阅（建议统一QoS以避免不确定性）。该模块广泛应用于物联网、远程监控和数据采集等场景，确保数据的实时性和可靠性。",
+        "keywords": [ "MQTT", "订阅", "主题", "Topic", "通配符", "默认值", "掉电保持值", "QoS", "质量服务", "Payload"],
+        "usage_guides": ["Topic不支持通配符",
+            "在获取到有效订阅消息前,节点将使用[默认值]或者[掉电保持值]进行输出",
+            "同一个Topic的多个节点如果QoS配置不一样,默认使用第1个节点配置的    QoS进行订阅(建议统一QoS,否则有不确定性)",
+            "Payload格式:  {\"seq\":123, \"nodes\":[{\"name\":\"Object\",\"value\":0}, ...]}",
+            "程序接收payload后会根据Object匹配对应节点,Object必须全局唯一"
+        ],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "MQTT订阅"
+            },
+            "objectName":{
+            "type": "string",
+            "description": "该模块在MQTT中的唯一名字"
+            },
+            "topic":{
+            "type": "string",
+            "description": "接收的MQTT订阅主题的名字"
+            },
+            "outputCount": {
+            "type": "integer",
+            "description": "输出端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            }
+
+        },
+
+        "ports_definition": {
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"输出",
+                    "condition":"always"
+
+                },
+                {
+                    "index": 1,
+                    "label":"更新计数",
+                    "type":"整数",
+                    "description":"输出更新的次数",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "topic": "{{topic}}",
+        "objectName": "{{objectName}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 0,
+        "outputs": "{{outputCount}}",
+        "type": "mqttin",
+        "qos": 0,
+        "defaultValue": 0,
+        "powerDownSave": false,
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}

@@ -1,0 +1,129 @@
+{
+    "id": "",
+    "module_type": "linear",
+    "category": "逻辑模块/数学变换",
+    "name": "线性变换 (Linear Transform)",
+    "description": "线性变换模块用于将输入信号按线性比例映射到新的数值范围。常用于量程转换、归一化或工程量换算。输入范围和输出范围均可配置为静态参数或通过外部信号动态提供。",
+    "keywords": [
+      "线性",
+      "比例映射",
+      "量程转换",
+      "归一化",
+      "数值变换"
+    ],
+    "usage_guides": [
+      "当传感器输出范围与控制逻辑所需范围不一致时，可使用该模块进行量程转换。",
+      "当输入信号的物理量程固定时，可使用静态输入范围。",
+      "当输入信号量程可能随工况变化时，可启用动态输入范围，通过连线提供起始和终止值。",
+      "当输出目标范围需要由外部逻辑控制时，可启用动态输出范围。"
+    ],
+    "parameters_schema": {
+      "inputD": {
+        "type": "boolean",
+        "description": "输入范围是否为动态输入。为 true 时，输入起始值和终止值通过连线提供。",
+        "default": false
+      },
+      "inputA": {
+        "type": "number",
+        "description": "输入范围起始值（inputD 为 false 时有效）。",
+        "default": 0
+      },
+      "inputB": {
+        "type": "number",
+        "description": "输入范围终止值（inputD 为 false 时有效）。",
+        "default": 100
+      },
+      "outputD": {
+        "type": "boolean",
+        "description": "输出范围是否为动态输入。为 true 时，输出起始值和终止值通过连线提供。",
+        "default": false
+      },
+      "outputX": {
+        "type": "number",
+        "description": "输出范围起始值（outputD 为 false 时有效）。",
+        "default": 0
+      },
+      "outputY": {
+        "type": "number",
+        "description": "输出范围终止值（outputD 为 false 时有效）。",
+        "default": 100
+      },
+      "inputsCount": {
+      "type": "integer",
+      "description": "动态输入时输入端口数量（可覆盖 1~5）。",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 1
+      }
+    },
+    "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,      
+        "label": "对象",
+        "type": "number",
+        "description": "需要进行线性转换的目标值 (Target Value)",
+        "condition": "always"
+      },
+      {
+        "index": 1,
+        "label": "输入起始",
+        "type": "number",
+        "description": "动态输入范围下限",
+        "condition": "inputD == true"
+      },
+      {
+        "index": 2,
+        "label": "输入终止",
+        "type": "number",
+        "description": "动态输入范围上限",
+        "condition": "inputD == true"
+      },
+      {
+        "index": 3,
+        "label": "输出起始",
+        "type": "number",
+        "description": "动态输出范围下限",
+        "condition": "outputD == true"
+      },
+      {
+        "index": 4,
+        "label": "输出终止",
+        "type": "number",
+        "description": "动态输出范围上限",
+        "condition": "outputD == true"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "输出",
+        "type": "number",
+        "description": "转换后的结果",
+        "condition": "always"
+      }
+    ]
+},
+
+    "template_json": {
+      "id": "{{__GEN_ID__}}",
+      "z": "{{__FLOW_ID__}}",
+      "type": "linear",
+      "name": "{{user_defined_name}}",
+      "inputs": "{{inputsCount}}",
+      "outputs": 1,
+      "inputD": "{{inputD}}",
+      "inputA": "{{inputA}}",
+      "inputB": "{{inputB}}",
+      "outputD": "{{outputD}}",
+      "outputX": "{{outputX}}",
+      "outputY": "{{outputY}}",
+      "outOfService": 0,
+      "outOfServiceValue": 0,
+      "inputsOption": "{{inputsOptionArray}}",
+      "x": "{{__POS_X__}}",
+      "y": "{{__POS_Y__}}",
+      "wires": "{{wiresArray}}"
+    }
+  }
+  

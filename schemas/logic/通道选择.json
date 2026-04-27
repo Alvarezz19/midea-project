@@ -1,0 +1,177 @@
+{
+    "id": "",
+    "module_type": "switch",
+    "category": "逻辑模块/通道选择",
+    "name": "通道选择 (Switch)",
+    "description": "通道选择模块用于从多个输入信号中选择输出一个信号。可配置通道数量，输入端口数量会随通道数动态变化。",
+    "keywords": [
+      "通道选择",
+      "开关",
+      "多路选择",
+      "信号选择",
+      "多输入"
+    ],
+    "usage_guides": [
+      "根据通道数量选择不同输入信号作为输出。",
+      "输入端口数量 = 通道数 + 1",
+      "通道数量可以手动设置，范围 2~16。",
+      "用于从多个信号中选择一个信号输出，常用于多路控制和信号切换场景。"
+    ],
+    "parameters_schema": {
+      "channels": {
+        "type": "integer",
+        "description": "通道数量。",
+        "minimum": 2,
+        "maximum": 16,
+        "default": 2
+      }
+    },
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "name": "通道选择",
+          "type": "integer",
+          "description": "选择通道n的输入作为输出。其中,0为通道0,1为通道1,以此类推。超出有效范围的值将按 0 处理。"
+        },
+        {
+          "index": 1,
+          "name": "通道0",
+          "type": "number",
+          "description": "通道 0 的输入信号。",
+          "condition": "channels >= 2"
+        },
+        {
+          "index": 2,
+          "name": "通道1",
+          "type": "number",
+          "description": "通道 1 的输入信号。",
+          "condition": "channels >= 2"
+        },
+        {
+          "index": 3,
+          "name": "通道2",
+          "type": "number",
+          "description": "通道 2 的输入信号。",
+          "condition": "channels >= 3"
+        },
+        {
+          "index": 4,
+          "name": "通道3",
+          "type": "number",
+          "description": "通道 3 的输入信号。",
+          "condition": "channels >= 4"
+        },
+        {
+          "index": 5,
+          "name": "通道4",
+          "type": "number",
+          "description": "通道 4 的输入信号。",
+          "condition": "channels >= 5"
+        },
+        {
+          "index": 6,
+          "name": "通道5",
+          "type": "number",
+          "description": "通道 5 的输入信号。",
+          "condition": "channels >= 6"
+        },
+        {
+          "index": 7,
+          "name": "通道6",
+          "type": "number",
+          "description": "通道 6 的输入信号。",
+          "condition": "channels >= 7"
+        },
+        {
+          "index": 8,
+          "name": "通道7",
+          "type": "number",
+          "description": "通道 7 的输入信号。",
+          "condition": "channels >= 8"
+        },
+        {
+          "index": 9,
+          "name": "通道8",
+          "type": "number",
+          "description": "通道 8 的输入信号。",
+          "condition": "channels >= 9"
+        },
+        {
+          "index": 10,
+          "name": "通道9",
+          "type": "number",
+          "description": "通道 9 的输入信号。",
+          "condition": "channels >= 10"
+        },
+        {
+          "index": 11,
+          "name": "通道10",
+          "type": "number",
+          "description": "通道 10 的输入信号。",
+          "condition": "channels >= 11"
+        },
+        {
+          "index": 12,
+          "name": "通道11",
+          "type": "number",
+          "description": "通道 11 的输入信号。",
+          "condition": "channels >= 12"
+        },
+        {
+          "index": 13,
+          "name": "通道12",
+          "type": "number",
+          "description": "通道 12 的输入信号。",
+          "condition": "channels >= 13"
+        },
+        {
+          "index": 14,
+          "name": "通道13",
+          "type": "number",
+          "description": "通道 13 的输入信号。",
+          "condition": "channels >= 14"
+        },
+        {
+          "index": 15,
+          "name": "通道14",
+          "type": "number",
+          "description": "通道 14 的输入信号。",
+          "condition": "channels >= 15"
+        },
+        {
+          "index": 16,
+          "name": "通道15",
+          "type": "number",
+          "description": "通道 15 的输入信号。",
+          "condition": "channels >= 16"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "name": "输出",
+          "type": "number",
+          "description": "根据通道选择信号选中的通道输入值。"
+        }
+      ]
+    },
+
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "switch",
+        "name": "{{user_defined_name}}",
+        "inputs": "{{channelsPlusOne}}",
+        "outputs": 1,
+        "channels": "{{channels}}",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}"
+      }
+    ]
+  }
+  

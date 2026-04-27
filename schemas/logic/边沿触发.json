@@ -1,0 +1,63 @@
+{
+    "id": "",
+    "module_type": "edgeTrigger",
+    "category": "逻辑模块/边沿触发",
+    "name": "边沿触发 (Edge Trigger)",
+    "description": "边沿触发模块根据输入信号的边沿变化触发输出，可设置为上升沿、下降沿或任意变化触发。",
+    "keywords": [
+      "边沿触发",
+      "上升沿",
+      "下降沿",
+      "变化触发",
+      "信号触发",
+      "事件触发"
+    ],
+    "usage_guides": [
+      "设置为上升沿触发时，输入信号由0到1变化时输出触发。",
+      "设置为下降沿触发时，输入信号由1到0变化时输出触发。",
+      "设置为任意变化触发时，输入信号变化（上升或下降）都会触发输出。"
+    ],
+    "parameters_schema": {
+      "mode": {
+        "type": "string",
+        "description": "边沿触发模式。",
+        "enum": ["rising", "falling", "any"],
+        "default": "rising"
+      }
+    },
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "name": "输入",
+          "type": "boolean",
+          "description": "输入信号。"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "name": "输出",
+          "type": "boolean",
+          "description": "输出信号。"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "edgeTrigger",
+        "name": "{{user_defined_name}}",
+        "inputs": 1,
+        "outputs": 1,
+        "mode": "{{mode}}",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[]]
+      }
+    ]
+  }
+  

@@ -1,0 +1,54 @@
+    {
+        "id": "",
+        "module_type": "quote",
+        "category": "变量模块/引用",
+        "name": "引用",
+        "description": "引用模块对实例对象中的某一输出端口的值进行调用。在参数配置中，“标注名称”栏中，输入目标实例对象的关键字/词，则在输入栏中自动列出通过关键字/词索引到的实例对象，从中选择目标实例即可。其中，关键字/词的内容包括实例对象的节点地址，名称，或BACnet的对象名称。",
+        "keywords": [  "引用", "节点引用", "数据共享", "数据复用"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "引用"
+            },
+            "labelName":{
+            "type": "string",
+            "description": "引用模块的id、输出口编号和名字",
+            "default": "[\"实例对象的节点地址\":\"实例对象的输出端口号\"] \"实例对象名称\""
+            }
+        },
+
+
+        "ports_definition": {
+            
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"引用实例对象某一输出端口的值",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "labelName": "{{labelName}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 0,
+        "outputs": 0,
+        "type": "quote",
+        "labelNameOld": "",
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}

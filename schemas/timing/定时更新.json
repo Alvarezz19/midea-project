@@ -1,0 +1,102 @@
+{
+    "id": "",
+    "module_type": "delayOut",
+    "category": "定时模块/定时更新",
+    "name": "定时更新 (Delay Out)",
+    "description": "定时更新模块按一定时间定时对输入信号输出。",
+    "keywords": [
+        "定时更新",
+        "周期输出",
+        "定时器",
+        "更新输出",
+        "时间间隔"
+    ],
+    "usage_guides": [
+        "每隔设定的时间间隔输出一次输入信号。",
+        "常用于周期性采样、数据刷新或触发周期性任务。",
+        "可以通过timeoutFromInput动态改变更新周期。",
+        "间隔时间单位可为秒、分、小时或天，每个单位的数值为整数。",
+        "其中时间最大值限制:单位为秒，最大2592000:单位为分，最大43200:单位为小时，最大720;单位为天，最大30。"
+    ],
+    "parameters_schema": {
+        "timeout": {
+            "type": "integer",
+            "description": "更新周期的时长。",
+            "minimum": 0,
+            "default": 60
+        },
+        "timeoutFromInput": {
+            "type": "boolean",
+            "description": "更新周期是否由动态输入提供。",
+            "default": false
+        },
+        "timeoutUnits": {
+            "type": "string",
+            "description": "更新周期的单位。",
+            "enum": ["seconds", "minutes", "hours", "days"],
+            "default": "seconds"
+        },
+        "inputsCount": {
+            "type": "integer",
+            "description": "动态输入时输入端口数量（范围 1~2）。",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "输入",
+            "type": "boolean",
+            "description": "输入信号。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "时长",
+            "type": "integer",
+            "description": "定时时间。",
+            "condition": "timeoutFromInput == true"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "boolean",
+            "description": "输出结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "delayOut",
+            "name": "定时更新",
+            "inputs": "{{inputsCount}}",
+            "outputs": 1,
+            "timeout": "{{timeout}}",
+            "timeoutFromInput": "{{timeoutFromInput}}",
+            "timeoutUnits": "{{timeoutUnits}}",
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "debugView": [
+                {
+                    "n": "O1: ",
+                    "v": ""
+                },
+                {
+                    "n": "left:",
+                    "v": ""
+                }
+            ],
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

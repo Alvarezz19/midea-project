@@ -1,0 +1,86 @@
+    {
+        "id": "",
+        "module_type": "bacipOutput",
+        "category": "变量模块/BACIP_IO",
+        "name": "BACIP IO(BACIP 输入/输出)",
+        "description": "BACIP IO模块可以调用控制器所在BACnet IP网络上的其它设备的BACnet点位对象。模块的实例对象，可实现对BACnet IP设备的点对象进行读写。",
+        "keywords": [ "BACnet", "BACIP", "IO", "数据传输", "控制", "BACnet/IP", "模拟输入", "模拟输出", "模拟值", "二进制输入", "二进制输出", "二进制值", "多状态输入", "多状态输出", "多状态值", "设备号", "对象地址", "写优先级", "转换", "比例系数", "楼宇自动化", "工业控制", "集成"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "BACIP IO"
+            },
+            "bacnetIpDeviceInstance": {
+            "type": "integer",
+            "description": "设备句柄号",
+            "minimum":0,
+            "maximun":4194303,
+            "default": 0
+            },
+            "inputCount": {
+            "type": "integer",
+            "description": "输入端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            }
+            
+
+        },
+
+        "ports_definition": {
+            "inputs":[
+                {
+                    "index": 0,
+                    "label":"输入",
+                    "type":"number",
+                    "description":"实例目标赋值",
+                    "condition":"always"
+                },
+                {
+                    "index": 1,
+                    "label":"使能输入",
+                    "type":"integer",
+                    "description":"使能控制实例对象的赋值;为0时,输入值不赋值至输出;为1或非0数值,把输入的值赋值至输出;端口未连接按1处理",
+                    "condition":"always"
+                }
+
+            ],
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"实例的值;对象类型为Binary***时,输出为布尔值;对象类型为Analog ***时,输出为数值;对象类型为Multi-state***时,输出为整型数值",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "bacnetIpDeviceInstance": "{{bacnetIpDeviceInstance}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": "{{inputCount}}",
+        "outputs": 1,
+        "type": "bacipOutput",
+        "protocol": "ip_output",
+        "bacnetIpObjectType": "OBJECT_ANALOG_VALUE",
+        "bacnetIpObjectInstance": 0,
+        "bacnetIpPriority": 16,
+        "hwInputConvert": "none",
+        "hwInputConvertScale": 1,
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}
+

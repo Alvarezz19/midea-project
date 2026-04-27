@@ -1,0 +1,85 @@
+{
+  "id": "",
+  "module_type": "subtract",
+  "category": "运算模块/数学运算",
+  "name": "减法运算",
+  "description": "减法运算模块对输入信号进行减法运算。支持可配置的输入端口数量(1-16个)。当输入数量≥2时,输出依次对输入信号进行减法运算的结果;当输入数量=1时,输出输入信号与固定值的差值。典型应用场景包括:计算差值、偏差分析、扣除固定值等。所有输入信号必须是数值类型。",
+  "keywords": [
+    "减法",
+    "-",
+    "相减",
+    "差值",
+    "偏差",
+    "扣除",
+    "减少",
+    "负数",
+    "subtraction",
+    "subtract",
+    "difference",
+    "minus",
+    "decrease"
+  ],
+  "usage_guides": [
+    "多输入模式(输入数量≥2): 连接多个输入信号,模块输出依次减法运算的结果,例如: 输入1-输入2-⋯-输入n=输出。",
+    "单输入模式(输入数量=1): 连接1个输入信号,模块输出该信号与固定值的差值,例如: 输入1-固定值=输出。",
+    "输入数量配置: 可在1-16范围内调整输入端口数量,默认值为2。",
+    "固定值配置: 仅在输入数量=1时有效,用于从单个输入信号中减去该值。",
+    "wires连接: wires数组根据输入数量自动生成,包含与输入端口数量相同的空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出固定值。",
+    "注意事项: 所有输入信号必须是数值类型;固定值只在单输入模式下参与运算;注意减法顺序会影响结果。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "inputs": {
+      "type": "integer",
+      "description": "运算输入数量。当≥2时,输出依次减法运算结果;当=1时,输出输入与固定值的差值。",
+      "minimum": 1,
+      "maximum": 16,
+      "default": 2
+    },
+    "fixedValue": {
+      "type": "number",
+      "description": "固定值。仅在输入数量=1时参与运算,从输入信号中减去该值。",
+      "default": 0
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "被减数",
+        "type": "number",
+        "description": "被减去的数值(第1个输入)",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "差值",
+        "type": "number",
+        "description": "依次相减的结果(输入=1时为输入与固定值的差)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "subtract",
+    "name": "{{user_defined_name}}",
+    "inputs": "{{inputs}}",
+    "outputs": 1,
+    "fixedValue": "{{fixedValue}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

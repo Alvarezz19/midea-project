@@ -1,0 +1,100 @@
+{
+    "id": "",
+    "module_type": "compare",
+    "category": "逻辑模块/比较判断",
+    "name": "比较判断 (Compare)",
+    "description": "比较判断模块用于对输入信号与阈值进行比较，支持大于、大于等于、小于、小于等于、等于、不等于等模式。阈值可以是固定常量或通过外部信号动态提供。",
+    "keywords": [
+      "比较",
+      "判断",
+      "大于",
+      "小于",
+      "等于",
+      "大于等于",
+      "小于等于",
+      "不等于",
+      "阈值",
+      "动态阈值"
+    ],
+    "usage_guides": [
+      "选择大于（g）模式，当输入大于阈值时输出为真。",
+      "选择小于（l）模式，当输入小于阈值时输出为真。",
+      "选择等于（e）模式，当输入等于阈值时输出为真。",
+      "选择大于等于（ge）模式，当输入大于等于阈值时输出为真。",
+      "选择小于等于（le）模式，当输入小于等于阈值时输出为真。",
+      "选择不等于（ne）模式，当输入不等于阈值时输出为真。",
+      "阈值可以使用固定常量或启用动态输入，动态输入需要连接第二个输入端口提供阈值信号。"
+    ],
+    "parameters_schema": {
+      "as": {
+        "type": "string",
+        "description": "比较模式。",
+        "enum": ["g", "l", "e", "ge", "le", "ne"],
+        "default": "g"
+      },
+      "inputAuxEnable": {
+        "type": "boolean",
+        "description": "是否启用动态阈值输入。",
+        "default": false
+      },
+      "tripPoint": {
+        "type": "number",
+        "description": "固定阈值（静态模式下有效）,动态阈值时为默认值。",
+        "default": 0
+      },
+      "inputsCount": {
+        "type": "integer",
+        "description": "输入端口数量（静态阈值1个，动态阈值2个）。",
+        "minimum": 1,
+        "maximum": 2,
+        "default": 1
+      }
+    },
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "label": "输入1",
+          "type": "number",
+          "description": "被比较数，参与比较运算的输入数值。",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "输入2",
+          "type": "number",
+          "description": "比较数，用于比较的阈值输入。",
+          "condition": "inputAuxEnable == true"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "label": "输出",
+          "type": "boolean",
+          "description": "比较运算的结果成立时，输出True(1),否则输出False(0)",
+          "condition": "always"
+        }
+      ]
+    },
+
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "compare",
+        "name": "{{user_defined_name}}",
+        "inputs": "{{inputsCount}}",
+        "outputs": 1,
+        "as": "{{as}}",
+        "inputAuxEnable": "{{inputAuxEnable}}",
+        "tripPoint": "{{tripPoint}}",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}"
+      }
+    ]
+  }
+  

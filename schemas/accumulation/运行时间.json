@@ -1,0 +1,70 @@
+{
+    "id": "",
+    "module_type": "runtime",
+    "category": "累计模块/运行时间",
+    "name": "运行时间 (Runtime)",
+    "description": "运行时间模块用于累计输入信号的运行时间，输出当前运行时间和状态。输入端口固定为控制信号和复位信号，输出端口固定为运行时间和状态。",
+    "keywords": [
+      "运行时间",
+      "累计",
+      "运行监控",
+      "状态输出",
+      "控制信号"
+    ],
+    "usage_guides": [
+      "输入端口接收控制信号和复位信号，用于累计运行时间。",
+      "输出端口输出当前运行时间和运行状态，可用于设备运行监控或计时。",
+      "模块保持状态，不受输入信号短时变化影响，适用于长时间运行统计。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "label": "输入",
+          "type": "boolean",
+          "description": "输入信号",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "复位",
+          "type": "boolean",
+          "description": "复位累计运行时间信号",
+          "condition": "always"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "label": "秒",
+          "type": "integer",
+          "description": "输入位置(True)时间的秒数，非累计数据，数值范围0~59",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "运行总分钟数",
+          "type": "integer", 
+          "description": "累计输入位置(True)时间的总分钟数。最大值为16777215。当达到最大值时，保持最大值输出。",
+          "condition": "always"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "runtime",
+        "name": "{{user_defined_name}}",
+        "inputs": 2,
+        "outputs": 2,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[], []]
+      }
+    ]
+  }
+  

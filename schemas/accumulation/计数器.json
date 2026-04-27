@@ -1,0 +1,65 @@
+{
+    "id": "",
+    "module_type": "counter",
+    "category": "累计模块/计数器",
+    "name": "计数器 (Counter)",
+    "description": "计数器模块用于累计输入信号的脉冲次数。输入端口固定为计数信号和复位控制，输出端口固定为计数结果。",
+    "keywords": [
+      "计数器",
+      "累计",
+      "脉冲计数",
+      "复位",
+      "状态保持"
+    ],
+    "usage_guides": [
+      "输入端口接收脉冲信号进行计数，复位端口可用于将计数值清零。",
+      "计数器模块计算输入信号的脉冲(上升沿触发)数量，每检测到一个，在原来计数结果的基础上加一。",
+      "当复位信号为True时，输出的值置为0。",
+      "当复位信号False时，恢复对输入信号监测并开始计数。",
+      "输出端口输出当前计数值，可用于累计事件或信号触发次数的监测。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "label": "输入",
+          "type": "boolean",
+          "description": "监测对象，即接受的脉冲信号，信号由 False 变为 True 时计数值加 1",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "复位",
+          "type": "boolean",
+          "description": "复位控制信号。当信号为 True 时，计数值清零",
+          "condition": "always"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "label": "输出",
+          "type": "integer",
+          "description": "累计的脉冲次数。最大值为 16777215，达到最大值后保持该值输出",
+          "condition": "always"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "counter",
+        "name": "{{user_defined_name}}",
+        "inputs": 2,
+        "outputs": 1,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[], []]
+      }
+    ]
+  }
+  

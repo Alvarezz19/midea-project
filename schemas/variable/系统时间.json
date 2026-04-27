@@ -1,0 +1,61 @@
+    {
+        "id": "",
+        "module_type": "systemTime",
+        "category": "变量模块/系统时间",
+        "name": "系统时间",
+        "description": "系统时间模块用于输出设备的系统实时时间",
+        "keywords": ["系统时间", "时间管理", "日期", "时间","秒","分","小时","日","天","月","年","周天"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "系统时间"
+            },
+            "timeUnit": {
+            "type": "string",
+            "description": "时间的单位;年year:系统年份;月month:1~12,1代表一月,依次12代表12月;日date:1~31;时hour:0~23;分minute:0~59;秒second:0~59;周天day:1~7,1代表星期一,依次7代表星期天",
+            "enum":[
+                "second",
+                "minute",
+                "hour",
+                "day",
+                "month",
+                "year",
+                "wday"
+            ],
+            "default": "minute"
+            }
+
+        },
+
+        "ports_definition": {
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"integer",
+                    "description":"根据时间单位,输出对应单位的系统实时时间",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "timeUnit": "{{timeUnit}}",
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [],
+        "inputs": 0,
+        "outputs": 1,
+        "type": "systemTime",
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}
+

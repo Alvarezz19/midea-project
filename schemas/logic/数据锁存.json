@@ -1,0 +1,62 @@
+{
+    "id": "",
+    "module_type": "latch",
+    "category": "逻辑模块/数据锁存",
+    "name": "数据锁存 (Latch)",
+    "description": "数据锁存模块用于将输入信号锁存，直到使能信号允许更新。锁存模块通常用于保持关键状态或触发条件。",
+    "keywords": [
+      "锁存",
+      "保持",
+      "触发",
+      "状态保持",
+      "数据保持"
+    ],
+    "usage_guides": [
+      "输入信号变化时，锁存模块可根据使能信号决定是否更新输出。",
+      "可用于保存关键状态或事件触发条件，防止瞬态信号干扰系统逻辑。",
+      "数据锁存器可以保持输入信号某一时刻的数值作为输出",
+      "当使能信号为True（1）时，输出信号跟随输入信号的数值。",
+      "当使能信号为False（0）时，输出信号保持上一时刻的数值。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "name": "输入",
+          "type": "number",
+          "description": "目标对象，需要被锁存的数值信号。"
+        },
+        {
+          "index": 1,
+          "name": "使能",
+          "type": "boolean",
+          "description": "使能信号，用于控制是否更新锁存值。"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "name": "输出",
+          "type": "number",
+          "description": "运行结果。"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "latch",
+        "name": "{{user_defined_name}}",
+        "inputs": 2,
+        "outputs": 1,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[], []]
+      }
+    ]
+  }
+  

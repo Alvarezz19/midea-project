@@ -1,0 +1,84 @@
+{
+  "id": "",
+  "module_type": "hwInput",
+  "category": "IO模块/物理输入",
+  "name": "物理输入 (Physical Input)",
+  
+  // --- 1. 检索与理解层 (供检索智能体使用) ---
+  // 这部分内容将被转化为向量 (Vector)，用于匹配用户的自然语言需求
+  "description": "物理输入模块用于读取硬件设备的端口信号。它可以连接各种传感器（如温度、湿度、CO2）或开关量设备。根据硬件配置，支持读取数字量状态(DI)、模拟量电压(0-10V)、模拟量电流(4-20mA)以及各种电阻型温度传感器(NTC/PT/NI)。",
+  "keywords": [
+    "采集", "读取", "传感器", "探头", "开关状态", "DI", "AI", "温度监测", "湿度监测", "CO2浓度", "模拟量输入", "通用输入"
+  ],
+  "usage_guides": [
+    "如果需要监测防冻开关或过滤网压差开关，请选择 DI 模式。",
+    "如果连接的是标准变送器（如压力变送器），通常选择 4-20mA 或 0-10V。",
+    "如果连接的是二线制温度探头，请确认型号是 NTC 10k 还是 PT1000。"
+  ],
+
+  // --- 2. 参数约束层 (供规划智能体/LLM 填充参数使用) ---
+  // 这部分定义了各个参数的合法取值，防止 AI 产生幻觉
+  "parameters_schema": {
+    "hwExpander": {
+      "type": "integer",
+      "description": "扩展模块地址。0代表主控自身IO，1-31代表扩展模块地址。",
+      "minimum": 0,
+      "maximum": 31,
+      "default": 0
+    },
+    "hwChannelIndex": {
+      "type": "integer",
+      "description": "硬件通道索引（端口号）。对应设备上的 UI1, UI2 等。",
+      "minimum": 0,
+      "maximum": 32,
+      "default": 0
+    },
+    "hwInputMode": {
+      "type": "string",
+      "description": "输入信号的电气类型或传感器类型。",
+      "enum": [
+        "DI", 
+        "0-10V", 
+        "0-20mA", 
+        "4-20mA", 
+        "NTC 10k_type2-3935", 
+        "NTC 10k_type2-3950", 
+        "NTC 10k_type3-3630", 
+        "PT1000", 
+        "LG-NI1000", 
+        "temperature_sensor", 
+        "humidity_sensor", 
+        "co2_sensor"
+      ],
+      "default": "DI"
+    }
+  },
+
+  // --- 3. 生成模板层 (最终产出的代码) ---
+  // 规划智能体将填好的参数代入此模板
+  // 注意：id, x, y, z, wires 这些拓扑参数留空或设为占位符，由规划智能体在连线时动态生成
+  "template_json": {
+    "id": "{{__GEN_ID__}}",       // 特殊标记，指示系统生成唯一ID
+    "z": "{{__FLOW_ID__}}",       // 特殊标记，指示归属的流程ID
+    "type": "hwInput",
+    "name": "{{user_defined_name}}", 
+    "hwExpander": "{{hwExpander}}",
+    "hwChannelIndex": "{{hwChannelIndex}}",
+    "hwInputMode": "{{hwInputMode}}",
+    
+    // 以下为默认参数，不需要 AI 操心，直接硬编码
+    "inputs": 0,
+    "outputs": 1,
+    "hwChannelType": "Universal Input",
+    "hwInputModeDefault": 0,
+    "hwInputResolution": 0.1,
+    "hwInputConvert": "none",
+    "hwInputConvertLowLimit": 0,
+    "hwInputConvertHightLimit": 100,
+    "bacnetVisible": false,
+    "bacnetObjectType": "OBJECT_DISABLED",
+    "bacnetObjectInstanceAuto": true,
+    "outOfService": 0,
+    "wires": [] 
+  }
+}

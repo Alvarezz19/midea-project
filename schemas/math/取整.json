@@ -1,0 +1,87 @@
+{
+  "id": "",
+  "module_type": "round",
+  "category": "运算模块/数学运算",
+  "name": "取整运算",
+  "description": "取整运算模块对输入信号进行取整运算,将浮点数转换为整数。支持三种取整模式:四舍五入、向上取整、向下取整。典型应用场景包括:传感器数据处理、显示数值格式化、阈值计算、数量统计、去除小数精度等。输入信号必须是数值类型。",
+  "keywords": [
+    "取整",
+    "四舍五入",
+    "向上取整",
+    "向下取整",
+    "round",
+    "ceil",
+    "floor",
+    "取整运算",
+    "舍入",
+    "整数化",
+    "round45",
+    "roundUp",
+    "roundDown",
+    "取整模式",
+    "数值格式化",
+    "去除小数",
+    "integer",
+    "rounding"
+  ],
+  "usage_guides": [
+    "四舍五入模式(mode=round45): 对输入信号进行四舍五入到最接近的整数。示例: Round(7.36) = 7, Round(7.62) = 8。",
+    "向上取整模式(mode=roundUp): 将输入信号向上舍入到最接近的整数。示例: ⌈7.36⌉ = 8, ⌈7⌉ = 7。",
+    "向下取整模式(mode=roundDown): 将输入信号向下舍入到最接近的整数。示例: ⌊7.62⌋ = 7, ⌊7⌋ = 7。",
+    "模式选择: 在参数配置中设置mode字段,可选值为round45(四舍五入)、roundUp(向上取整)、roundDown(向下取整),默认值为round45。",
+    "应用场景1: 设备数量计算-向上取整用于计算需要运行多少台设备才能满足负载需求,如计算结果为3.2台时,向上取整为4台确保制冷/制热量充足。",
+    "应用场景2: 转速显示处理-四舍五入用于处理电机、风机、水泵的转速显示,将实际转速(如1456.8 RPM)取整为更易读的数值(1457 RPM)。",
+    "应用场景3: 温度/压力显示-四舍五入用于传感器数据显示,如将25.36°C显示为25°C,101.325kPa显示为101kPa,便于操作人员快速读取。",
+    "wires连接: wires数组包含1个空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 输入信号必须是数值类型;选择合适的取整模式对结果影响很大;注意负数的取整方向差异。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "mode": {
+      "type": "string",
+      "description": "取整模式。round45为四舍五入,roundUp为向上取整,roundDown为向下取整。",
+      "enum": ["round45", "roundUp", "roundDown"],
+      "default": "round45"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "浮点数",
+        "type": "number",
+        "description": "需要进行取整运算的数值",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "整数值",
+        "type": "number",
+        "description": "取整后的结果(四舍五入/向上/向下取整)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "round",
+    "name": "{{user_defined_name}}",
+    "inputs": 1,
+    "outputs": 1,
+    "mode": "{{mode}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

@@ -1,0 +1,62 @@
+{
+    "id": "",
+    "module_type": "srFlipflop",
+    "category": "逻辑模块/触发器",
+    "name": "SR触发器 (SR Flip-Flop)",
+    "description": "SR触发器模块用于实现基本的置位/复位触发逻辑。SR触发器即复位优先触发器。",
+    "keywords": [
+      "触发器",
+      "SR",
+      "置位复位",
+      "状态保持",
+      "逻辑",
+      "复位优先"
+    ],
+    "usage_guides": [
+      "SR触发器即复位优先触发器。",
+      "当复位为True(1)时，输出保持False(0)。",
+      "当输入为False(0)，复位为False(0)时，输出保持上一刻状态不变。",
+      "当输入为True(1)，复位为False(0)时，输出复位为True(1)。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "name": "输入",
+          "type": "boolean",
+          "description": "置位信号。"
+        },
+        {
+          "index": 1,
+          "name": "复位",
+          "type": "boolean",
+          "description": "复位信号。"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "name": "输出",
+          "type": "boolean",
+          "description": "输出结果。"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "srFlipflop",
+        "name": "{{user_defined_name}}",
+        "inputs": 2,
+        "outputs": 1,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[], []]
+      }
+    ]
+  }
+  

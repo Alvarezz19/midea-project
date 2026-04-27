@@ -1,0 +1,75 @@
+    {
+        "id": "",
+        "module_type": "mqttout",
+        "category": "变量模块/MQTT发布",
+        "name": "MQTT发布",
+        "keywords": [ "MQTT", "发布", "主题", "Topic", "通配符", "Payload"],
+        "usage_guides": ["Topic不支持通配符",
+            "Payload格式:  {\"seq\":123, \"nodes\":[{\"name\":\"Object\",\"value\":0}, ...]}"
+        ],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "MQTT发布"
+            },
+            "objectName":{
+            "type": "string",
+            "description": "该模块在MQTT中的唯一名字"
+            },
+            "topic":{
+            "type": "string",
+            "description": "发布的MQTT订阅主题的名字"
+            }
+
+
+        },
+
+        "ports_definition": {
+            "inputs":[
+                {
+                    "index": 0,
+                    "label":"输入",
+                    "type":"number",
+                    "description":"",
+                    "condition":"always"
+                }
+            ],
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"输出",
+                    "condition":"always"
+
+                },
+                {
+                    "index": 1,
+                    "label":"更新计数",
+                    "type":"整数",
+                    "description":"输出更新的次数",
+                    "condition":"always"
+
+                }
+            ]
+        },
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "topic": "{{topic}}",
+        "objectName": "{{objectName}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 1,
+        "outputs": 2,
+        "type": "mqttout",
+        "qos": 0,
+        "retained": 0,
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+
+    }
+}

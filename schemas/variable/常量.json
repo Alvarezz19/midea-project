@@ -1,0 +1,61 @@
+    {
+        "id": "",
+        "module_type": "constInput",
+        "category": "变量模块/常量",
+        "name": "常量(常量输入)",
+        "description": "常数模块输出一个固定的数值。用于定义公式中的系数、转换因子、固定参数等不变的值。例如：π、重力加速度、单位转换系数等。",
+        "keywords": ["常量", "固定数值", "状态", "固定参数", "预设值", "基准值", "系数", "常数", "参数", "倍数", "比例", "转换因子", "固定值", "数值", "公式参数", "数字"],
+        "usage_guides": [
+            "在公式中作为固定系数，如 4.18、3.6 等转换系数",
+            "定义物理常数，如 π=3.14159",
+            "设置控制阈值或基准值",
+            "作为单位转换的倍数"
+        ],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "常量"
+            },
+            "fixedValue": {
+            "type": "double",
+            "description": "常量的具体值",
+            "default": 0
+            }
+
+        },
+
+
+        "ports_definition": {
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"输出参数配置中的数值(fixedValue)",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+
+         "template_json": {
+
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "fixedValue": "{{fixedValue}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 0,
+        "outputs": 1,
+        "type": "constInput",
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}
+
+

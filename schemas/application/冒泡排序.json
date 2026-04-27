@@ -1,0 +1,97 @@
+{
+    "id": "",
+    "module_type": "sort",
+    "category": "应用/冒泡排序",
+    "name": "冒泡排序 (Bubble Sort)",
+    "description": "冒泡排序模块用于对多个输入数值进行排序。排序方法包括升序、降序、升序-序号、降序-序号。对输入的数值进行排序后，输出排序后的数值或排序后数值对应的输入序号。",
+    "keywords": [
+        "冒泡排序",
+        "排序",
+        "最大值最小值",
+        "索引"
+    ],
+    "usage_guides": [
+        "设置'输入数量'(inputs)，模块将动态生成对应数量的输入和输出引脚。",
+        "选择'排序方式'(lType)，可输出排序后的数值或排序后数值对应的输入序号。",
+        "输入数量最小为2，最大支持到16。"
+    ],
+    "parameters_schema": {
+        "lType": {
+            "type": "string",
+            "description": "排序模式（包括升序、降序、升序-序号、降序-序号）。",
+            "enum": ["ASC", "DES", "ASCIDX", "DESIDX"],
+            "default": "ASC"
+        },
+        "inputs": {
+            "type": "integer",
+            "description": "待排序的输入信号数量。",
+            "minimum": 2,
+            "maximum": 16,
+            "default": 2
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "输入1",
+            "type": "number",
+            "description": "排序对象1。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "输入2",
+            "type": "number",
+            "description": "排序对象2。",
+            "condition": "always"
+        },
+        {
+            "index": "{n-1}",
+            "label": "输入n",
+            "type": "number",
+            "description": "排序对象n，n不大于[输入数量]的值。2<=n<=16。",
+            "condition": "inputs >= {n}"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出1",
+            "type": "number",
+            "description": "排序后的输出1。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "输出2",
+            "type": "number",
+            "description": "排序后的输出2。",
+            "condition": "always"
+        },
+        {
+            "index": "{n-1}",
+            "label": "输出n",
+            "type": "number",
+            "description": "排序后的输出n，n不大于[输入数量]的值。2<=n<=16。",
+            "condition": "inputs >= {n}"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "sort",
+            "name": "冒泡排序",
+            "inputs": "{{inputs}}",
+            "outputs": "{{inputs}}",
+            "lType": "{{lType}}",
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}
