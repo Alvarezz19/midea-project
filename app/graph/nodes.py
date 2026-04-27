@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from app.graph.state import AgentState
-from app.services.json_project import create_project_version, load_project, save_project
-from app.services.patch_engine import PatchEngineError, apply_patch
+from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
+from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
 from app.services.validator import validate_project
@@ -144,20 +144,39 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
 
     try:
         nodes = load_project(project_path)
-        result = apply_patch(nodes, pending_patch)
-        report = validate_project(result["nodes"])
+        result = dry_run_patch(nodes, pending_patch)
+        report = result["validation_report"]
         if report["valid"]:
-            save_project(project_path, result["nodes"])
+            if not state.get("current_project_id"):
+                return {"status": "error", "error": "无法创建补丁版本：current_project_id 为空。", "next_action": "fix_project_version"}
+            metadata = create_project_version_from_nodes(
+                result["nodes"],
+                project_id=str(state["current_project_id"]),
+                parent_version_id=state.get("current_project_version_id"),
+                versions_dir=state.get("versions_dir", "projects/versions"),
+                source_template_path=_selected_template_source_path(state),
+                patch_summary={"changed": result["changed"], "changes": result["changes"], "diff_summary": result["diff"]["summary"]},
+                validation_report=report,
+                note="由结构化补丁创建。",
+            )
     except (PatchEngineError, ValueError) as exc:
         return {"status": "patch_failed", "error": str(exc), "next_action": "revise_patch"}
 
-    return {
-        "patch_result": {"changed": result["changed"], "changes": result["changes"]},
+    response: dict[str, Any] = {
+        "patch_result": {"changed": result["changed"], "changes": result["changes"], "diff": result["diff"]},
         "validation_report": report,
         "pending_patch": None,
         "status": "patch_applied" if report["valid"] else "validation_failed",
         "next_action": None if report["valid"] else "revise_patch",
     }
+    if report["valid"]:
+        response.update(
+            {
+                "current_project_version_id": metadata["version_id"],
+                "current_project_path": metadata["version_path"],
+            }
+        )
+    return response
 
 
 def validate_current_project_node(state: AgentState) -> dict[str, Any]:
@@ -238,6 +257,15 @@ def _slim_template_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "reasons": candidate["reasons"],
         "summary": candidate["summary"],
     }
+
+
+def _selected_template_source_path(state: AgentState) -> str | None:
+    selected_template_id = state.get("selected_template_id")
+    for candidate in state.get("template_candidates") or []:
+        if candidate.get("template_id") == selected_template_id:
+            source_path = candidate.get("source_path")
+            return str(source_path) if source_path else None
+    return None
 
 
 def _build_assistant_summary(state: AgentState) -> str:

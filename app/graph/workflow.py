@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import uuid
+from threading import Lock
+from typing import Any
+
 from langgraph.graph import END, START, StateGraph
 
+from app.graph.checkpointing import get_checkpointer
 from app.graph.nodes import (
     apply_pending_patch_node,
     classify_project_type,
@@ -19,8 +24,11 @@ from app.graph.nodes import (
 )
 from app.graph.state import AgentState
 
+_WORKFLOW: Any | None = None
+_WORKFLOW_LOCK = Lock()
 
-def build_workflow():
+
+def build_workflow(*, checkpointer: Any | None = None):
     graph = StateGraph(AgentState)
     graph.add_node("classify_project_type", classify_project_type)
     graph.add_node("collect_requirements", collect_requirements)
@@ -71,9 +79,25 @@ def build_workflow():
     graph.add_edge("apply_pending_patch", "summarize_result")
     graph.add_edge("validate_current_project", "summarize_result")
     graph.add_edge("summarize_result", END)
-    return graph.compile()
+    if checkpointer is None:
+        return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
-def invoke_workflow(state: AgentState) -> AgentState:
-    workflow = build_workflow()
-    return workflow.invoke(state)
+def get_workflow():
+    """返回进程内复用的已编译工作流。"""
+
+    global _WORKFLOW
+    if _WORKFLOW is None:
+        with _WORKFLOW_LOCK:
+            if _WORKFLOW is None:
+                _WORKFLOW = build_workflow(checkpointer=get_checkpointer())
+    return _WORKFLOW
+
+
+def invoke_workflow(state: AgentState, *, thread_id: str | None = None, workflow: Any | None = None) -> AgentState:
+    compiled_workflow = workflow or get_workflow()
+    if thread_id is None:
+        thread_id = f"adhoc_{uuid.uuid4().hex}"
+    config = {"configurable": {"thread_id": thread_id}}
+    return compiled_workflow.invoke(state, config)

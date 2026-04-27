@@ -29,24 +29,6 @@ def _issue(
     issues.append(ValidationIssue(severity=severity, code=code, message=message, node_id=node_id, path=path))
 
 
-def _flatten_wires(wires: Any) -> list[str]:
-    targets: list[str] = []
-    if not isinstance(wires, list):
-        return targets
-    for output_targets in wires:
-        if isinstance(output_targets, list):
-            for target in output_targets:
-                if isinstance(target, str):
-                    targets.append(target)
-                elif isinstance(target, dict) and isinstance(target.get("id"), str):
-                    targets.append(target["id"])
-        elif isinstance(output_targets, str):
-            targets.append(output_targets)
-        elif isinstance(output_targets, dict) and isinstance(output_targets.get("id"), str):
-            targets.append(output_targets["id"])
-    return targets
-
-
 def validate_project(nodes: Any) -> dict[str, Any]:
     """校验工程 JSON 的基础结构和拓扑引用。"""
 
@@ -152,34 +134,34 @@ def _validate_wires(
         _issue(issues, "error", "invalid_wires", "节点 wires 必须是数组。", node_id=node_id, path=f"{path}.wires")
         return
 
-    for output_index, output_targets in enumerate(wires):
-        target_path = f"{path}.wires[{output_index}]"
-        if not isinstance(output_targets, list):
-            _issue(issues, "error", "invalid_wire_output", "wires 的每个输出端口必须是目标 id 数组。", node_id=node_id, path=target_path)
+    for input_index, input_sources in enumerate(wires):
+        source_path = f"{path}.wires[{input_index}]"
+        if not isinstance(input_sources, list):
+            _issue(issues, "error", "invalid_wire_input", "wires 的每个输入端口必须是上游源 id 数组。", node_id=node_id, path=source_path)
             continue
-        for target_index, target_id in enumerate(output_targets):
-            if isinstance(target_id, dict):
-                target_ref = target_id.get("id")
+        for source_index, source_id in enumerate(input_sources):
+            if isinstance(source_id, dict):
+                source_ref = source_id.get("id")
             else:
-                target_ref = target_id
+                source_ref = source_id
 
-            if not isinstance(target_ref, str) or not target_ref.strip():
+            if not isinstance(source_ref, str) or not source_ref.strip():
                 _issue(
                     issues,
                     "error",
-                    "invalid_wire_target",
-                    "连线目标必须是非空字符串 id，或包含 id 字段的对象。",
+                    "invalid_wire_source",
+                    "上游源引用必须是非空字符串 id，或包含 id 字段的对象。",
                     node_id=node_id,
-                    path=f"{target_path}[{target_index}]",
+                    path=f"{source_path}[{source_index}]",
                 )
-            elif target_ref not in node_ids:
+            elif source_ref not in node_ids:
                 _issue(
                     issues,
                     "error",
-                    "missing_wire_target",
-                    "连线目标节点不存在。",
+                    "missing_wire_source",
+                    "上游源节点不存在。",
                     node_id=node_id,
-                    path=f"{target_path}[{target_index}]",
+                    path=f"{source_path}[{source_index}]",
                 )
 
     inputs = node.get("inputs")

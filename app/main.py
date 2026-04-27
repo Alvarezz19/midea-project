@@ -10,19 +10,25 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+from app.core.logging import configure_logging
 from app.graph.state import AgentState
-from app.graph.workflow import invoke_workflow
-from app.services.json_project import load_project, resolve_project_path
+from app.graph.workflow import get_workflow, invoke_workflow
+from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
 from app.services.knowledge import search_knowledge
+from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
 from app.services.planner import plan_patch_request
 from app.services.retrieval import search_templates
+from app.services.session_store import FileSessionStore
 from app.services.validator import validate_project
 
 
-app = FastAPI(title="Midea JSON Agent Prototype", version="0.1.0")
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+configure_logging()
 
-SESSIONS: dict[str, AgentState] = {}
+app = FastAPI(title=settings.app_name, version=settings.app_version)
+app.state.workflow = get_workflow()
+app.state.session_store = FileSessionStore(settings.project_sessions_dir)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 class CreateSessionRequest(BaseModel):
@@ -64,6 +70,18 @@ class PlanPatchRequest(BaseModel):
     project_type: str | None = None
 
 
+class PlannerDryRunRequest(BaseModel):
+    project_path: str
+    message: str | None = None
+    pending_patch: dict[str, Any] | None = None
+    template_id: str | None = None
+    project_type: str | None = None
+
+
+class RollbackProjectRequest(BaseModel):
+    target_version_id: str = Field(min_length=1)
+
+
 @app.get("/", include_in_schema=False)
 def frontend() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -78,17 +96,18 @@ def health() -> dict[str, str]:
 def create_session(request: CreateSessionRequest | None = None) -> dict[str, Any]:
     request = request or CreateSessionRequest()
     thread_id = uuid.uuid4().hex
-    SESSIONS[thread_id] = _empty_state(
+    state = _empty_state(
         project_type=request.project_type,
         auto_confirm_template=request.auto_confirm_template,
         versions_dir=request.versions_dir,
     )
-    return {"thread_id": thread_id, "state": _public_state(SESSIONS[thread_id])}
+    _session_store().save(thread_id, state)
+    return {"thread_id": thread_id, "state": _public_state(state)}
 
 
 @app.post("/api/sessions/{thread_id}/message")
 def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
-    state = SESSIONS.get(thread_id)
+    state = _session_store().get(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail="会话不存在。")
 
@@ -103,11 +122,11 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
         state["pending_patch"] = request.pending_patch
 
     try:
-        next_state = invoke_workflow(state)
+        next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
         raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
 
-    SESSIONS[thread_id] = next_state
+    _session_store().save(thread_id, next_state)
     return {"thread_id": thread_id, "state": _public_state(next_state)}
 
 
@@ -146,18 +165,48 @@ def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
     )
 
 
+@app.post("/api/planner/dry-run")
+def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
+    path = _resolve_allowed_project_file(request.project_path)
+    planner_result: dict[str, Any] | None = None
+    pending_patch = request.pending_patch
+    if pending_patch is None:
+        if not request.message:
+            raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
+        planner_result = plan_patch_request(
+            request.message,
+            project_path=str(path),
+            template_id=request.template_id,
+            project_type=request.project_type,
+        )
+        pending_patch = planner_result.get("pending_patch")
+    if not pending_patch:
+        return {
+            "status": "needs_clarification",
+            "planner_result": planner_result,
+            "pending_patch": None,
+            "dry_run": None,
+        }
+
+    try:
+        dry_run = dry_run_patch_to_project(str(path), pending_patch)
+    except PatchEngineError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    dry_run.pop("nodes", None)
+    return {
+        "status": "dry_run_valid" if dry_run["valid"] else "dry_run_invalid",
+        "planner_result": planner_result,
+        "pending_patch": pending_patch,
+        "dry_run": dry_run,
+    }
+
+
 @app.get("/api/projects/{project_id}/versions")
 def get_project_versions(project_id: str) -> dict[str, Any]:
-    versions = []
-    for state in SESSIONS.values():
-        if state.get("current_project_id") == project_id:
-            versions.append(
-                {
-                    "version_id": state.get("current_project_version_id"),
-                    "path": state.get("current_project_path"),
-                    "status": state.get("status"),
-                }
-            )
+    versions: list[dict[str, Any]] = []
+    versions_dir = _get_versions_dir(project_id)
+    if versions_dir is not None:
+        versions = list_project_versions(project_id, versions_dir=versions_dir)
     if not versions:
         raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有该项目会话。")
     return {"project_id": project_id, "versions": versions}
@@ -167,6 +216,42 @@ def get_project_versions(project_id: str) -> dict[str, Any]:
 def validate_project_by_id(project_id: str) -> dict[str, Any]:
     path = _get_current_project_path(project_id)
     return validate_project(load_project(path))
+
+
+@app.post("/api/projects/{project_id}/rollback")
+def rollback_project(project_id: str, request: RollbackProjectRequest) -> dict[str, Any]:
+    session_items = _session_store().find_items_by_project_id(project_id)
+    if not session_items:
+        raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有该项目会话。")
+
+    versions_dir = _get_versions_dir(project_id)
+    try:
+        metadata = get_project_version(project_id, request.target_version_id, versions_dir=versions_dir)
+        target_path = _resolve_allowed_project_file(str(metadata["version_path"]))
+        report = validate_project(load_project(target_path))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not report["valid"]:
+        raise HTTPException(status_code=400, detail="目标版本校验未通过，拒绝回滚。")
+
+    public_state: dict[str, Any] | None = None
+    for thread_id, state in session_items:
+        state["current_project_version_id"] = str(metadata["version_id"])
+        state["current_project_path"] = str(metadata["version_path"])
+        state["validation_report"] = report
+        state["status"] = "rolled_back"
+        state["next_action"] = None
+        state["error"] = None
+        _session_store().save(thread_id, state)
+        if public_state is None:
+            public_state = _public_state(state)
+
+    return {
+        "project_id": project_id,
+        "target_version_id": request.target_version_id,
+        "state": public_state,
+        "validation_report": report,
+    }
 
 
 @app.post("/api/projects/validate")
@@ -215,16 +300,27 @@ def _empty_state(*, project_type: str | None, auto_confirm_template: bool, versi
         "auto_confirm_template": auto_confirm_template,
         "project_created_in_current_run": False,
     }
-    if versions_dir is not None:
-        state["versions_dir"] = versions_dir
+    state["versions_dir"] = versions_dir or settings.project_versions_dir
     return state
 
 
 def _get_current_project_path(project_id: str) -> Path:
-    for state in SESSIONS.values():
+    for state in _session_store().find_by_project_id(project_id):
         if state.get("current_project_id") == project_id and state.get("current_project_path"):
             return _resolve_allowed_project_file(str(state["current_project_path"]))
     raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
+
+
+def _get_versions_dir(project_id: str) -> str | None:
+    for state in _session_store().find_by_project_id(project_id):
+        versions_dir = state.get("versions_dir")
+        if versions_dir:
+            return str(versions_dir)
+    return settings.project_versions_dir
+
+
+def _session_store() -> FileSessionStore:
+    return app.state.session_store
 
 
 def _public_state(state: AgentState) -> dict[str, Any]:

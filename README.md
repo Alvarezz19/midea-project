@@ -17,6 +17,8 @@
 - 扫描 `programs/` 下模板并生成索引。
 - 检索机房群控程序和 AHU 程序模板。
 - 创建工程版本副本，不覆盖原始模板。
+- 每次补丁应用成功后创建新的子版本，不覆盖父版本。
+- 支持将当前项目指针回滚到已有版本，保留完整历史版本。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 修改已有节点参数。
@@ -29,15 +31,18 @@
   - `connect`
   - `disconnect`
 - 支持 schema 驱动新增节点。
+- 支持补丁 dry-run，返回校验报告和节点级 diff 摘要，不保存文件。
 - 支持基础工程校验：
   - JSON 根节点类型。
   - 节点 id 和 type。
   - id 重复。
   - tab/subflow 引用。
-  - wires 目标引用。
+  - wires 上游源引用。
   - inputs 与 wires 基础一致性。
 - 提供 FastAPI API。
 - 提供 FastAPI 托管的前端工作台。
+- 应用启动时复用已编译的 LangGraph 工作流。
+- 会话状态已通过文件型 session store 持久化到本地目录，后续可替换为 PostgreSQL。
 - 已有 pytest 验收覆盖服务层、工作流和 API。
 
 ## 尚未完成
@@ -93,7 +98,12 @@ conda activate midea
 - Pydantic
 - Pytest
 
-如果当前环境缺少依赖，可按实际环境安装对应包。
+依赖范围已记录在 `pyproject.toml`。如果当前环境缺少依赖，可按实际环境安装对应包：
+
+```powershell
+conda activate midea
+python -m pip install -e ".[dev]"
+```
 
 ## 构建索引
 
@@ -133,6 +143,7 @@ http://127.0.0.1:8000/
 - 创建工程版本。
 - 规划补丁。
 - 手动应用结构化补丁。
+- 补丁成功后切换到新的工程版本。
 - 查看校验结果。
 - 导出最终 JSON。
 
@@ -145,8 +156,10 @@ POST /api/sessions/{thread_id}/message
 POST /api/templates/search
 POST /api/knowledge/search
 POST /api/planner/plan
+POST /api/planner/dry-run
 GET  /api/projects/{project_id}/versions
 POST /api/projects/{project_id}/validate
+POST /api/projects/{project_id}/rollback
 GET  /api/projects/{project_id}/export
 ```
 
@@ -211,7 +224,7 @@ GET  /api/projects/{project_id}/export
 }
 ```
 
-注意：当前工程 JSON 中的 `wires` 表示“目标节点每个输入端连接的上游源”，因此 `connect` 会修改目标节点的 `wires[target_input]`。
+注意：当前工程 JSON 中的 `wires` 统一按 `input_sources` 语义理解，表示“当前节点每个输入端连接的上游源”。因此 `connect` 会修改目标节点的 `wires[target_input]`，节点索引中也使用 `input_sources` 字段。
 
 ## 运行测试
 
@@ -237,6 +250,9 @@ pytest -q
 ## 运行时文件
 
 - `projects/versions/`：默认工程版本输出目录。
+  - `{version_id}.json`：不可变工程版本。
+  - `{version_id}.meta.json`：版本来源、父版本、hash、补丁摘要和校验摘要。
+- `projects/sessions/`：默认会话状态输出目录。
 - `projects/exports/`：预留导出目录。
 - `.env`：本地环境变量，不应提交。
 - `uvicorn-workbench.log`：本地运行日志，可按需删除。

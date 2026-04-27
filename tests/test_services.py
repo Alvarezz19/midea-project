@@ -5,9 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from app.services.json_project import create_project_version, find_nodes, load_project, save_project, summarize_project
+from app.services.json_project import (
+    create_project_version,
+    create_project_version_from_nodes,
+    find_nodes,
+    get_project_version,
+    list_project_versions,
+    load_project,
+    save_project,
+    summarize_project,
+)
 from app.services.knowledge import get_knowledge_context, load_knowledge_chunks, search_knowledge
-from app.services.patch_engine import PatchEngineError, apply_patch
+from app.services.patch_engine import PatchEngineError, apply_patch, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.retrieval import (
     RetrievalError,
@@ -60,7 +69,40 @@ def test_create_project_version_uses_temp_directory(tmp_path: Path) -> None:
     assert version_path.exists()
     assert metadata["project_id"] == "test_project"
     assert metadata["version_id"] == "v_test"
+    assert metadata["parent_version_id"] is None
+    assert len(metadata["json_sha256"]) == 64
     assert validate_project(load_project(version_path))["valid"]
+
+
+def test_create_child_project_version_does_not_overwrite_parent(tmp_path: Path) -> None:
+    parent = create_project_version(
+        PLANT_TEMPLATE,
+        project_id="versioned_project",
+        version_id="v_parent",
+        versions_dir=tmp_path,
+        note="父版本",
+    )
+    parent_path = Path(parent["version_path"])
+    parent_nodes = load_project(parent_path)
+    child_nodes = load_project(parent_path)
+    find_nodes(child_nodes, {"id": "3a4c97e"})[0]["name"] = "子版本-水泵比较节点"
+
+    child = create_project_version_from_nodes(
+        child_nodes,
+        project_id="versioned_project",
+        parent_version_id="v_parent",
+        version_id="v_child",
+        versions_dir=tmp_path,
+        validation_report={"valid": True, "error_count": 0, "warning_count": 0},
+        patch_summary={"changed": True},
+    )
+
+    assert child["parent_version_id"] == "v_parent"
+    assert child["version_path"] != parent["version_path"]
+    assert find_nodes(load_project(parent_path), {"id": "3a4c97e"})[0]["name"] == find_nodes(parent_nodes, {"id": "3a4c97e"})[0].get("name")
+    assert find_nodes(load_project(child["version_path"]), {"id": "3a4c97e"})[0]["name"] == "子版本-水泵比较节点"
+    assert [item["version_id"] for item in list_project_versions("versioned_project", versions_dir=tmp_path)] == ["v_parent", "v_child"]
+    assert get_project_version("versioned_project", "v_child", versions_dir=tmp_path)["parent_version_id"] == "v_parent"
 
 
 def test_retrieval_template_tab_node_and_neighborhood() -> None:
@@ -110,6 +152,28 @@ def test_patch_engine_updates_renames_comments_and_validates(tmp_path: Path) -> 
     assert validate_project(reloaded)["valid"]
     assert find_nodes(reloaded, {"id": "3a4c97e"})[0]["name"] == "测试-水泵比较节点"
     assert find_nodes(reloaded, {"id": "67febfa"})[0]["fixedValue"] == "5"
+
+
+def test_patch_engine_dry_run_returns_diff_without_mutating_source() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+    original_name = find_nodes(nodes, {"id": "3a4c97e"})[0].get("name")
+
+    result = dry_run_patch(nodes, {"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": "dry-run-水泵比较节点"})
+
+    assert result["saved"] is False
+    assert result["valid"] is True
+    assert result["changed"] is True
+    assert result["diff"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "modified_count": 1,
+        "affected_node_count": 1,
+    }
+    assert result["diff"]["affected_node_ids"] == ["3a4c97e"]
+    assert result["diff"]["modified"][0]["field_changes"] == [
+        {"field": "name", "old_value": original_name, "new_value": "dry-run-水泵比较节点"}
+    ]
+    assert find_nodes(nodes, {"id": "3a4c97e"})[0].get("name") == original_name
 
 
 def test_patch_engine_adds_schema_node_and_updates_explicit_wires() -> None:
@@ -243,6 +307,9 @@ def test_index_files_are_parseable() -> None:
     assert len(node_lines) == 8413
     assert all(isinstance(json.loads(line), dict) for line in tab_lines[:5])
     assert all(isinstance(json.loads(line), dict) for line in node_lines[:5])
+    first_node = json.loads(node_lines[0])
+    assert "input_sources" in first_node
+    assert "wires_to" not in first_node
 
 
 def test_knowledge_chunks_and_search() -> None:

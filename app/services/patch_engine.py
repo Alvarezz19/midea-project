@@ -42,11 +42,30 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
         else:
             raise PatchEngineError(f"不支持的补丁操作: {op}")
 
+    diff = build_node_diff(nodes, next_nodes)
     return {
         "nodes": next_nodes,
         "changed": bool(changes),
         "operation_count": len(operations),
         "changes": changes,
+        "diff": diff,
+    }
+
+
+def dry_run_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str, Any]:
+    """执行补丁 dry-run，不产生外部副作用。"""
+
+    result = apply_patch(nodes, patch)
+    report = validate_project(result["nodes"])
+    return {
+        "saved": False,
+        "valid": report["valid"],
+        "validation_report": report,
+        "changed": result["changed"],
+        "operation_count": result["operation_count"],
+        "changes": result["changes"],
+        "diff": result["diff"],
+        "nodes": result["nodes"],
     }
 
 
@@ -67,7 +86,47 @@ def apply_patch_to_project(source_path: str, target_path: str, patch: dict[str, 
         "saved": True,
         "validation_report": report,
         "changes": result["changes"],
+        "diff": result["diff"],
         "target_path": target_path,
+    }
+
+
+def dry_run_patch_to_project(source_path: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """读取工程并执行 dry-run，不保存工程文件。"""
+
+    return dry_run_patch(load_project(source_path), patch)
+
+
+def build_node_diff(before_nodes: list[dict[str, Any]], after_nodes: list[dict[str, Any]]) -> dict[str, Any]:
+    before_by_id = _node_map(before_nodes)
+    after_by_id = _node_map(after_nodes)
+    before_ids = set(before_by_id)
+    after_ids = set(after_by_id)
+
+    added = [_summarize_diff_node(after_by_id[node_id]) for node_id in sorted(after_ids - before_ids)]
+    removed = [_summarize_diff_node(before_by_id[node_id]) for node_id in sorted(before_ids - after_ids)]
+    modified: list[dict[str, Any]] = []
+    for node_id in sorted(before_ids & after_ids):
+        field_changes = _field_changes(before_by_id[node_id], after_by_id[node_id])
+        if field_changes:
+            modified.append(
+                {
+                    **_summarize_diff_node(after_by_id[node_id]),
+                    "field_changes": field_changes,
+                }
+            )
+
+    return {
+        "summary": {
+            "added_count": len(added),
+            "removed_count": len(removed),
+            "modified_count": len(modified),
+            "affected_node_count": len(added) + len(removed) + len(modified),
+        },
+        "affected_node_ids": [item["node_id"] for item in added + removed + modified],
+        "added": added,
+        "removed": removed,
+        "modified": modified,
     }
 
 
@@ -82,6 +141,41 @@ def _normalize_operations(patch: dict[str, Any]) -> list[dict[str, Any]]:
     if "op" in patch:
         return [patch]
     raise PatchEngineError("补丁必须包含 op 或 operations。")
+
+
+def _node_map(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        node_id = node.get("id")
+        if isinstance(node_id, str):
+            result[node_id] = node
+    return result
+
+
+def _summarize_diff_node(node: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "node_id": node.get("id"),
+        "type": node.get("type"),
+        "name": node.get("name", ""),
+        "tab_id": node.get("z"),
+    }
+
+
+def _field_changes(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    for field in sorted(set(before) | set(after)):
+        old_value = before.get(field)
+        new_value = after.get(field)
+        if old_value == new_value:
+            continue
+        changes.append(
+            {
+                "field": field,
+                "old_value": old_value,
+                "new_value": new_value,
+            }
+        )
+    return changes
 
 
 def _select_one(nodes: list[dict[str, Any]], selector: dict[str, Any], op_index: int) -> dict[str, Any]:

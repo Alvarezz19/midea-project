@@ -154,7 +154,7 @@ def search_nodes(
         item = dict(node)
         item["score"] = round(score, 4)
         results.append(item)
-    results.sort(key=lambda item: (item["score"], len(item.get("wires_to", []))), reverse=True)
+    results.sort(key=lambda item: (item["score"], len(_node_input_sources(item))), reverse=True)
     return results[:limit]
 
 
@@ -175,13 +175,13 @@ def load_node_neighborhood(
     if missing:
         raise RetrievalError(f"锚点节点不存在: {missing}")
 
-    forward: dict[str, set[str]] = {node_id: set() for node_id in node_by_id}
-    reverse: dict[str, set[str]] = {node_id: set() for node_id in node_by_id}
+    upstream_by_node: dict[str, set[str]] = {node_id: set() for node_id in node_by_id}
+    downstream_by_node: dict[str, set[str]] = {node_id: set() for node_id in node_by_id}
     for node_id, node in node_by_id.items():
-        for target_id in extract_wire_target_ids(node.get("wires")):
-            if target_id in node_by_id:
-                forward[node_id].add(target_id)
-                reverse[target_id].add(node_id)
+        for source_id in extract_input_source_ids(node.get("wires")):
+            if source_id in node_by_id:
+                upstream_by_node[node_id].add(source_id)
+                downstream_by_node[source_id].add(node_id)
 
     selected: set[str] = set(anchor_node_ids)
     queue: deque[tuple[str, int]] = deque((node_id, 0) for node_id in anchor_node_ids)
@@ -189,7 +189,7 @@ def load_node_neighborhood(
         node_id, current_depth = queue.popleft()
         if current_depth >= depth:
             continue
-        neighbors = sorted(forward[node_id] | reverse[node_id])
+        neighbors = sorted(upstream_by_node[node_id] | downstream_by_node[node_id])
         for neighbor in neighbors:
             if neighbor in selected:
                 continue
@@ -201,9 +201,9 @@ def load_node_neighborhood(
     selected_nodes = [summarize_node_for_context(node_by_id[node_id]) for node_id in sorted(selected)]
     selected_edges = [
         {"source": source, "target": target}
-        for source in sorted(selected)
-        for target in sorted(forward[source])
-        if target in selected
+        for target in sorted(selected)
+        for source in sorted(upstream_by_node[target])
+        if source in selected
     ]
     return {
         "project_path": str(project_path),
@@ -308,19 +308,29 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
-def extract_wire_target_ids(wires: Any) -> list[str]:
-    targets: list[str] = []
+def extract_input_source_ids(wires: Any) -> list[str]:
+    sources: list[str] = []
     if not isinstance(wires, list):
-        return targets
+        return sources
     for input_sources in wires:
         if not isinstance(input_sources, list):
             continue
         for source in input_sources:
             if isinstance(source, str):
-                targets.append(source)
+                sources.append(source)
             elif isinstance(source, dict) and isinstance(source.get("id"), str):
-                targets.append(source["id"])
-    return targets
+                sources.append(source["id"])
+    return sources
+
+
+def _node_input_sources(node_index: dict[str, Any]) -> list[Any]:
+    input_sources = node_index.get("input_sources")
+    if isinstance(input_sources, list):
+        return input_sources
+    legacy_wires_to = node_index.get("wires_to")
+    if isinstance(legacy_wires_to, list):
+        return legacy_wires_to
+    return []
 
 
 def summarize_node_for_context(node: dict[str, Any]) -> dict[str, Any]:

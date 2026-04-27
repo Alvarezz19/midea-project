@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import uuid
@@ -185,17 +186,92 @@ def create_project_version(
     meta_path = version_root / f"{version_id}.meta.json"
 
     save_project(version_path, nodes)
+    json_sha256 = file_sha256(version_path)
     metadata = {
         "project_id": project_id,
         "version_id": version_id,
+        "parent_version_id": None,
         "source_template_path": source_path.relative_to(ROOT_DIR).as_posix() if source_path.is_relative_to(ROOT_DIR) else str(source_path),
         "version_path": version_path.relative_to(ROOT_DIR).as_posix() if version_path.is_relative_to(ROOT_DIR) else str(version_path),
+        "json_sha256": json_sha256,
+        "exportable": False,
         "created_at": now.isoformat(),
         "note": note,
         "summary": summarize_project(nodes),
     }
     save_metadata(meta_path, metadata)
     return metadata
+
+
+def create_project_version_from_nodes(
+    nodes: list[dict[str, Any]],
+    *,
+    project_id: str,
+    parent_version_id: str | None,
+    versions_dir: str | Path = VERSIONS_DIR,
+    version_id: str | None = None,
+    source_template_path: str | None = None,
+    patch_summary: dict[str, Any] | None = None,
+    validation_report: dict[str, Any] | None = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """从已修改节点创建不可变子版本。"""
+
+    now = datetime.now(timezone.utc)
+    if version_id is None:
+        version_id = f"v_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+    version_root = resolve_project_path(versions_dir) / project_id
+    version_path = version_root / f"{version_id}.json"
+    meta_path = version_root / f"{version_id}.meta.json"
+
+    save_project(version_path, nodes)
+    report = validation_report or {}
+    metadata = {
+        "project_id": project_id,
+        "version_id": version_id,
+        "parent_version_id": parent_version_id,
+        "source_template_path": source_template_path,
+        "version_path": version_path.relative_to(ROOT_DIR).as_posix() if version_path.is_relative_to(ROOT_DIR) else str(version_path),
+        "json_sha256": file_sha256(version_path),
+        "exportable": bool(report.get("valid")),
+        "created_at": now.isoformat(),
+        "note": note,
+        "patch_summary": patch_summary or {},
+        "validation_summary": {
+            "valid": report.get("valid"),
+            "error_count": report.get("error_count"),
+            "warning_count": report.get("warning_count"),
+        },
+        "summary": summarize_project(nodes),
+    }
+    save_metadata(meta_path, metadata)
+    return metadata
+
+
+def list_project_versions(project_id: str, *, versions_dir: str | Path = VERSIONS_DIR) -> list[dict[str, Any]]:
+    version_root = resolve_project_path(versions_dir) / project_id
+    if not version_root.exists():
+        return []
+
+    versions: list[dict[str, Any]] = []
+    for meta_path in sorted(version_root.glob("*.meta.json")):
+        try:
+            with meta_path.open("r", encoding="utf-8") as file:
+                metadata = json.load(file)
+        except (json.JSONDecodeError, OSError) as exc:
+            raise ProjectJsonError(f"读取版本元数据失败: {meta_path} ({exc})") from exc
+        if isinstance(metadata, dict):
+            versions.append(metadata)
+    versions.sort(key=lambda item: str(item.get("created_at", "")))
+    return versions
+
+
+def get_project_version(project_id: str, version_id: str, *, versions_dir: str | Path = VERSIONS_DIR) -> dict[str, Any]:
+    for metadata in list_project_versions(project_id, versions_dir=versions_dir):
+        if metadata.get("version_id") == version_id:
+            return metadata
+    raise ProjectJsonError(f"工程版本不存在: project_id={project_id}, version_id={version_id}")
 
 
 def save_metadata(path: str | Path, metadata: dict[str, Any]) -> Path:
@@ -205,6 +281,15 @@ def save_metadata(path: str | Path, metadata: dict[str, Any]) -> Path:
         json.dump(metadata, file, ensure_ascii=False, indent=2)
         file.write("\n")
     return target
+
+
+def file_sha256(path: str | Path) -> str:
+    target = resolve_project_path(path)
+    digest = hashlib.sha256()
+    with target.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def copy_project_version(source_version_path: str | Path, target_version_path: str | Path) -> Path:

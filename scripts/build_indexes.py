@@ -86,22 +86,22 @@ def extract_key_params(node: dict[str, Any], max_items: int = 12) -> dict[str, A
     return params
 
 
-def flatten_wires(wires: Any) -> list[str]:
-    targets: list[str] = []
+def extract_input_sources(wires: Any) -> list[str]:
+    sources: list[str] = []
     if not isinstance(wires, list):
-        return targets
-    for output_targets in wires:
-        if isinstance(output_targets, list):
-            for target in output_targets:
-                if isinstance(target, str):
-                    targets.append(target)
-                elif isinstance(target, dict) and isinstance(target.get("id"), str):
-                    targets.append(target["id"])
-        elif isinstance(output_targets, str):
-            targets.append(output_targets)
-        elif isinstance(output_targets, dict) and isinstance(output_targets.get("id"), str):
-            targets.append(output_targets["id"])
-    return targets
+        return sources
+    for input_sources in wires:
+        if isinstance(input_sources, list):
+            for source in input_sources:
+                if isinstance(source, str):
+                    sources.append(source)
+                elif isinstance(source, dict) and isinstance(source.get("id"), str):
+                    sources.append(source["id"])
+        elif isinstance(input_sources, str):
+            sources.append(input_sources)
+        elif isinstance(input_sources, dict) and isinstance(input_sources.get("id"), str):
+            sources.append(input_sources["id"])
+    return sources
 
 
 def collect_text(node: dict[str, Any], tab_label: str) -> str:
@@ -194,7 +194,7 @@ def build_template_indexes(path: Path) -> tuple[dict[str, Any], list[dict[str, A
         if not isinstance(node_id, str) or node_type == "tab":
             continue
 
-        wires_to = flatten_wires(node.get("wires"))
+        input_sources = extract_input_sources(node.get("wires"))
         node_indexes.append(
             {
                 "template_id": template_id,
@@ -206,7 +206,7 @@ def build_template_indexes(path: Path) -> tuple[dict[str, Any], list[dict[str, A
                 "name": node.get("name", ""),
                 "inputs": node.get("inputs"),
                 "outputs": node.get("outputs"),
-                "wires_to": wires_to,
+                "input_sources": input_sources,
                 "key_params": extract_key_params(node),
                 "text_for_search": node_text,
             }
