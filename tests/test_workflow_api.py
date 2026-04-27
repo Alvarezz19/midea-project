@@ -107,6 +107,14 @@ def test_workflow_reports_ambiguous_patch(tmp_path: Path) -> None:
 def test_api_end_to_end(tmp_path: Path) -> None:
     client = TestClient(app)
 
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "工程 JSON 智能体工作台" in page.text
+
+    script = client.get("/static/app.js")
+    assert script.status_code == 200
+    assert "createSession" in script.text
+
     health = client.get("/api/health")
     assert health.status_code == 200
     assert health.json() == {"status": "ok"}
@@ -137,6 +145,10 @@ def test_api_end_to_end(tmp_path: Path) -> None:
     assert validate.status_code == 200
     assert validate.json()["valid"]
 
+    validate_by_id = client.post(f"/api/projects/{state['current_project_id']}/validate")
+    assert validate_by_id.status_code == 200
+    assert validate_by_id.json()["valid"]
+
     candidate = state["template_candidates"][0]
     plan_node = search_nodes("比较判断", template_id=candidate["template_id"], node_type="compare", limit=1)[0]
     plan = client.post(
@@ -156,6 +168,11 @@ def test_api_end_to_end(tmp_path: Path) -> None:
     assert export.status_code == 200
     assert export.headers["content-type"].startswith("application/json")
     assert len(export.content) > 1000
+
+    export_by_id = client.get(f"/api/projects/{state['current_project_id']}/export")
+    assert export_by_id.status_code == 200
+    assert export_by_id.headers["content-type"].startswith("application/json")
+    assert export_by_id.content == export.content
 
     versions = client.get(f"/api/projects/{state['current_project_id']}/versions")
     assert versions.status_code == 200

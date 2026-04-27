@@ -16,8 +16,15 @@ TYPE_KEYWORDS = {
     "比较判断": "compare",
     "比较": "compare",
     "常量": "constInput",
-    "PID": "pid",
-    "pid": "pid",
+    "常数": "constInput",
+    "软件输入": "swInput",
+    "物理输入": "hwInput",
+    "物理输出": "hwOutput",
+    "引用": "quote",
+    "PID控制器": "pid",
+    "pid控制器": "pid",
+    "PID模块": "pid",
+    "pid模块": "pid",
     "延时开": "delayOn",
     "延时关": "delayOff",
 }
@@ -26,12 +33,48 @@ FIELD_ALIASES = {
     "fixedValue": "fixedValue",
     "固定值": "fixedValue",
     "常量值": "fixedValue",
+    "常数值": "fixedValue",
+    "输出参数": "fixedValue",
     "设定值": "fixedValue",
     "tripPoint": "tripPoint",
     "阈值": "tripPoint",
     "门限": "tripPoint",
+    "比较数": "tripPoint",
+    "比较值": "tripPoint",
+    "静态阈值": "tripPoint",
     "outOfServiceValue": "outOfServiceValue",
     "离线值": "outOfServiceValue",
+    "掉线值": "outOfServiceValue",
+    "默认输出值": "outOfServiceValue",
+    "无效输出值": "outOfServiceValue",
+    "无效时输出": "outOfServiceValue",
+    "禁止时输出": "outOfServiceValue",
+    "停机输出": "outOfServiceValue",
+    "disabledOutValue": "disabledOutValue",
+    "禁止输出模式": "disabledOutValue",
+    "不使能输出模式": "disabledOutValue",
+    "pidMode": "pidMode",
+    "运算方向": "pidMode",
+    "proportional": "proportional",
+    "比例增益": "proportional",
+    "P值": "proportional",
+    "integral": "integral",
+    "积分增益": "integral",
+    "I值": "integral",
+    "derivative": "derivative",
+    "微分增益": "derivative",
+    "D值": "derivative",
+    "highPidOutLimit": "highPidOutLimit",
+    "输出上限值": "highPidOutLimit",
+    "输出上限": "highPidOutLimit",
+    "lowPidOutLimit": "lowPidOutLimit",
+    "输出下限值": "lowPidOutLimit",
+    "输出下限": "lowPidOutLimit",
+    "interval": "interval",
+    "计算间隔": "interval",
+    "运算间隔": "interval",
+    "deadBand": "deadBand",
+    "死区": "deadBand",
     "name": "name",
     "名称": "name",
 }
@@ -159,7 +202,17 @@ def _plan_update_param(message: str, nodes: list[dict[str, Any]]) -> dict[str, A
     if selector_result["status"] != "resolved":
         return selector_result
 
-    node = selector_result["node"]
+    matched_nodes = find_nodes(nodes, selector_result["selector"])
+    node = matched_nodes[0]
+    if field_name not in node:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": [f"目标节点不包含参数 {field_name}，请确认要修改的字段或节点。"],
+            "reason": "目标节点不存在该参数，拒绝新增未知字段。",
+            "target_node": _summarize_node(node),
+        }
+
     raw_value = value_match.group("value").strip()
     new_value = _coerce_value(raw_value, node.get(field_name), field_name)
 
@@ -195,7 +248,20 @@ def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[di
         selector["type"] = node_type
 
     name_text = _clean_name_text(target_text, tab_label)
-    if name_text and not node_type:
+    if name_text:
+        exact_selector = {**selector, "name": name_text}
+        exact_matches = find_nodes(nodes, exact_selector)
+        if len(exact_matches) == 1:
+            node = exact_matches[0]
+            return {"status": "resolved", "selector": {"id": node["id"]}, "node": _summarize_node(node)}
+        if len(exact_matches) > 1:
+            return {
+                "status": "needs_clarification",
+                "pending_patch": None,
+                "questions": [f"名称为 {name_text} 的节点有 {len(exact_matches)} 个，请补充节点 id 或页面。"],
+                "reason": "节点名称不唯一。",
+                "matched_nodes": [_summarize_node(node) for node in exact_matches[:10]],
+            }
         selector["name_contains"] = name_text
 
     if not selector:
@@ -267,33 +333,73 @@ def _infer_field_name(message: str) -> str | None:
 
 
 def _extract_update_target_text(message: str, field_name: str) -> str:
-    del field_name
     text = re.split(r"改为|设为|设置为|调整为", message, maxsplit=1)[0]
     text = re.sub(r"^(把|将)", "", text).strip()
-    for keyword in sorted(FIELD_ALIASES, key=len, reverse=True):
-        text = text.replace(keyword, "")
+    field_keywords = [keyword for keyword, field in FIELD_ALIASES.items() if field == field_name]
+    for keyword in sorted(field_keywords, key=len, reverse=True):
+        text = re.sub(rf"\s*的\s*{re.escape(keyword)}\s*$", "", text)
     return _clean_target_text(text)
 
 
 def _clean_target_text(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^(把|将|请|帮我)", "", text).strip()
+    text = _extract_named_target(text) or text
     text = text.replace("节点", "").replace("的", " ").strip()
+    text = _strip_wrapping_quotes(text)
     return text
 
 
 def _clean_name_text(text: str, tab_label: str | None) -> str:
-    cleaned = text
+    cleaned = _extract_named_target(text) or text
     if tab_label:
         cleaned = cleaned.replace(tab_label, "")
     for keyword in TYPE_KEYWORDS:
         cleaned = cleaned.replace(keyword, "")
+    cleaned = re.sub(r"^(页面|页|中|里|内|下|名称|名字|为|叫做|名为)+", "", cleaned.strip())
+    cleaned = re.sub(r"(页面|页|中|里|内|下)$", "", cleaned.strip())
+    cleaned = _strip_wrapping_quotes(cleaned)
     return cleaned.strip()
 
 
+def _extract_named_target(text: str) -> str | None:
+    patterns = [
+        r"(?:节点)?(?:名称为|名为|叫做|名字叫|名字是)\s*(?P<name>.+?)(?:\s*的)?\s*$",
+        r"(?:节点)?(?:名称|名字)\s*[:：]\s*(?P<name>.+?)\s*$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text.strip())
+        if match:
+            return _strip_wrapping_quotes(match.group("name").strip())
+    return None
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    return text.strip().strip("\"'“”‘’`").strip()
+
+
 def _coerce_value(raw_value: str, old_value: Any, field_name: str) -> Any:
+    if field_name == "pidMode":
+        mapping = {"正向": "direct", "直接": "direct", "direct": "direct", "反向": "reverse", "reverse": "reverse"}
+        return mapping.get(raw_value, raw_value)
+    if field_name == "disabledOutValue":
+        mapping = {
+            "保持": "hold",
+            "维持": "hold",
+            "hold": "hold",
+            "上限": "max",
+            "最大": "max",
+            "max": "max",
+            "下限": "min",
+            "最小": "min",
+            "min": "min",
+            "零": "zero",
+            "0": "zero",
+            "zero": "zero",
+        }
+        return mapping.get(raw_value, raw_value)
     if isinstance(old_value, bool):
-        return raw_value.lower() in {"true", "1", "yes", "on", "是", "真"}
+        return raw_value.lower() in {"true", "1", "yes", "on", "是", "真", "启用", "开启"}
     if isinstance(old_value, int) and not isinstance(old_value, bool):
         try:
             return int(float(raw_value))

@@ -1,0 +1,79 @@
+{
+  "project_id": "project_20260427153827_fa177e86",
+  "version_id": "v_20260427153827_5b0714db",
+  "source_template_path": "programs/AHU程序/泰安宁阳中医院/flows_20260206160555.json",
+  "version_path": "projects/versions/project_20260427153827_fa177e86/v_20260427153827_5b0714db.json",
+  "created_at": "2026-04-27T15:38:27.291238+00:00",
+  "note": "由 LangGraph 最小工作流创建。",
+  "summary": {
+    "node_count": 992,
+    "tab_count": 6,
+    "tabs": [
+      {
+        "id": "ab3fc9e",
+        "label": "IO/通讯(安宁中医院）",
+        "node_count": 144
+      },
+      {
+        "id": "6d209af",
+        "label": "控制",
+        "node_count": 339
+      },
+      {
+        "id": "e895fff",
+        "label": "排风机",
+        "node_count": 30
+      },
+      {
+        "id": "f7d6e97",
+        "label": "定时",
+        "node_count": 4
+      },
+      {
+        "id": "a4b914",
+        "label": "直膨机故障",
+        "node_count": 14
+      },
+      {
+        "id": "572c1e3",
+        "label": "直膨机状态",
+        "node_count": 154
+      }
+    ],
+    "node_type_counts": {
+      "swInput": 397,
+      "quote": 233,
+      "modbusOutput": 78,
+      "logic": 38,
+      "switch": 30,
+      "compare": 27,
+      "limit": 22,
+      "constInput": 18,
+      "delayOn": 17,
+      "hwInput": 15,
+      "comment": 13,
+      "delayOff": 12,
+      "multiply": 11,
+      "edgeTrigger": 9,
+      "subtract": 9,
+      "pid": 8,
+      "hwOutput": 7,
+      "tab": 6,
+      "subflow": 6,
+      "bitFetch": 6,
+      "moisture": 6,
+      "linear": 5,
+      "subflow:e895edf": 3,
+      "srFlipflop": 3,
+      "divide": 2,
+      "enthalpy": 2,
+      "runtime": 2,
+      "delayOut": 2,
+      "rsFlipflop": 1,
+      "round": 1,
+      "subflow:65810bf": 1,
+      "counter": 1,
+      "subflow:23f9145": 1
+    }
+  }
+}

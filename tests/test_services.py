@@ -112,6 +112,92 @@ def test_patch_engine_updates_renames_comments_and_validates(tmp_path: Path) -> 
     assert find_nodes(reloaded, {"id": "67febfa"})[0]["fixedValue"] == "5"
 
 
+def test_patch_engine_adds_schema_node_and_updates_explicit_wires() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+    result = apply_patch(
+        nodes,
+        {
+            "op": "add_node_from_schema",
+            "module_type": "constInput",
+            "tab_selector": {"label": "水泵控制"},
+            "params": {"user_defined_name": "测试常量节点", "fixedValue": 9},
+            "x": 220,
+            "y": 260,
+        },
+    )
+
+    assert result["changed"]
+    added = result["changes"][0]
+    assert added["op"] == "add_node_from_schema"
+    assert added["type"] == "constInput"
+    assert added["tab_id"] == "73b96a8"
+
+    added_node = find_nodes(result["nodes"], {"id": added["node_id"]})[0]
+    assert added_node["name"] == "测试常量节点"
+    assert added_node["fixedValue"] == 9
+    assert added_node["inputs"] == 0
+    assert added_node["outputs"] == 1
+    assert added_node["wires"] == []
+    assert validate_project(result["nodes"])["valid"]
+
+    connect_patch = {
+        "op": "connect",
+        "source_node_selector": {"id": added["node_id"]},
+        "source_output": 0,
+        "target_node_selector": {"id": "3a4c97e"},
+        "target_input": 1,
+    }
+    connected = apply_patch(result["nodes"], connect_patch)
+    assert connected["changes"] == [
+        {
+            "op": "connect",
+            "source_node_id": added["node_id"],
+            "source_output": 0,
+            "target_node_id": "3a4c97e",
+            "target_input": 1,
+        }
+    ]
+    compare = find_nodes(connected["nodes"], {"id": "3a4c97e"})[0]
+    assert {"id": added["node_id"], "port": 0} in compare["wires"][1]
+    assert validate_project(connected["nodes"])["valid"]
+
+    duplicate = apply_patch(connected["nodes"], connect_patch)
+    assert not duplicate["changed"]
+
+    disconnected = apply_patch(
+        connected["nodes"],
+        {
+            "op": "disconnect",
+            "source_node_selector": {"id": added["node_id"]},
+            "target_node_selector": {"id": "3a4c97e"},
+            "target_input": 1,
+        },
+    )
+    compare_after_disconnect = find_nodes(disconnected["nodes"], {"id": "3a4c97e"})[0]
+    assert {"id": added["node_id"], "port": 0} not in compare_after_disconnect["wires"][1]
+    assert validate_project(disconnected["nodes"])["valid"]
+
+
+def test_patch_engine_generates_schema_node_with_array_defaults() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+    result = apply_patch(
+        nodes,
+        {
+            "op": "add_node_from_schema",
+            "module_type": "pid",
+            "tab_selector": {"label": "控制"},
+            "params": {"inputsOption": ["deadBand"], "inputsCount": 4},
+        },
+    )
+
+    added = find_nodes(result["nodes"], {"id": result["changes"][0]["node_id"]})[0]
+    assert added["type"] == "pid"
+    assert added["inputs"] == 4
+    assert added["inputsOption"] == ["deadBand"]
+    assert added["wires"] == [[], [], [], []]
+    assert validate_project(result["nodes"])["valid"]
+
+
 def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
     nodes = load_project(PLANT_TEMPLATE)
 
@@ -120,6 +206,31 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
 
     with pytest.raises(PatchEngineError, match="不允许修改结构字段"):
         apply_patch(nodes, {"op": "update_param", "node_selector": {"id": "67febfa"}, "params": {"id": "bad"}})
+
+    with pytest.raises(PatchEngineError, match="不允许新增未知参数"):
+        apply_patch(nodes, {"op": "update_param", "node_selector": {"id": "67febfa"}, "params": {"unknownField": 1}})
+
+    with pytest.raises(PatchEngineError, match="schema 未定义参数"):
+        apply_patch(
+            nodes,
+            {
+                "op": "add_node_from_schema",
+                "module_type": "constInput",
+                "tab_selector": {"label": "水泵控制"},
+                "params": {"user_defined_name": "非法节点", "fixedValue": 1, "unknownField": 1},
+            },
+        )
+
+    with pytest.raises(PatchEngineError, match="target_input 超出"):
+        apply_patch(
+            nodes,
+            {
+                "op": "connect",
+                "source_node_selector": {"id": "67febfa"},
+                "target_node_selector": {"id": "3a4c97e"},
+                "target_input": 99,
+            },
+        )
 
 
 def test_index_files_are_parseable() -> None:
@@ -213,6 +324,45 @@ def test_planner_can_target_unique_node_by_tab_and_type(tmp_path: Path) -> None:
         "params": {"tripPoint": 3},
     }
     assert result["target_node"]["id"] == "3a4c97e"
+
+
+def test_planner_can_target_unique_node_by_name_phrase(tmp_path: Path) -> None:
+    metadata = create_project_version(AHU_TEMPLATE, project_id="planner_project", version_id="v_name", versions_dir=tmp_path)
+
+    rename = plan_patch_request(
+        "把名为 送风温度PID比例增益[P值] 的节点改名为 planner测试-P值",
+        project_path=metadata["version_path"],
+    )
+    assert rename["status"] == "planned"
+    assert rename["pending_patch"] == {
+        "op": "rename_node",
+        "node_selector": {"id": "795dbc3"},
+        "new_name": "planner测试-P值",
+    }
+
+    update = plan_patch_request(
+        "把名称为 送风温度PID比例增益[P值] 的禁止时输出改为 0.2",
+        project_path=metadata["version_path"],
+    )
+    assert update["status"] == "planned"
+    assert update["pending_patch"] == {
+        "op": "update_param",
+        "node_selector": {"id": "795dbc3"},
+        "params": {"outOfServiceValue": 0.2},
+    }
+
+
+def test_planner_rejects_unknown_parameter_on_target_node(tmp_path: Path) -> None:
+    metadata = create_project_version(AHU_TEMPLATE, project_id="planner_project", version_id="v_missing_param", versions_dir=tmp_path)
+
+    result = plan_patch_request(
+        "把名称为 送风温度PID比例增益[P值] 的阈值改为 3",
+        project_path=metadata["version_path"],
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["pending_patch"] is None
+    assert "不包含参数" in result["questions"][0]
 
 
 def test_planner_requires_clarification_for_ambiguous_node(tmp_path: Path) -> None:

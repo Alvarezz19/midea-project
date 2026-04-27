@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from app.services.json_project import find_nodes, get_tabs, load_project, save_project
+from app.services.schema_library import SchemaLibraryError, generate_nodes_from_schema
 from app.services.validator import validate_project
 
 
@@ -32,6 +33,12 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
             changes.extend(_rename_node(next_nodes, operation, index))
         elif op == "add_comment":
             changes.extend(_add_comment(next_nodes, operation, index))
+        elif op == "add_node_from_schema":
+            changes.extend(_add_node_from_schema(next_nodes, operation, index))
+        elif op == "connect":
+            changes.extend(_connect(next_nodes, operation, index))
+        elif op == "disconnect":
+            changes.extend(_disconnect(next_nodes, operation, index))
         else:
             raise PatchEngineError(f"不支持的补丁操作: {op}")
 
@@ -101,6 +108,8 @@ def _update_param(nodes: list[dict[str, Any]], operation: dict[str, Any], op_ind
     for field, new_value in params.items():
         if field in PROTECTED_UPDATE_FIELDS:
             raise PatchEngineError(f"update_param 不允许修改结构字段: {field}")
+        if field not in node:
+            raise PatchEngineError(f"update_param 不允许新增未知参数: {field}")
         old_value = node.get(field)
         if old_value == new_value:
             continue
@@ -171,6 +180,105 @@ def _add_comment(nodes: list[dict[str, Any]], operation: dict[str, Any], op_inde
     ]
 
 
+def _add_node_from_schema(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    schema_selector = operation.get("schema_selector")
+    if schema_selector is None and isinstance(operation.get("module_type"), str):
+        schema_selector = {"module_type": operation["module_type"]}
+    if not isinstance(schema_selector, dict):
+        raise PatchEngineError("add_node_from_schema 需要 schema_selector 或 module_type。")
+
+    try:
+        tab_id = _resolve_tab_id(nodes, operation, op_index)
+        generated_nodes = generate_nodes_from_schema(
+            schema_selector,
+            flow_id=tab_id,
+            params=operation.get("params") or {},
+            x=int(operation.get("x", operation.get("position", {}).get("x", 120))),
+            y=int(operation.get("y", operation.get("position", {}).get("y", 80))),
+            existing_ids={str(node.get("id")) for node in nodes if isinstance(node.get("id"), str)},
+        )
+    except SchemaLibraryError as exc:
+        raise PatchEngineError(f"第 {op_index} 个操作生成 schema 节点失败: {exc}") from exc
+    except (TypeError, ValueError) as exc:
+        raise PatchEngineError(f"第 {op_index} 个操作的坐标必须是整数。") from exc
+
+    nodes.extend(generated_nodes)
+    return [
+        {
+            "op": "add_node_from_schema",
+            "node_id": node["id"],
+            "tab_id": tab_id,
+            "type": node["type"],
+            "name": node.get("name", ""),
+        }
+        for node in generated_nodes
+    ]
+
+
+def _connect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    source = _select_one(nodes, _required_selector(operation, "source_node_selector", "connect"), op_index)
+    target = _select_one(nodes, _required_selector(operation, "target_node_selector", "connect"), op_index)
+    source_id = str(source.get("id"))
+    target_id = str(target.get("id"))
+    source_output = _resolve_port_index(operation.get("source_output", 0), "source_output")
+    target_input = _resolve_port_index(operation.get("target_input", 0), "target_input")
+
+    _assert_port_in_range(source, "outputs", source_output, "source_output")
+    _assert_port_in_range(target, "inputs", target_input, "target_input")
+    wires = _ensure_input_wires(target)
+    link = {"id": source_id, "port": source_output}
+    if any(_wire_ref_equals(existing, source_id, source_output) for existing in wires[target_input]):
+        return []
+    wires[target_input].append(link)
+    return [
+        {
+            "op": "connect",
+            "source_node_id": source_id,
+            "source_output": source_output,
+            "target_node_id": target_id,
+            "target_input": target_input,
+        }
+    ]
+
+
+def _disconnect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    source_selector = operation.get("source_node_selector")
+    target = _select_one(nodes, _required_selector(operation, "target_node_selector", "disconnect"), op_index)
+    source: dict[str, Any] | None = None
+    source_output = operation.get("source_output")
+    if source_selector is not None:
+        if not isinstance(source_selector, dict):
+            raise PatchEngineError("disconnect 的 source_node_selector 必须是对象。")
+        source = _select_one(nodes, source_selector, op_index)
+    if source_output is not None:
+        source_output = _resolve_port_index(source_output, "source_output")
+
+    target_input = operation.get("target_input")
+    wires = _ensure_input_wires(target)
+    input_indexes = [_resolve_port_index(target_input, "target_input")] if target_input is not None else list(range(len(wires)))
+    removed: list[dict[str, Any]] = []
+    source_id = str(source.get("id")) if source else None
+
+    for input_index in input_indexes:
+        _assert_port_in_range(target, "inputs", input_index, "target_input")
+        kept = []
+        for existing in wires[input_index]:
+            if source_id is None or _wire_ref_equals(existing, source_id, source_output):
+                removed.append(
+                    {
+                        "op": "disconnect",
+                        "source_node_id": _wire_ref_id(existing),
+                        "source_output": _wire_ref_port(existing),
+                        "target_node_id": target.get("id"),
+                        "target_input": input_index,
+                    }
+                )
+            else:
+                kept.append(existing)
+        wires[input_index] = kept
+    return removed
+
+
 def _resolve_tab_id(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> str:
     tabs = get_tabs(nodes)
     tab_selector = operation.get("tab_selector")
@@ -199,6 +307,69 @@ def _resolve_tab_id(nodes: list[dict[str, Any]], operation: dict[str, Any], op_i
     if len(tabs) == 1:
         return next(iter(tabs))
     raise PatchEngineError("add_comment 需要 tab_selector。")
+
+
+def _required_selector(operation: dict[str, Any], field: str, op_name: str) -> dict[str, Any]:
+    selector = operation.get(field)
+    if not isinstance(selector, dict):
+        raise PatchEngineError(f"{op_name} 需要 {field}。")
+    return selector
+
+
+def _resolve_port_index(value: Any, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise PatchEngineError(f"{field} 必须是非负整数。")
+    return value
+
+
+def _assert_port_in_range(node: dict[str, Any], field: str, index: int, label: str) -> None:
+    count = node.get(field)
+    if not isinstance(count, int) or count < 0:
+        raise PatchEngineError(f"节点 {node.get('id')} 缺少有效 {field}。")
+    if index >= count:
+        raise PatchEngineError(f"{label} 超出节点 {node.get('id')} 的 {field} 范围。")
+
+
+def _ensure_input_wires(node: dict[str, Any]) -> list[list[Any]]:
+    inputs = node.get("inputs")
+    if not isinstance(inputs, int) or inputs < 0:
+        raise PatchEngineError(f"节点 {node.get('id')} 缺少有效 inputs。")
+    wires = node.get("wires")
+    if wires is None:
+        wires = []
+    if not isinstance(wires, list):
+        raise PatchEngineError(f"节点 {node.get('id')} 的 wires 必须是数组。")
+    while len(wires) < inputs:
+        wires.append([])
+    if len(wires) > inputs:
+        raise PatchEngineError(f"节点 {node.get('id')} 的 wires 长度大于 inputs。")
+    for index, item in enumerate(wires):
+        if not isinstance(item, list):
+            raise PatchEngineError(f"节点 {node.get('id')} 的 wires[{index}] 必须是数组。")
+    node["wires"] = wires
+    return wires
+
+
+def _wire_ref_equals(value: Any, source_id: str, source_output: int | None) -> bool:
+    if _wire_ref_id(value) != source_id:
+        return False
+    if source_output is None:
+        return True
+    return _wire_ref_port(value) == source_output
+
+
+def _wire_ref_id(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("id"), str):
+        return value["id"]
+    return None
+
+
+def _wire_ref_port(value: Any) -> int:
+    if isinstance(value, dict) and isinstance(value.get("port"), int):
+        return value["port"]
+    return 0
 
 
 def _new_node_id(nodes: list[dict[str, Any]]) -> str:

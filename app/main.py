@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.graph.state import AgentState
@@ -19,6 +20,7 @@ from app.services.validator import validate_project
 
 
 app = FastAPI(title="Midea JSON Agent Prototype", version="0.1.0")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SESSIONS: dict[str, AgentState] = {}
 
@@ -60,6 +62,11 @@ class PlanPatchRequest(BaseModel):
     project_path: str
     template_id: str | None = None
     project_type: str | None = None
+
+
+@app.get("/", include_in_schema=False)
+def frontend() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/health")
@@ -156,10 +163,26 @@ def get_project_versions(project_id: str) -> dict[str, Any]:
     return {"project_id": project_id, "versions": versions}
 
 
+@app.post("/api/projects/{project_id}/validate")
+def validate_project_by_id(project_id: str) -> dict[str, Any]:
+    path = _get_current_project_path(project_id)
+    return validate_project(load_project(path))
+
+
 @app.post("/api/projects/validate")
 def validate_project_api(request: ValidateProjectRequest) -> dict[str, Any]:
     path = _resolve_allowed_project_file(request.path)
     return validate_project(load_project(path))
+
+
+@app.get("/api/projects/{project_id}/export")
+def export_project_by_id(project_id: str) -> FileResponse:
+    target = _get_current_project_path(project_id)
+    return FileResponse(
+        target,
+        media_type="application/json",
+        filename=target.name,
+    )
 
 
 @app.get("/api/projects/export")
@@ -197,6 +220,13 @@ def _empty_state(*, project_type: str | None, auto_confirm_template: bool, versi
     return state
 
 
+def _get_current_project_path(project_id: str) -> Path:
+    for state in SESSIONS.values():
+        if state.get("current_project_id") == project_id and state.get("current_project_path"):
+            return _resolve_allowed_project_file(str(state["current_project_path"]))
+    raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
+
+
 def _public_state(state: AgentState) -> dict[str, Any]:
     return {
         "messages": state.get("messages", []),
@@ -226,3 +256,6 @@ def _resolve_allowed_project_file(path: str) -> Path:
     if not target.is_relative_to(resolve_project_path(".")) and not str(target).startswith(str(Path(tempfile.gettempdir()).resolve())):
         raise HTTPException(status_code=403, detail="文件路径不在允许范围内。")
     return target
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
