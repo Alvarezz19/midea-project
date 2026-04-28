@@ -653,6 +653,13 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
         id_mapping[old_id] = new_id
 
     selected_set = set(block_node_ids)
+    boundary_preview = _build_copy_block_boundary_preview(
+        nodes,
+        source_by_id,
+        selected_set,
+        block,
+        id_mapping,
+    )
     copied_nodes: list[dict[str, Any]] = []
     dropped_external_input_count = 0
     detached_bacnet_object_count = 0
@@ -689,6 +696,12 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
         copied_nodes.append(copied)
 
     nodes.extend(copied_nodes)
+    boundary_connection_changes = _apply_copy_block_boundary_connections(
+        nodes,
+        operation,
+        id_mapping,
+        op_index,
+    )
     return [
         {
             "op": "copy_block",
@@ -700,8 +713,170 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
             "dropped_external_input_count": dropped_external_input_count,
             "detached_bacnet_object_count": detached_bacnet_object_count,
             "external_connections": "dropped",
+            "boundary_preview": boundary_preview,
+            "boundary_connection_count": len(boundary_connection_changes),
+            "boundary_connection_changes": boundary_connection_changes,
         }
     ]
+
+
+def _build_copy_block_boundary_preview(
+    target_nodes: list[dict[str, Any]],
+    source_by_id: dict[Any, dict[str, Any]],
+    selected_set: set[str],
+    block: dict[str, Any],
+    id_mapping: dict[str, str],
+) -> dict[str, Any]:
+    target_ids = {str(node.get("id")) for node in target_nodes if isinstance(node.get("id"), str)}
+    entry_ports: list[dict[str, Any]] = []
+    exit_ports: list[dict[str, Any]] = []
+    for target_old_id in sorted(selected_set):
+        target_node = source_by_id.get(target_old_id)
+        if not isinstance(target_node, dict):
+            continue
+        wires = target_node.get("wires")
+        if not isinstance(wires, list):
+            continue
+        for target_input, input_sources in enumerate(wires):
+            if not isinstance(input_sources, list):
+                continue
+            for source_ref in input_sources:
+                source_old_id = _wire_ref_id(source_ref)
+                if not source_old_id or source_old_id in selected_set:
+                    continue
+                source_node = source_by_id.get(source_old_id)
+                source_output = _wire_ref_port(source_ref)
+                entry = {
+                    "source": _boundary_node_ref(source_node, source_old_id),
+                    "source_output": source_output,
+                    "target": _boundary_node_ref(target_node, target_old_id),
+                    "target_input": target_input,
+                    "copied_target_node_id": id_mapping.get(target_old_id),
+                    "source_available_in_target_project": source_old_id in target_ids,
+                }
+                if source_old_id in target_ids and id_mapping.get(target_old_id):
+                    entry["suggested_boundary_connection"] = {
+                        "role": "entry",
+                        "source_node_selector": {"id": source_old_id},
+                        "source_output": source_output,
+                        "target_copied_from_id": target_old_id,
+                        "target_input": target_input,
+                    }
+                entry_ports.append(entry)
+
+    for downstream_node in source_by_id.values():
+        if not isinstance(downstream_node, dict):
+            continue
+        downstream_old_id = downstream_node.get("id")
+        if not isinstance(downstream_old_id, str) or downstream_old_id in selected_set:
+            continue
+        wires = downstream_node.get("wires")
+        if not isinstance(wires, list):
+            continue
+        for target_input, input_sources in enumerate(wires):
+            if not isinstance(input_sources, list):
+                continue
+            for source_ref in input_sources:
+                source_old_id = _wire_ref_id(source_ref)
+                if source_old_id not in selected_set:
+                    continue
+                source_output = _wire_ref_port(source_ref)
+                exit_item = {
+                    "source": _boundary_node_ref(source_by_id.get(source_old_id), source_old_id),
+                    "source_output": source_output,
+                    "copied_source_node_id": id_mapping.get(str(source_old_id)),
+                    "target": _boundary_node_ref(downstream_node, downstream_old_id),
+                    "target_input": target_input,
+                    "target_available_in_target_project": downstream_old_id in target_ids,
+                }
+                if downstream_old_id in target_ids and id_mapping.get(str(source_old_id)):
+                    exit_item["suggested_boundary_connection"] = {
+                        "role": "exit",
+                        "source_copied_from_id": source_old_id,
+                        "source_output": source_output,
+                        "target_node_selector": {"id": downstream_old_id},
+                        "target_input": target_input,
+                    }
+                exit_ports.append(exit_item)
+
+    return {
+        "entry_node_id_mapping": _mapped_ids(block.get("entry_node_ids"), id_mapping),
+        "exit_node_id_mapping": _mapped_ids(block.get("exit_node_ids"), id_mapping),
+        "entry_ports": entry_ports,
+        "exit_ports": exit_ports,
+        "connection_policy": "not_connected_by_default",
+        "connection_helper": {
+            "field": "boundary_connections",
+            "entry_required_fields": ["role", "source_node_selector", "source_output", "target_copied_from_id", "target_input"],
+            "exit_required_fields": ["role", "source_copied_from_id", "source_output", "target_node_selector", "target_input"],
+        },
+    }
+
+
+def _mapped_ids(value: Any, id_mapping: dict[str, str]) -> dict[str, str]:
+    if not isinstance(value, list):
+        return {}
+    return {node_id: id_mapping[node_id] for node_id in value if isinstance(node_id, str) and node_id in id_mapping}
+
+
+def _boundary_node_ref(node: Any, fallback_id: Any) -> dict[str, Any]:
+    if not isinstance(node, dict):
+        return {"id": fallback_id}
+    return {
+        "id": node.get("id", fallback_id),
+        "type": node.get("type"),
+        "name": node.get("name"),
+        "label": node.get("label"),
+    }
+
+
+def _apply_copy_block_boundary_connections(
+    nodes: list[dict[str, Any]],
+    operation: dict[str, Any],
+    id_mapping: dict[str, str],
+    op_index: int,
+) -> list[dict[str, Any]]:
+    raw_connections = operation.get("boundary_connections")
+    if raw_connections in (None, []):
+        return []
+    if not isinstance(raw_connections, list):
+        raise PatchEngineError("copy_block.boundary_connections 必须是数组。")
+
+    changes: list[dict[str, Any]] = []
+    for connection_index, connection in enumerate(raw_connections):
+        if not isinstance(connection, dict):
+            raise PatchEngineError(f"copy_block.boundary_connections[{connection_index}] 必须是对象。")
+        role = connection.get("role")
+        if role == "entry":
+            target_old_id = connection.get("target_copied_from_id")
+            if not isinstance(target_old_id, str) or target_old_id not in id_mapping:
+                raise PatchEngineError(f"copy_block.boundary_connections[{connection_index}] 的 target_copied_from_id 无效。")
+            connect_operation = {
+                "source_node_selector": _required_selector(connection, "source_node_selector", "copy_block.boundary_connections.entry"),
+                "source_output": connection.get("source_output", 0),
+                "target_node_selector": {"id": id_mapping[target_old_id]},
+                "target_input": connection.get("target_input"),
+            }
+        elif role == "exit":
+            source_old_id = connection.get("source_copied_from_id")
+            if not isinstance(source_old_id, str) or source_old_id not in id_mapping:
+                raise PatchEngineError(f"copy_block.boundary_connections[{connection_index}] 的 source_copied_from_id 无效。")
+            connect_operation = {
+                "source_node_selector": {"id": id_mapping[source_old_id]},
+                "source_output": connection.get("source_output", 0),
+                "target_node_selector": _required_selector(connection, "target_node_selector", "copy_block.boundary_connections.exit"),
+                "target_input": connection.get("target_input"),
+            }
+        else:
+            raise PatchEngineError(f"copy_block.boundary_connections[{connection_index}] 的 role 必须是 entry 或 exit。")
+
+        for change in _connect(nodes, connect_operation, op_index):
+            next_change = dict(change)
+            next_change["op"] = "copy_block_boundary_connect"
+            next_change["role"] = role
+            next_change["boundary_connection_index"] = connection_index
+            changes.append(next_change)
+    return changes
 
 
 def _detach_copied_bacnet_object(node: dict[str, Any]) -> bool:

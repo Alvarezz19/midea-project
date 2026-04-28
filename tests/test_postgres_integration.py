@@ -99,6 +99,67 @@ print(snapshot.values.get('next_action'))
     assert read_result.stdout.splitlines()[-2:] == ["need_project_type", "ask_project_type"]
 
 
+def test_langgraph_postgres_interrupt_resume_applies_patch_across_processes(tmp_path: Path) -> None:
+    _apply_postgres_migrations()
+    thread_id = f"pytest-postgres-interrupt-{uuid.uuid4().hex}"
+    versions_dir = str(tmp_path / "versions")
+    write_env = _postgres_env(setup="true")
+    read_env = _postgres_env(setup="false")
+
+    write_code = f"""
+from app.graph.state import initial_state
+from app.graph.workflow import invoke_workflow
+
+state = initial_state('我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制', auto_confirm_template=True)
+state['versions_dir'] = {versions_dir!r}
+created = invoke_workflow(state, thread_id={thread_id!r})
+patch = {{'op': 'disconnect', 'target_node_selector': {{'id': '3a4c97e'}}, 'target_input': 0}}
+created['messages'] = list(created['messages']) + [{{'role': 'user', 'content': '断开比较节点输入，验证 interrupt。'}}]
+created['pending_patch'] = patch
+interrupted = invoke_workflow(created, thread_id={thread_id!r})
+print(interrupted['status'])
+print(interrupted['next_action'])
+print(interrupted['__interrupt__'][0].value['kind'])
+print(interrupted['current_project_version_id'])
+"""
+    write_result = subprocess.run(
+        [sys.executable, "-c", write_code],
+        cwd=ROOT_DIR,
+        env=write_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    status, next_action, interrupt_kind, first_version_id = write_result.stdout.splitlines()[-4:]
+    assert [status, next_action, interrupt_kind] == ["awaiting_patch_confirmation", "confirm_patch", "patch_confirmation"]
+
+    read_code = f"""
+from app.graph.workflow import invoke_workflow_resume
+
+resumed = invoke_workflow_resume({{'action': 'approve'}}, thread_id={thread_id!r})
+print(resumed['status'])
+print(resumed['validation_report']['valid'])
+print(resumed['patch_confirmation']['action'])
+print(resumed['patch_confirmation']['confirmed_project_version_id'])
+print(resumed['current_project_version_id'])
+"""
+    read_result = subprocess.run(
+        [sys.executable, "-c", read_code],
+        cwd=ROOT_DIR,
+        env=read_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    resumed_status, valid, action, confirmed_version_id, second_version_id = read_result.stdout.splitlines()[-5:]
+
+    assert resumed_status == "patch_applied"
+    assert valid == "True"
+    assert action == "approved"
+    assert confirmed_version_id == first_version_id
+    assert second_version_id != first_version_id
+
+
 def test_postgres_runtime_store_persists_session_versions_patch_validation_and_audit() -> None:
     _apply_postgres_migrations()
     project_marker = f"pytest_pg_runtime_{uuid.uuid4().hex}"
@@ -109,32 +170,33 @@ def test_postgres_runtime_store_persists_session_versions_patch_validation_and_a
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.json_project import load_project
-
 client = TestClient(app)
-created = client.post('/api/sessions', json={{'project_type': 'ahu', 'auto_confirm_template': True}})
+created = client.post('/api/sessions', json={{'project_type': 'plant_room', 'auto_confirm_template': True}})
 created.raise_for_status()
 thread_id = created.json()['thread_id']
 
 ready = client.post(
     f'/api/sessions/{{thread_id}}/message',
-    json={{'message': '我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯，标记 {project_marker}。'}},
+    json={{'message': '我要做风冷热泵机房群控程序，包含水泵和旁通阀控制，标记 {project_marker}。'}},
 )
 ready.raise_for_status()
 state = ready.json()['state']
 project_id = state['current_project_id']
 first_version_id = state['current_project_version_id']
-project_path = state['current_project_path']
-nodes = load_project(project_path)
-target = next(node for node in nodes if isinstance(node, dict) and node.get('type') not in {{'tab', 'subflow'}})
-patch = {{'op': 'rename_node', 'node_selector': {{'id': target['id']}}, 'new_name': 'PG运行时存储验收-{project_marker}'}}
+patch = {{'op': 'disconnect', 'target_node_selector': {{'id': '3a4c97e'}}, 'target_input': 0}}
 
-patched = client.post(
+pending = client.post(
     f'/api/sessions/{{thread_id}}/message',
-    json={{'message': '执行 PostgreSQL 运行时存储补丁验收。', 'pending_patch': patch}},
+    json={{'message': '执行 PostgreSQL 运行时存储中风险补丁验收。', 'pending_patch': patch}},
 )
-patched.raise_for_status()
-patched_state = patched.json()['state']
+pending.raise_for_status()
+pending_state = pending.json()['state']
+assert pending_state['status'] == 'awaiting_patch_confirmation'
+assert pending_state['next_action'] == 'confirm_patch'
+
+approved = client.post(f'/api/sessions/{{thread_id}}/patch-confirmation', json={{'action': 'approve'}})
+approved.raise_for_status()
+patched_state = approved.json()['state']
 second_version_id = patched_state['current_project_version_id']
 
 versions = client.get(f'/api/projects/{{project_id}}/versions')

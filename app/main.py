@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.graph.state import AgentState
-from app.graph.workflow import get_workflow, invoke_workflow
+from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
 from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
 from app.services.knowledge import search_knowledge
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
@@ -157,6 +157,23 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     if state is None:
         raise HTTPException(status_code=404, detail="会话不存在。")
 
+    if (
+        request.selected_template_id is not None
+        and state.get("status") == "awaiting_template_confirmation"
+        and state.get("next_action") == "confirm_template"
+        and _pending_interrupt_kind(thread_id) == "template_confirmation"
+    ):
+        try:
+            next_state = invoke_workflow_resume(
+                {"action": "select_template", "selected_template_id": request.selected_template_id},
+                thread_id=thread_id,
+                workflow=app.state.workflow,
+            )
+        except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+            raise HTTPException(status_code=500, detail=f"工作流恢复失败: {exc}") from exc
+        _session_store().save(thread_id, _storable_state(next_state))
+        return {"thread_id": thread_id, "state": _public_state(next_state)}
+
     state["messages"] = list(state.get("messages") or []) + [{"role": "user", "content": request.message}]
     if request.project_type is not None:
         state["project_type"] = request.project_type
@@ -178,7 +195,7 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
         raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
 
-    _session_store().save(thread_id, next_state)
+    _session_store().save(thread_id, _storable_state(next_state))
     return {"thread_id": thread_id, "state": _public_state(next_state)}
 
 
@@ -194,6 +211,18 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
     if not isinstance(pending_patch, dict):
         raise HTTPException(status_code=400, detail="待确认补丁不存在或格式无效。")
 
+    if _pending_interrupt_kind(thread_id) == "patch_confirmation":
+        try:
+            next_state = invoke_workflow_resume(
+                {"action": request.action},
+                thread_id=thread_id,
+                workflow=app.state.workflow,
+            )
+        except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+            raise HTTPException(status_code=500, detail=f"工作流恢复失败: {exc}") from exc
+        _session_store().save(thread_id, _storable_state(next_state))
+        return {"thread_id": thread_id, "state": _public_state(next_state)}
+
     if request.action == "cancel":
         state["pending_patch"] = None
         state["pending_confirmation_patch"] = None
@@ -206,7 +235,7 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
         state["next_action"] = "send_message"
         state["error"] = None
         state["messages"] = list(state.get("messages") or []) + [{"role": "assistant", "content": "已取消待确认补丁，当前工程版本未变化。"}]
-        _session_store().save(thread_id, state)
+        _session_store().save(thread_id, _storable_state(state))
         return {"thread_id": thread_id, "state": _public_state(state)}
 
     state["pending_patch"] = pending_patch
@@ -222,7 +251,7 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
         raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
 
-    _session_store().save(thread_id, next_state)
+    _session_store().save(thread_id, _storable_state(next_state))
     return {"thread_id": thread_id, "state": _public_state(next_state)}
 
 
@@ -610,7 +639,42 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "next_action": state.get("next_action"),
         "error": state.get("error"),
         "use_llm_planner": state.get("use_llm_planner", False),
+        "interrupts": _public_interrupts(state.get("__interrupt__")),
     }
+
+
+def _storable_state(state: AgentState) -> AgentState:
+    data = dict(state)
+    data.pop("__interrupt__", None)
+    return data  # type: ignore[return-value]
+
+
+def _pending_interrupt_kind(thread_id: str) -> str | None:
+    try:
+        snapshot = app.state.workflow.get_state({"configurable": {"thread_id": thread_id}})
+    except Exception:
+        return None
+    for item in getattr(snapshot, "interrupts", ()) or ():
+        value = getattr(item, "value", None)
+        if isinstance(value, dict) and isinstance(value.get("kind"), str):
+            return str(value["kind"])
+    return None
+
+
+def _public_interrupts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        interrupt_value = getattr(item, "value", None)
+        interrupt_id = getattr(item, "id", None)
+        result.append(
+            {
+                "id": interrupt_id,
+                "value": interrupt_value,
+            }
+        )
+    return result
 
 
 def _resolve_allowed_project_file(path: str) -> Path:

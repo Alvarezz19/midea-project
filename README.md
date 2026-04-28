@@ -22,6 +22,7 @@
 - 支持按版本生成节点级 diff 摘要，用于前端预览历史版本差异。
 - 导出前会重新校验工程，存在 error 级问题时拒绝导出。
 - 支持生成功能块索引并检索水泵、旁通阀、排风机、直膨机等局部功能块。
+- 节点级索引已显式关联模块 schema，包含 `schema_path`、`schema_category`、`schema_name`、`schema_module_type` 和 `schema_parameter_fields`，便于检索、规划和后续数据库化同步。
 - 支持按 `block_id` 加载局部 JSON 上下文，返回节点摘要、内部边、边界边和预算信息。
 - 工作流已接入确定性结构化需求摘要，能在模板选择前识别项目类型、设备、控制功能、通讯/IO、保护逻辑和待澄清问题。
 - 模板候选会展示匹配项、缺失项、预计改造成本和风险点，便于工程师确认模板基底。
@@ -74,6 +75,7 @@
 - 会话状态默认通过文件型 session store 持久化到本地目录，也可切换到 PostgreSQL 运行时存储。
 - 支持 PostgreSQL 运行时业务存储：session、project/version 元数据、patch、validation、export、audit 可写入 PostgreSQL，工程 JSON 文件本体仍保存在版本目录。
 - 支持 LangGraph PostgreSQL checkpointer 配置，并已完成 Docker PostgreSQL 本地集成验收。
+- 模板确认和中高风险补丁确认已接入 LangGraph 原生 interrupt/resume；API 仍保持现有确认入口。
 - 已有 pytest 验收覆盖服务层、工作流和 API。
 
 ## 尚未完成
@@ -86,7 +88,6 @@
 - 更完整的前端交互体验。
 - 向量库/混合检索。
 - PostgreSQL 权限模型、运维查询和更完整生产化配套。
-- LangGraph 原生 interrupt/恢复式确认流。
 
 ## 目录结构
 
@@ -105,7 +106,7 @@ indexes/
   templates/              模板级索引
   tabs/                   页面级索引
   blocks/                 功能块级索引
-  nodes/                  节点级索引
+  nodes/                  节点级索引，显式包含 schema_* 关联字段
 
 knowledge/                控制策略和工程规范知识文档
 rules/                    机器可读工程规则
@@ -325,7 +326,27 @@ PID 等带选项的动态输入需要指定选项：
 }
 ```
 
-注意：`copy_block` 当前只复制功能块内部节点和内部连线，会重写所有复制节点 id，丢弃所有外部入口/出口连线，并禁用复制节点上的本地 BACnet 暴露对象，避免复用原对象号；复制后如需接入现有逻辑或重新配置点位，必须用后续显式补丁表达。
+注意：`copy_block` 默认只复制功能块内部节点和内部连线，会重写所有复制节点 id，丢弃所有外部入口/出口连线，并禁用复制节点上的本地 BACnet 暴露对象，避免复用原对象号。dry-run 的 `changes[0].boundary_preview` 会返回入口/出口节点映射、外部边界端口和可用的 `boundary_connections` 草案；只有人工确认节点、端口和方向后，才应把草案显式写入补丁：
+
+```json
+{
+  "op": "copy_block",
+  "block_id": "block_e05eca9c6b44",
+  "target_tab_selector": {"label": "控制"},
+  "x_offset": 50,
+  "y_offset": 70,
+  "name_prefix": "复制-",
+  "boundary_connections": [
+    {
+      "role": "entry",
+      "source_node_selector": {"id": "af00ef2"},
+      "source_output": 0,
+      "target_copied_from_id": "a66dadc",
+      "target_input": 0
+    }
+  ]
+}
+```
 
 设置 IO/通讯点位：
 
@@ -377,7 +398,7 @@ pytest -q
 当前验收结果：
 
 ```text
-93 passed, 3 skipped
+96 passed, 4 skipped
 ```
 
 当前测试文件包括：
@@ -411,7 +432,7 @@ pytest tests\test_postgres_integration.py -q
 当前 PostgreSQL 集成验收结果：
 
 ```text
-3 passed
+4 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
@@ -460,5 +481,5 @@ pytest -q
 优先用当前工作台跑真实样例，记录交互问题，再决定下一步：
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
-2. 增强后端局部子图能力：更完整的 `copy_block` 外部入口/出口接线辅助。
+2. 增强前端对 `copy_block` 边界预览和 `boundary_connections` 草案的可视化确认。
 3. 继续按真实项目样例细化通讯读写方向、更多设备保护链路和业务例外白名单。

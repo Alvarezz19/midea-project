@@ -164,6 +164,10 @@ def test_retrieval_template_tab_node_and_neighborhood() -> None:
     nodes = search_nodes("水泵 比较判断", template_id=best["template_id"], tab_label_contains="水泵", node_type="compare", limit=3)
     assert nodes
     assert nodes[0]["node_id"] == "3a4c97e"
+    assert nodes[0]["schema_matched"] is True
+    assert nodes[0]["schema_path"] == "schemas/logic/比较判断.json"
+    assert nodes[0]["schema_module_type"] == "compare"
+    assert "tripPoint" in nodes[0]["schema_parameter_fields"]
 
     neighborhood = load_node_neighborhood(best["source_path"], [nodes[0]["node_id"]], depth=1, max_nodes=30)
     assert neighborhood["node_count"] == 4
@@ -208,6 +212,13 @@ def test_retrieval_loads_block_context_with_budget() -> None:
     assert all(edge["source"] in selected_ids and edge["target"] in selected_ids for edge in context["internal_edges"])
     assert "inbound_edges" in context["boundary"]
     assert "outbound_edges" in context["boundary"]
+    assert "entry_ports" in context["boundary"]
+    assert "exit_ports" in context["boundary"]
+    if context["boundary"]["entry_ports"]:
+        entry_port = context["boundary"]["entry_ports"][0]
+        assert {"source", "source_output", "target", "target_input"}.issubset(entry_port)
+        assert "id" in entry_port["source"]
+        assert "id" in entry_port["target"]
     assert context["budget"]["max_nodes"] == 12
     assert context["budget"]["estimated_chars"] <= 12000
 
@@ -1127,6 +1138,16 @@ def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> Non
     assert set(change["id_mapping"]) == original_ids
     assert not (set(change["id_mapping"].values()) & {node["id"] for node in nodes if isinstance(node.get("id"), str)})
     assert change["external_connections"] == "dropped"
+    assert change["boundary_connection_count"] == 0
+    assert change["boundary_connection_changes"] == []
+    assert change["boundary_preview"]["connection_policy"] == "not_connected_by_default"
+    assert change["boundary_preview"]["entry_node_id_mapping"]
+    assert change["boundary_preview"]["exit_node_id_mapping"]
+    assert change["boundary_preview"]["entry_ports"]
+    assert change["boundary_preview"]["exit_ports"]
+    first_entry = change["boundary_preview"]["entry_ports"][0]
+    assert first_entry["copied_target_node_id"] in set(change["id_mapping"].values())
+    assert first_entry["suggested_boundary_connection"]["role"] == "entry"
 
     copied_ids = set(change["id_mapping"].values())
     copied_nodes = [node for node in result["nodes"] if node.get("id") in copied_ids]
@@ -1144,6 +1165,46 @@ def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> Non
         "modified_count": 0,
         "affected_node_count": len(copied_ids),
     }
+
+
+def test_patch_engine_copy_block_accepts_explicit_boundary_connection_helper() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+    block = search_blocks("排风机联动", template_id="ahu_5e351de94700", limit=1)[0]
+    preview = dry_run_patch(
+        nodes,
+        {
+            "op": "copy_block",
+            "block_id": block["block_id"],
+            "target_tab_selector": {"label": "控制"},
+            "x_offset": 50,
+            "y_offset": 70,
+            "name_prefix": "复制-",
+        },
+    )["changes"][0]["boundary_preview"]
+    boundary_connection = preview["entry_ports"][0]["suggested_boundary_connection"]
+
+    result = dry_run_patch(
+        nodes,
+        {
+            "op": "copy_block",
+            "block_id": block["block_id"],
+            "target_tab_selector": {"label": "控制"},
+            "x_offset": 50,
+            "y_offset": 70,
+            "name_prefix": "复制-",
+            "boundary_connections": [boundary_connection],
+        },
+    )
+
+    assert result["valid"] is True
+    change = result["changes"][0]
+    assert change["boundary_connection_count"] == 1
+    connection_change = change["boundary_connection_changes"][0]
+    assert connection_change["op"] == "copy_block_boundary_connect"
+    assert connection_change["role"] == "entry"
+    copied_target_id = change["id_mapping"][boundary_connection["target_copied_from_id"]]
+    copied_target = find_nodes(result["nodes"], {"id": copied_target_id})[0]
+    assert {"id": boundary_connection["source_node_selector"]["id"], "port": boundary_connection["source_output"]} in copied_target["wires"][boundary_connection["target_input"]]
 
 
 def test_patch_engine_detaches_bacnet_objects_when_copying_block() -> None:
@@ -1247,6 +1308,25 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
     with pytest.raises(PatchEngineError, match="功能块不存在"):
         apply_patch(nodes, {"op": "copy_block", "block_id": "missing-block", "target_tab_selector": {"label": "水泵控制"}})
 
+    with pytest.raises(PatchEngineError, match="target_copied_from_id 无效"):
+        apply_patch(
+            nodes,
+            {
+                "op": "copy_block",
+                "block_id": "block_3f996bfafceb",
+                "target_tab_selector": {"label": "旁通阀控制"},
+                "boundary_connections": [
+                    {
+                        "role": "entry",
+                        "source_node_selector": {"id": "67febfa"},
+                        "source_output": 0,
+                        "target_copied_from_id": "missing-inner-node",
+                        "target_input": 0,
+                    }
+                ],
+            },
+        )
+
 
 def test_index_files_are_parseable() -> None:
     template_index = json.loads(Path("indexes/templates/template_index.json").read_text(encoding="utf-8"))
@@ -1264,6 +1344,19 @@ def test_index_files_are_parseable() -> None:
     first_node = json.loads(node_lines[0])
     assert "input_sources" in first_node
     assert "wires_to" not in first_node
+    assert "schema_matched" in first_node
+    indexed_nodes = [json.loads(line) for line in node_lines]
+    compare_node = next(node for node in indexed_nodes if node["type"] == "compare")
+    assert compare_node["schema_matched"] is True
+    assert compare_node["schema_path"] == "schemas/logic/比较判断.json"
+    assert compare_node["schema_category"] == "逻辑模块/比较判断"
+    assert compare_node["schema_name"] == "比较判断 (Compare)"
+    assert compare_node["schema_module_type"] == "compare"
+    assert {"as", "inputAuxEnable", "inputsCount", "tripPoint"}.issubset(compare_node["schema_parameter_fields"])
+    schema_unmatched_node = next(node for node in indexed_nodes if str(node["type"]).startswith("subflow:"))
+    assert schema_unmatched_node["schema_matched"] is False
+    assert schema_unmatched_node["schema_path"] is None
+    assert schema_unmatched_node["schema_parameter_fields"] == []
     first_block = json.loads(block_lines[0])
     assert "block_id" in first_block
     assert "node_ids" in first_block

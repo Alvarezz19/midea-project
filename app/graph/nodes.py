@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from langgraph.types import interrupt
 
 from app.graph.state import AgentState
 from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
@@ -83,10 +86,163 @@ def select_or_wait_template(state: AgentState) -> dict[str, Any]:
             "next_action": None,
         }
 
+    return _with_assistant_summary(
+        state,
+        {
+            "status": "awaiting_template_confirmation",
+            "next_action": "confirm_template",
+        },
+    )
+
+
+def confirm_template_interrupt_node(state: AgentState) -> dict[str, Any]:
+    candidates = state.get("template_candidates") or []
+    candidate_ids = {str(candidate.get("template_id")) for candidate in candidates if candidate.get("template_id")}
+    if not candidates:
+        return {"status": "no_template_candidate", "next_action": "ask_more_requirements"}
+
+    resume_value = interrupt(
+        {
+            "kind": "template_confirmation",
+            "question": "请选择要使用的模板。",
+            "template_candidates": candidates,
+        }
+    )
+    selected_template_id = _selected_template_from_resume(resume_value)
+    if selected_template_id not in candidate_ids:
+        return {
+            "status": "awaiting_template_confirmation",
+            "next_action": "confirm_template",
+            "error": f"模板不在候选列表中: {selected_template_id}",
+        }
     return {
-        "status": "awaiting_template_confirmation",
-        "next_action": "confirm_template",
+        "selected_template_id": selected_template_id,
+        "status": "template_selected",
+        "next_action": None,
+        "error": None,
     }
+
+
+def _selected_template_from_resume(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        selected = value.get("selected_template_id") or value.get("template_id")
+        if isinstance(selected, str):
+            return selected
+    return ""
+
+
+def _with_assistant_summary(state: AgentState, updates: dict[str, Any]) -> dict[str, Any]:
+    next_state = dict(state)
+    next_state.update(updates)
+    messages = list(state.get("messages") or [])
+    messages.append({"role": "assistant", "content": _build_assistant_summary(next_state)})
+    return {**updates, "messages": messages}
+
+
+def confirm_patch_interrupt_node(state: AgentState) -> dict[str, Any]:
+    pending_patch = state.get("pending_confirmation_patch")
+    if not isinstance(pending_patch, dict):
+        return {"status": "ready_for_user_patch", "next_action": "wait_user_patch"}
+
+    resume_value = interrupt(
+        {
+            "kind": "patch_confirmation",
+            "question": "补丁 dry-run 已通过，是否确认应用？",
+            "pending_patch": pending_patch,
+            "risk_assessment": state.get("risk_assessment"),
+            "dry_run": state.get("planner_dry_run"),
+            "current_project_version_id": state.get("current_project_version_id"),
+        }
+    )
+    action = _confirmation_action_from_resume(resume_value)
+    if action == "cancel":
+        return {
+            "pending_patch": None,
+            "pending_confirmation_patch": None,
+            "patch_confirmation": {
+                "action": "cancelled",
+                "cancelled_at": _utc_now_iso(),
+                "risk_assessment": state.get("risk_assessment"),
+            },
+            "status": "patch_confirmation_cancelled",
+            "next_action": "send_message",
+            "error": None,
+        }
+    if action != "approve":
+        return {
+            "status": "awaiting_patch_confirmation",
+            "next_action": "confirm_patch",
+            "error": f"未知补丁确认动作: {action}",
+        }
+    return {
+        "pending_patch": pending_patch,
+        "patch_confirmation": {
+            "action": "approved",
+            "confirmed_patch": pending_patch,
+            "confirmed_project_version_id": state.get("current_project_version_id"),
+            "confirmed_at": _utc_now_iso(),
+            "risk_assessment": state.get("risk_assessment"),
+        },
+        "status": "patch_confirmation_approved",
+        "next_action": None,
+        "error": None,
+    }
+
+
+def _confirmation_action_from_resume(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        action = value.get("action")
+        if isinstance(action, str):
+            return action
+    return ""
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def route_after_template_confirmation(state: AgentState) -> str:
+    if state.get("status") == "template_selected":
+        return "create_project_version"
+    return "summarize_result"
+
+
+def route_after_patch_application(state: AgentState) -> str:
+    if state.get("status") == "awaiting_patch_confirmation" and state.get("next_action") == "confirm_patch":
+        return "confirm_patch_interrupt"
+    return "summarize_result"
+
+
+def route_after_patch_confirmation(state: AgentState) -> str:
+    if state.get("status") == "patch_confirmation_approved":
+        return "apply_pending_patch"
+    return "summarize_result"
+
+
+def _await_patch_confirmation_update(state: AgentState, pending_patch: dict[str, Any], result: dict[str, Any], risk_assessment: dict[str, Any]) -> dict[str, Any]:
+    dry_run_preview = dict(result)
+    dry_run_preview.pop("nodes", None)
+    return _with_assistant_summary(
+        state,
+        {
+            "pending_patch": None,
+            "pending_confirmation_patch": pending_patch,
+            "planner_dry_run": dry_run_preview,
+            "risk_assessment": risk_assessment,
+            "validation_report": result["validation_report"],
+            "patch_result": None,
+            "status": "awaiting_patch_confirmation",
+            "next_action": "confirm_patch",
+        },
+    )
+
+
+def _is_approved_resume_state(state: AgentState, pending_patch: dict[str, Any]) -> bool:
+    return _is_patch_confirmed(state, pending_patch)
 
 
 def create_project_version_node(state: AgentState) -> dict[str, Any]:
@@ -242,19 +398,8 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
         report = result["validation_report"]
         planner_result = _matching_planner_result(state.get("planner_result"), pending_patch)
         risk_assessment = _assess_patch_risk(pending_patch, planner_result=planner_result)
-        if report["valid"] and risk_assessment["requires_confirmation"] and not _is_patch_confirmed(state, pending_patch):
-            dry_run_preview = dict(result)
-            dry_run_preview.pop("nodes", None)
-            return {
-                "pending_patch": None,
-                "pending_confirmation_patch": pending_patch,
-                "planner_dry_run": dry_run_preview,
-                "risk_assessment": risk_assessment,
-                "validation_report": report,
-                "patch_result": None,
-                "status": "awaiting_patch_confirmation",
-                "next_action": "confirm_patch",
-            }
+        if report["valid"] and risk_assessment["requires_confirmation"] and not _is_approved_resume_state(state, pending_patch):
+            return _await_patch_confirmation_update(state, pending_patch, result, risk_assessment)
         if report["valid"]:
             if not state.get("current_project_id"):
                 return {"status": "error", "error": "无法创建补丁版本：current_project_id 为空。", "next_action": "fix_project_version"}
@@ -328,6 +473,8 @@ def summarize_result_node(state: AgentState) -> dict[str, Any]:
 def route_after_template_selection(state: AgentState) -> str:
     if state.get("status") == "template_selected":
         return "create_project_version"
+    if state.get("status") == "awaiting_template_confirmation" and state.get("next_action") == "confirm_template":
+        return "confirm_template_interrupt"
     return "summarize_result"
 
 

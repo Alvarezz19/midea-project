@@ -150,7 +150,17 @@ def search_nodes(
             continue
         if node_type and node.get("type") != node_type:
             continue
-        text = f"{node.get('text_for_search', '')} {json.dumps(node.get('key_params', {}), ensure_ascii=False)}"
+        schema_text = " ".join(
+            str(value)
+            for value in (
+                node.get("schema_name"),
+                node.get("schema_category"),
+                node.get("schema_module_type"),
+                " ".join(node.get("schema_parameter_fields") or []),
+            )
+            if value
+        )
+        text = f"{node.get('text_for_search', '')} {schema_text} {json.dumps(node.get('key_params', {}), ensure_ascii=False)}"
         score = text_score(text, query_tokens)
         if node_type and node.get("type") == node_type:
             score += 0.5
@@ -272,6 +282,8 @@ def load_block_context(
             "exit_node_ids": block.get("exit_node_ids", []),
             "inbound_edges": inbound_edges[:40],
             "outbound_edges": outbound_edges[:40],
+            "entry_ports": _entry_ports(selected_ids, node_by_id, selected_set)[:40],
+            "exit_ports": _exit_ports(selected_set, node_by_id)[:40],
             "truncated_inbound_edges": len(inbound_edges) > 40,
             "truncated_outbound_edges": len(outbound_edges) > 40,
         },
@@ -287,6 +299,82 @@ def load_block_context(
         },
     }
     return _enforce_context_char_budget(result, max_chars=max_chars)
+
+
+def _entry_ports(selected_ids: list[str], node_by_id: dict[str, dict[str, Any]], selected_set: set[str]) -> list[dict[str, Any]]:
+    ports: list[dict[str, Any]] = []
+    for target_id in selected_ids:
+        target_node = node_by_id[target_id]
+        wires = target_node.get("wires")
+        if not isinstance(wires, list):
+            continue
+        for target_input, input_sources in enumerate(wires):
+            if not isinstance(input_sources, list):
+                continue
+            for source in input_sources:
+                source_id = _wire_ref_id(source)
+                if not source_id or source_id in selected_set:
+                    continue
+                ports.append(
+                    {
+                        "source": _boundary_node_ref(node_by_id.get(source_id), source_id),
+                        "source_output": _wire_ref_port(source),
+                        "target": _boundary_node_ref(target_node, target_id),
+                        "target_input": target_input,
+                    }
+                )
+    return ports
+
+
+def _exit_ports(selected_set: set[str], node_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    ports: list[dict[str, Any]] = []
+    for target_id, target_node in node_by_id.items():
+        if target_id in selected_set:
+            continue
+        wires = target_node.get("wires")
+        if not isinstance(wires, list):
+            continue
+        for target_input, input_sources in enumerate(wires):
+            if not isinstance(input_sources, list):
+                continue
+            for source in input_sources:
+                source_id = _wire_ref_id(source)
+                if source_id not in selected_set:
+                    continue
+                ports.append(
+                    {
+                        "source": _boundary_node_ref(node_by_id.get(source_id), source_id),
+                        "source_output": _wire_ref_port(source),
+                        "target": _boundary_node_ref(target_node, target_id),
+                        "target_input": target_input,
+                    }
+                )
+    return ports
+
+
+def _boundary_node_ref(node: Any, fallback_id: Any) -> dict[str, Any]:
+    if not isinstance(node, dict):
+        return {"id": fallback_id}
+    return {
+        "id": node.get("id", fallback_id),
+        "type": node.get("type"),
+        "name": node.get("name"),
+        "label": node.get("label"),
+    }
+
+
+def _wire_ref_id(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("id"), str):
+        return value["id"]
+    return None
+
+
+def _wire_ref_port(value: Any) -> int:
+    if isinstance(value, dict) and isinstance(value.get("port"), int):
+        return value["port"]
+    return 0
 
 
 def score_block(block: dict[str, Any], query_tokens: list[str]) -> tuple[float, list[str]]:

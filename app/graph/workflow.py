@@ -5,18 +5,24 @@ from threading import Lock
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 
 from app.graph.checkpointing import get_checkpointer
 from app.graph.nodes import (
     apply_pending_patch_node,
     classify_project_type,
+    confirm_patch_interrupt_node,
+    confirm_template_interrupt_node,
     collect_requirements,
     create_project_version_node,
     plan_patch_node,
+    route_after_patch_application,
+    route_after_patch_confirmation,
     retrieve_template_candidates,
     route_after_requirements,
     route_after_patch_planning,
     route_after_project_version,
+    route_after_template_confirmation,
     route_after_template_selection,
     select_or_wait_template,
     summarize_result_node,
@@ -34,9 +40,11 @@ def build_workflow(*, checkpointer: Any | None = None):
     graph.add_node("collect_requirements", collect_requirements)
     graph.add_node("retrieve_template_candidates", retrieve_template_candidates)
     graph.add_node("select_or_wait_template", select_or_wait_template)
+    graph.add_node("confirm_template_interrupt", confirm_template_interrupt_node)
     graph.add_node("create_project_version", create_project_version_node)
     graph.add_node("plan_patch", plan_patch_node)
     graph.add_node("apply_pending_patch", apply_pending_patch_node)
+    graph.add_node("confirm_patch_interrupt", confirm_patch_interrupt_node)
     graph.add_node("validate_current_project", validate_current_project_node)
     graph.add_node("summarize_result", summarize_result_node)
 
@@ -55,6 +63,15 @@ def build_workflow(*, checkpointer: Any | None = None):
     graph.add_conditional_edges(
         "select_or_wait_template",
         route_after_template_selection,
+        {
+            "create_project_version": "create_project_version",
+            "confirm_template_interrupt": "confirm_template_interrupt",
+            "summarize_result": "summarize_result",
+        },
+    )
+    graph.add_conditional_edges(
+        "confirm_template_interrupt",
+        route_after_template_confirmation,
         {
             "create_project_version": "create_project_version",
             "summarize_result": "summarize_result",
@@ -77,7 +94,22 @@ def build_workflow(*, checkpointer: Any | None = None):
             "summarize_result": "summarize_result",
         },
     )
-    graph.add_edge("apply_pending_patch", "summarize_result")
+    graph.add_conditional_edges(
+        "apply_pending_patch",
+        route_after_patch_application,
+        {
+            "confirm_patch_interrupt": "confirm_patch_interrupt",
+            "summarize_result": "summarize_result",
+        },
+    )
+    graph.add_conditional_edges(
+        "confirm_patch_interrupt",
+        route_after_patch_confirmation,
+        {
+            "apply_pending_patch": "apply_pending_patch",
+            "summarize_result": "summarize_result",
+        },
+    )
     graph.add_edge("validate_current_project", "summarize_result")
     graph.add_edge("summarize_result", END)
     if checkpointer is None:
@@ -102,3 +134,13 @@ def invoke_workflow(state: AgentState, *, thread_id: str | None = None, workflow
         thread_id = f"adhoc_{uuid.uuid4().hex}"
     config = {"configurable": {"thread_id": thread_id}}
     return compiled_workflow.invoke(state, config)
+
+
+def invoke_workflow_resume(resume: Any, *, thread_id: str, workflow: Any | None = None) -> AgentState:
+    """从 LangGraph interrupt 检查点恢复执行。"""
+
+    if not thread_id:
+        raise ValueError("thread_id 不能为空。")
+    compiled_workflow = workflow or get_workflow()
+    config = {"configurable": {"thread_id": thread_id}}
+    return compiled_workflow.invoke(Command(resume=resume), config)

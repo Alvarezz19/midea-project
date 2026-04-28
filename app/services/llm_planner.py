@@ -63,6 +63,7 @@ class PlannedOperation(BaseModel):
     y_offset: int | None = None
     offset: dict[str, int] | None = None
     name_prefix: str | None = None
+    boundary_connections: list[dict[str, Any]] | None = None
     source_node_selector: dict[str, Any] | None = None
     target_node_selector: dict[str, Any] | None = None
     source_output: int | None = None
@@ -121,6 +122,27 @@ class PlannedOperation(BaseModel):
                     _require_int(self.offset.get("y"), "copy_block.offset.y")
             if self.name_prefix is not None and not isinstance(self.name_prefix, str):
                 raise ValueError("copy_block.name_prefix 必须是字符串。")
+            if self.boundary_connections is not None:
+                if not isinstance(self.boundary_connections, list):
+                    raise ValueError("copy_block.boundary_connections 必须是数组。")
+                for index, connection in enumerate(self.boundary_connections):
+                    if not isinstance(connection, dict):
+                        raise ValueError(f"copy_block.boundary_connections[{index}] 必须是对象。")
+                    role = connection.get("role")
+                    if role == "entry":
+                        _require_dict(connection.get("source_node_selector"), f"copy_block.boundary_connections[{index}].source_node_selector")
+                        _require_non_negative_int(connection.get("source_output"), f"copy_block.boundary_connections[{index}].source_output")
+                        if not _non_empty_string(connection.get("target_copied_from_id")):
+                            raise ValueError(f"copy_block.boundary_connections[{index}].target_copied_from_id 不能为空。")
+                        _require_non_negative_int(connection.get("target_input"), f"copy_block.boundary_connections[{index}].target_input")
+                    elif role == "exit":
+                        if not _non_empty_string(connection.get("source_copied_from_id")):
+                            raise ValueError(f"copy_block.boundary_connections[{index}].source_copied_from_id 不能为空。")
+                        _require_non_negative_int(connection.get("source_output"), f"copy_block.boundary_connections[{index}].source_output")
+                        _require_dict(connection.get("target_node_selector"), f"copy_block.boundary_connections[{index}].target_node_selector")
+                        _require_non_negative_int(connection.get("target_input"), f"copy_block.boundary_connections[{index}].target_input")
+                    else:
+                        raise ValueError(f"copy_block.boundary_connections[{index}].role 必须是 entry 或 exit。")
         elif self.op == "connect":
             _require_dict(self.source_node_selector, "connect.source_node_selector")
             _require_dict(self.target_node_selector, "connect.target_node_selector")
@@ -189,7 +211,7 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 5. rename_node：需要 node_selector 和 new_name。
 6. add_comment：需要 tab_selector 和 text。
 7. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
-8. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix。只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
+8. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix；只有用户基于边界预览明确给出 boundary_connections 时，才可按 entry/exit 显式接线。默认只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
 9. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
 10. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
 
@@ -203,7 +225,7 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 1. 如果要把新增常量、设定值或传感器信号接入 compare/limit 的动态阈值端口，必须先 add_node_from_schema，再 enable_dynamic_input，最后 connect 到 target_input=1。
 2. 如果要把新增设定值接入 PID 参数动态端口，必须先 add_node_from_schema，再 enable_dynamic_input 并指定 input_option，最后 connect 到新增动态端口。
 3. 不要用 connect 隐式创建端口；端口数量变化必须显式表达为 enable_dynamic_input。
-4. copy_block 只能表达“复制局部功能块并暂不接外部线”；如果用户要求复制后自动接入现有 IO、保护、设备或通讯链路，必须先追问入口/出口和确认方式。
+4. copy_block 默认只能表达“复制局部功能块并暂不接外部线”；如果用户要求复制后接入现有 IO、保护、设备或通讯链路，必须先基于边界预览追问入口/出口和确认方式；只有节点、端口和方向都明确时，才可输出 boundary_connections。
 5. set_io_point 只表达明确节点上的点位字段变更；如果没有明确节点、字段和值，必须追问。
 
 风险规则：

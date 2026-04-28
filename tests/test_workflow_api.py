@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.graph.state import initial_state
-from app.graph.workflow import get_workflow, invoke_workflow
+from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
 from app.main import app
 from app.services.json_project import load_project
 from app.services.retrieval import search_nodes, search_templates
@@ -56,6 +57,61 @@ def test_workflow_can_create_project_version(tmp_path: Path) -> None:
     assert result["current_project_path"]
     assert Path(result["current_project_path"]).exists()
     assert validate_project(load_project(result["current_project_path"]))["valid"]
+
+
+def test_workflow_interrupts_and_resumes_template_confirmation(tmp_path: Path) -> None:
+    thread_id = f"pytest-template-interrupt-{uuid.uuid4().hex}"
+    state = initial_state("我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯")
+    state["versions_dir"] = str(tmp_path)
+
+    interrupted = invoke_workflow(state, thread_id=thread_id)
+
+    assert interrupted["status"] == "awaiting_template_confirmation"
+    assert interrupted["next_action"] == "confirm_template"
+    assert interrupted["template_candidates"]
+    assert interrupted["__interrupt__"][0].value["kind"] == "template_confirmation"
+    assert "已找到候选模板" in interrupted["messages"][-1]["content"]
+
+    resumed = invoke_workflow_resume(
+        {"selected_template_id": interrupted["template_candidates"][0]["template_id"]},
+        thread_id=thread_id,
+    )
+
+    assert resumed["status"] == "project_version_ready"
+    assert resumed["selected_template_id"] == interrupted["template_candidates"][0]["template_id"]
+    assert resumed["current_project_version_id"]
+    assert Path(resumed["current_project_path"]).exists()
+    assert "__interrupt__" not in resumed
+    assert validate_project(load_project(resumed["current_project_path"]))["valid"]
+
+
+def test_workflow_interrupts_and_resumes_patch_confirmation(tmp_path: Path) -> None:
+    thread_id = f"pytest-patch-interrupt-{uuid.uuid4().hex}"
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state, thread_id=thread_id)
+    original_version_id = created["current_project_version_id"]
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "断开比较节点的输入"}]
+    created["pending_patch"] = {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+    interrupted = invoke_workflow(created, thread_id=thread_id)
+
+    assert interrupted["status"] == "awaiting_patch_confirmation"
+    assert interrupted["next_action"] == "confirm_patch"
+    assert interrupted["__interrupt__"][0].value["kind"] == "patch_confirmation"
+    assert interrupted["pending_confirmation_patch"] == created["pending_patch"]
+    assert interrupted["current_project_version_id"] == original_version_id
+    assert "需要确认后再应用" in interrupted["messages"][-1]["content"]
+
+    resumed = invoke_workflow_resume({"action": "approve"}, thread_id=thread_id)
+
+    assert resumed["status"] == "patch_applied"
+    assert resumed["validation_report"]["valid"]
+    assert resumed["pending_confirmation_patch"] is None
+    assert resumed["current_project_version_id"] != original_version_id
+    assert resumed["patch_confirmation"]["action"] == "approved"
+    assert resumed["patch_confirmation"]["confirmed_project_version_id"] == original_version_id
+    assert "__interrupt__" not in resumed
 
 
 def test_workflow_applies_pending_patch(tmp_path: Path) -> None:

@@ -6,6 +6,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from app.services.schema_library import load_schema_files
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PROGRAMS_DIR = ROOT_DIR / "programs"
@@ -186,6 +188,52 @@ def collect_text(node: dict[str, Any], tab_label: str) -> str:
     return " ".join(values)
 
 
+def build_schema_index() -> dict[str, dict[str, Any]]:
+    schemas: dict[str, dict[str, Any]] = {}
+    for item in load_schema_files():
+        schema = item["schema"]
+        module_type = schema.get("module_type")
+        if not isinstance(module_type, str) or not module_type:
+            continue
+        parameters_schema = schema.get("parameters_schema")
+        parameter_fields = sorted(parameters_schema) if isinstance(parameters_schema, dict) else []
+        schemas[module_type] = {
+            "schema_matched": True,
+            "schema_path": item["path"],
+            "schema_category": schema.get("category"),
+            "schema_name": schema.get("name"),
+            "schema_module_type": module_type,
+            "schema_parameter_fields": parameter_fields,
+        }
+    return schemas
+
+
+def schema_metadata_for_node(node_type: str, schema_index: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    metadata = schema_index.get(node_type)
+    if metadata is None:
+        return {
+            "schema_matched": False,
+            "schema_path": None,
+            "schema_category": None,
+            "schema_name": None,
+            "schema_module_type": None,
+            "schema_parameter_fields": [],
+        }
+    return dict(metadata)
+
+
+def collect_schema_text(schema_metadata: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("schema_category", "schema_name", "schema_module_type", "schema_path"):
+        value = schema_metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    parameter_fields = schema_metadata.get("schema_parameter_fields")
+    if isinstance(parameter_fields, list):
+        values.extend(field for field in parameter_fields if isinstance(field, str) and field.strip())
+    return " ".join(values)
+
+
 def collect_node_text(node: dict[str, Any]) -> str:
     values: list[str] = []
     for key in ("type", "name", "label", "info", "topic", "objectName", "objctName", "as"):
@@ -247,7 +295,11 @@ def build_summary(project_type: str, file_name: str, tab_labels: list[str], feat
     return f"{file_name} 是 {label} 模板，包含 {feature_text}；主要页面包括：{tab_text}。"
 
 
-def build_template_indexes(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def build_template_indexes(
+    path: Path,
+    *,
+    schema_index: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     nodes = load_json(path)
     relative_path = relative_posix(path)
     project_type = detect_project_type(path)
@@ -284,6 +336,9 @@ def build_template_indexes(path: Path) -> tuple[dict[str, Any], list[dict[str, A
             continue
 
         input_sources = extract_input_sources(node.get("wires"))
+        schema_metadata = schema_metadata_for_node(node_type, schema_index)
+        schema_text = collect_schema_text(schema_metadata)
+        text_for_search = " ".join(value for value in (node_text, schema_text) if value)
         node_indexes.append(
             {
                 "template_id": template_id,
@@ -297,7 +352,8 @@ def build_template_indexes(path: Path) -> tuple[dict[str, Any], list[dict[str, A
                 "outputs": node.get("outputs"),
                 "input_sources": input_sources,
                 "key_params": extract_key_params(node),
-                "text_for_search": node_text,
+                **schema_metadata,
+                "text_for_search": text_for_search,
             }
         )
 
@@ -587,6 +643,7 @@ def main() -> None:
     template_files = find_template_files()
     if not template_files:
         raise SystemExit("未找到模板 JSON 文件。")
+    schema_index = build_schema_index()
 
     templates: list[dict[str, Any]] = []
     tabs: list[dict[str, Any]] = []
@@ -594,7 +651,7 @@ def main() -> None:
     blocks: list[dict[str, Any]] = []
 
     for path in template_files:
-        template_index, tab_indexes, node_indexes, block_indexes = build_template_indexes(path)
+        template_index, tab_indexes, node_indexes, block_indexes = build_template_indexes(path, schema_index=schema_index)
         templates.append(template_index)
         tabs.extend(tab_indexes)
         nodes.extend(node_indexes)
