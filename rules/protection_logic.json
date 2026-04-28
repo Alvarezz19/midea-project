@@ -1,0 +1,212 @@
+{
+  "text_fields": [
+    "name",
+    "label",
+    "labelName",
+    "labelNameOld",
+    "info",
+    "objectName",
+    "topic"
+  ],
+  "protection_signal_keywords": [
+    "防冻",
+    "故障",
+    "反馈",
+    "过滤",
+    "滤网",
+    "缺风",
+    "报警",
+    "到位",
+    "保护",
+    "联锁",
+    "急停"
+  ],
+  "critical_actuator": {
+    "node_types": [
+      "hwOutput",
+      "modbusOutput",
+      "bacipOutput",
+      "mqttout"
+    ],
+    "keywords": [
+      "送风机",
+      "排风机",
+      "新风阀",
+      "回风阀",
+      "直膨",
+      "水泵",
+      "冷冻泵",
+      "冷却泵",
+      "主机",
+      "热泵",
+      "蝶阀",
+      "旁通阀",
+      "电加热"
+    ]
+  },
+  "direct_bypass": {
+    "source_types": [
+      "constInput"
+    ],
+    "source_keywords": [
+      "常量",
+      "强制",
+      "旁路"
+    ],
+    "message": "关键执行器输出不应只由常量、强制或旁路信号直接驱动。"
+  },
+  "upstream_chain_rules": [
+    {
+      "id": "ahu_freeze_to_air_actuators",
+      "source_keywords": [
+        "防冻"
+      ],
+      "target_keywords": [
+        "送风机",
+        "新风阀"
+      ],
+      "required_upstream_keywords": [
+        "防冻"
+      ],
+      "max_depth": 6,
+      "message": "存在防冻保护信号时，送风机或新风阀执行器上游链路应保留防冻保护线索。"
+    }
+  ],
+  "direction_rules": {
+    "source_input_types": [
+      "hwInput",
+      "mqttin"
+    ],
+    "physical_output_types": [
+      "hwOutput"
+    ],
+    "read_signal_keywords": [
+      "故障",
+      "反馈",
+      "状态",
+      "报警",
+      "防冻",
+      "急停",
+      "到位"
+    ],
+    "input_has_upstream_message": "物理输入或订阅输入不应被上游节点驱动。",
+    "output_read_signal_message": "物理输出点位名称不应表达故障、反馈、状态、报警、防冻、急停或到位等读信号。"
+  },
+  "exceptions": [],
+  "requirement_rules": [
+    {
+      "id": "ahu_supply_air_status",
+      "equipment_terms": [
+        "送风"
+      ],
+      "required_terms": [
+        "故障",
+        "缺风",
+        "报警",
+        "运行"
+      ],
+      "message": "AHU 送风相关逻辑缺少故障、缺风、报警或运行反馈线索。"
+    },
+    {
+      "id": "ahu_dx_fault",
+      "equipment_terms": [
+        "直膨"
+      ],
+      "required_terms": [
+        "故障"
+      ],
+      "message": "AHU 直膨机相关逻辑缺少故障状态线索。"
+    },
+    {
+      "id": "ahu_electric_heater_fault",
+      "equipment_terms": [
+        "电加热"
+      ],
+      "required_terms": [
+        "故障"
+      ],
+      "message": "AHU 电加热相关逻辑缺少故障状态线索。"
+    },
+    {
+      "id": "ahu_filter_alarm",
+      "equipment_terms": [
+        "过滤",
+        "滤网"
+      ],
+      "required_terms": [
+        "报警"
+      ],
+      "message": "AHU 过滤网相关逻辑缺少报警线索。"
+    },
+    {
+      "id": "plant_pump_fault",
+      "equipment_terms": [
+        "水泵",
+        "冷冻泵",
+        "冷却泵"
+      ],
+      "required_terms": [
+        "故障"
+      ],
+      "message": "水泵相关逻辑缺少故障状态线索。"
+    },
+    {
+      "id": "plant_pump_running_feedback",
+      "equipment_terms": [
+        "水泵",
+        "冷冻泵",
+        "冷却泵"
+      ],
+      "required_terms": [
+        "运行",
+        "反馈"
+      ],
+      "message": "水泵相关逻辑缺少运行或反馈线索。"
+    },
+    {
+      "id": "plant_chiller_fault",
+      "equipment_terms": [
+        "主机",
+        "热泵"
+      ],
+      "required_terms": [
+        "故障"
+      ],
+      "message": "主机或热泵相关逻辑缺少故障状态线索。"
+    },
+    {
+      "id": "plant_chiller_running",
+      "equipment_terms": [
+        "主机",
+        "热泵"
+      ],
+      "required_terms": [
+        "运行"
+      ],
+      "message": "主机或热泵相关逻辑缺少运行状态线索。"
+    },
+    {
+      "id": "plant_valve_feedback",
+      "equipment_terms": [
+        "蝶阀"
+      ],
+      "required_terms": [
+        "到位",
+        "反馈"
+      ],
+      "message": "蝶阀相关逻辑缺少到位或反馈线索。"
+    },
+    {
+      "id": "plant_bypass_valve_limit",
+      "equipment_terms": [
+        "旁通阀"
+      ],
+      "required_terms": [
+        "限幅",
+        "上限",
+        "下限"
+      ],
+      "message": "旁通阀相关逻辑缺少上限、下限或限幅线索。"
+    }
+  ]
+}

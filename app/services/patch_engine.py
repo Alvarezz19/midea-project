@@ -7,7 +7,7 @@ from typing import Any
 from app.services.json_project import find_nodes, get_tabs, load_project, save_project
 from app.services.retrieval import RetrievalError, get_block_by_id
 from app.services.schema_library import SchemaLibraryError, generate_nodes_from_schema
-from app.services.validator import validate_project
+from app.services.validator import merge_validation_reports, validate_project, validate_project_change
 
 
 class PatchEngineError(ValueError):
@@ -163,7 +163,10 @@ def dry_run_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[st
     """执行补丁 dry-run，不产生外部副作用。"""
 
     result = apply_patch(nodes, patch)
-    report = validate_project(result["nodes"])
+    report = merge_validation_reports(
+        validate_project(result["nodes"]),
+        validate_project_change(nodes, result["nodes"]),
+    )
     return {
         "saved": False,
         "valid": report["valid"],
@@ -181,7 +184,10 @@ def apply_patch_to_project(source_path: str, target_path: str, patch: dict[str, 
 
     source_nodes = load_project(source_path)
     result = apply_patch(source_nodes, patch)
-    report = validate_project(result["nodes"])
+    report = merge_validation_reports(
+        validate_project(result["nodes"]),
+        validate_project_change(source_nodes, result["nodes"]),
+    )
     if not report["valid"]:
         return {
             "saved": False,

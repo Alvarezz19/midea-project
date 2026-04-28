@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import app.services.validator as validator_service
 from app.services.json_project import (
     create_project_version,
     create_project_version_from_nodes,
@@ -30,7 +31,7 @@ from app.services.retrieval import (
     search_tabs,
     search_templates,
 )
-from app.services.validator import validate_project
+from app.services.validator import validate_project, validate_project_change
 
 
 PLANT_TEMPLATE = Path("programs/机房群控程序/风冷热泵标准控制程序[风冷涡旋]20240905.json")
@@ -580,6 +581,381 @@ def test_validator_rejects_protection_logic_violations() -> None:
     assert "critical_actuator_without_interlock" in codes
     assert "protection_signal_disabled" in codes
     assert "missing_protection_logic" in codes
+
+
+def test_validator_uses_machine_readable_protection_rules() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {
+            "id": "emergency_stop",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "急停信号",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 1,
+        },
+        {
+            "id": "electric_heater_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "电加热输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "protection_signal_disabled" in codes
+    assert "critical_actuator_without_interlock" in codes
+
+
+def test_validator_rejects_direct_bypass_of_critical_actuator() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "constInput", "z": "tab1", "name": "强制常量", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 0,
+        },
+        {
+            "id": "supply_fan_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机启动输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "critical_actuator_direct_bypass" in codes
+
+
+def test_validator_rejects_missing_protection_chain_when_signal_exists() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "swInput", "z": "tab1", "name": "送风机启动命令", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "freeze", "type": "swInput", "z": "tab1", "name": "防冻保护信号", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 0,
+        },
+        {
+            "id": "control",
+            "type": "logic",
+            "z": "tab1",
+            "name": "送风机启动逻辑",
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+        },
+        {
+            "id": "supply_fan_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机启动输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "control", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "missing_protection_chain" in codes
+
+
+def test_validator_allows_protection_rule_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rule_data = json.loads(Path("rules/protection_logic.json").read_text(encoding="utf-8"))
+    rule_data["exceptions"] = [
+        {
+            "rule_ids": ["critical_actuator_direct_bypass"],
+            "node_ids": ["test_bypass_output"],
+        }
+    ]
+    rule_path = tmp_path / "protection_logic.json"
+    rule_path.write_text(json.dumps(rule_data, ensure_ascii=False), encoding="utf-8")
+
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "constInput", "z": "tab1", "name": "强制常量", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 0,
+        },
+        {
+            "id": "test_bypass_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机测试旁路输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    monkeypatch.setattr(validator_service, "PROTECTION_RULES_PATH", rule_path)
+    validator_service._protection_rules.cache_clear()
+    try:
+        report = validate_project(nodes)
+    finally:
+        validator_service._protection_rules.cache_clear()
+
+    assert "critical_actuator_direct_bypass" not in {issue["code"] for issue in report["issues"]}
+
+
+def test_validator_rejects_input_signal_with_upstream_source() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "constInput", "z": "tab1", "name": "测试常量", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "freeze_input",
+            "type": "hwInput",
+            "z": "tab1",
+            "name": "防冻保护输入",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "input_signal_has_upstream_source" in codes
+
+
+def test_validator_rejects_physical_output_named_like_read_signal() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "swInput", "z": "tab1", "name": "运行命令", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "pump_feedback_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "冷冻水泵运行反馈",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "physical_output_looks_like_read_signal" in codes
+
+
+def test_validator_report_has_summary_and_suggestions() -> None:
+    report = validate_project(
+        [
+            {"id": "tab1", "type": "tab", "label": "控制"},
+            {
+                "id": "bad_output",
+                "type": "hwOutput",
+                "z": "tab1",
+                "name": "冷冻水泵运行反馈",
+                "hwExpander": 0,
+                "hwChannelIndex": 1,
+                "inputs": 1,
+                "outputs": 1,
+                "wires": [[]],
+                "outOfService": 0,
+            },
+        ]
+    )
+
+    assert report["summary"]["error_count"] == report["error_count"]
+    assert report["summary"]["warning_count"] == report["warning_count"]
+    assert report["summary"]["risk_count"] == 0
+    assert all("suggestion" in issue and issue["suggestion"] for issue in report["issues"])
+
+
+def test_validator_allows_direction_rule_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rule_data = json.loads(Path("rules/protection_logic.json").read_text(encoding="utf-8"))
+    rule_data["exceptions"] = [
+        {
+            "rule_ids": ["physical_output_looks_like_read_signal"],
+            "node_ids": ["legacy_status_output"],
+        }
+    ]
+    rule_path = tmp_path / "protection_logic.json"
+    rule_path.write_text(json.dumps(rule_data, ensure_ascii=False), encoding="utf-8")
+
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "swInput", "z": "tab1", "name": "运行命令", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "legacy_status_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "冷冻水泵运行反馈",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    monkeypatch.setattr(validator_service, "PROTECTION_RULES_PATH", rule_path)
+    validator_service._protection_rules.cache_clear()
+    try:
+        report = validate_project(nodes)
+    finally:
+        validator_service._protection_rules.cache_clear()
+
+    assert "physical_output_looks_like_read_signal" not in {issue["code"] for issue in report["issues"]}
+
+
+def test_validator_change_rejects_removed_protection_wire() -> None:
+    before = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "swInput", "z": "tab1", "name": "送风机启动命令", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "freeze", "type": "swInput", "z": "tab1", "name": "防冻保护信号", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 0,
+        },
+        {
+            "id": "supply_fan_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机启动输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}, {"id": "freeze", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+    after = json.loads(json.dumps(before, ensure_ascii=False))
+    after[-1]["wires"] = [[{"id": "cmd", "port": 0}]]
+
+    report = validate_project_change(before, after)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert report["summary"]["risk_count"] >= 1
+    assert "change_removed_protection_wire" in codes
+
+
+def test_patch_engine_dry_run_includes_change_risk_validation() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "swInput", "z": "tab1", "name": "送风机启动命令", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "freeze", "type": "swInput", "z": "tab1", "name": "防冻保护信号", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 0,
+        },
+        {
+            "id": "supply_fan_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机启动输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}, {"id": "freeze", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    result = dry_run_patch(
+        nodes,
+        {
+            "op": "disconnect",
+            "source_node_selector": {"id": "freeze"},
+            "target_node_selector": {"id": "supply_fan_output"},
+            "target_input": 0,
+        },
+    )
+
+    assert result["valid"] is False
+    assert "change_removed_protection_wire" in {issue["code"] for issue in result["validation_report"]["issues"]}
+
+
+def test_validator_rejects_device_specific_protection_rule_gaps() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "heater_cmd", "type": "swInput", "z": "tab1", "name": "电加热控制命令", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "filter_status", "type": "swInput", "z": "tab1", "name": "过滤网状态", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "bypass_cmd", "type": "swInput", "z": "tab1", "name": "旁通阀控制命令", "inputs": 0, "outputs": 1, "wires": []},
+    ]
+
+    report = validate_project(nodes)
+    messages = [issue["message"] for issue in report["issues"] if issue["code"] == "missing_protection_logic"]
+
+    assert not report["valid"]
+    assert "AHU 电加热相关逻辑缺少故障状态线索。" in messages
+    assert "AHU 过滤网相关逻辑缺少报警线索。" in messages
+    assert "旁通阀相关逻辑缺少上限、下限或限幅线索。" in messages
 
 
 def test_patch_engine_sets_io_point_with_conflict_validation() -> None:

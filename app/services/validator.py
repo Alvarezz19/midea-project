@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import asdict, dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from app.services.schema_library import load_schema_files
@@ -32,60 +34,114 @@ OPTION_DYNAMIC_INPUT_ALLOWED = {
     },
 }
 COMMON_NODE_FIELDS = {"id", "z", "type", "name", "label", "info", "x", "y", "wires", "inputs", "outputs"}
-PROTECTION_TEXT_FIELDS = ("name", "label", "labelName", "labelNameOld", "info", "objectName", "topic")
-PROTECTION_SIGNAL_KEYWORDS = ("防冻", "故障", "反馈", "过滤", "滤网", "缺风", "报警", "到位", "保护", "联锁")
-CRITICAL_ACTUATOR_TYPES = {"hwOutput", "modbusOutput", "bacipOutput", "mqttout"}
-CRITICAL_ACTUATOR_KEYWORDS = (
-    "送风机",
-    "排风机",
-    "新风阀",
-    "回风阀",
-    "直膨",
-    "水泵",
-    "冷冻泵",
-    "冷却泵",
-    "主机",
-    "热泵",
-    "蝶阀",
-    "旁通阀",
-)
-PROTECTION_REQUIREMENT_RULES = (
-    {
-        "equipment_terms": ("送风",),
-        "required_terms": ("故障", "缺风", "报警", "运行"),
-        "message": "AHU 送风相关逻辑缺少故障、缺风、报警或运行反馈线索。",
+PROTECTION_RULES_PATH = Path(__file__).resolve().parents[2] / "rules" / "protection_logic.json"
+DEFAULT_PROTECTION_RULES = {
+    "text_fields": ("name", "label", "labelName", "labelNameOld", "info", "objectName", "topic"),
+    "protection_signal_keywords": ("防冻", "故障", "反馈", "过滤", "滤网", "缺风", "报警", "到位", "保护", "联锁", "急停"),
+    "critical_actuator": {
+        "node_types": ("hwOutput", "modbusOutput", "bacipOutput", "mqttout"),
+        "keywords": (
+            "送风机",
+            "排风机",
+            "新风阀",
+            "回风阀",
+            "直膨",
+            "水泵",
+            "冷冻泵",
+            "冷却泵",
+            "主机",
+            "热泵",
+            "蝶阀",
+            "旁通阀",
+            "电加热",
+        ),
     },
-    {
-        "equipment_terms": ("直膨",),
-        "required_terms": ("故障",),
-        "message": "AHU 直膨机相关逻辑缺少故障状态线索。",
+    "direct_bypass": {
+        "source_types": ("constInput",),
+        "source_keywords": ("常量", "强制", "旁路"),
+        "message": "关键执行器输出不应只由常量、强制或旁路信号直接驱动。",
     },
-    {
-        "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
-        "required_terms": ("故障",),
-        "message": "水泵相关逻辑缺少故障状态线索。",
+    "upstream_chain_rules": (
+        {
+            "id": "ahu_freeze_to_air_actuators",
+            "source_keywords": ("防冻",),
+            "target_keywords": ("送风机", "新风阀"),
+            "required_upstream_keywords": ("防冻",),
+            "max_depth": 6,
+            "message": "存在防冻保护信号时，送风机或新风阀执行器上游链路应保留防冻保护线索。",
+        },
+    ),
+    "direction_rules": {
+        "source_input_types": ("hwInput", "mqttin"),
+        "physical_output_types": ("hwOutput",),
+        "read_signal_keywords": ("故障", "反馈", "状态", "报警", "防冻", "急停", "到位"),
+        "input_has_upstream_message": "物理输入或订阅输入不应被上游节点驱动。",
+        "output_read_signal_message": "物理输出点位名称不应表达故障、反馈、状态、报警、防冻、急停或到位等读信号。",
     },
-    {
-        "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
-        "required_terms": ("运行", "反馈"),
-        "message": "水泵相关逻辑缺少运行或反馈线索。",
-    },
-    {
-        "equipment_terms": ("主机", "热泵"),
-        "required_terms": ("故障",),
-        "message": "主机或热泵相关逻辑缺少故障状态线索。",
-    },
-    {
-        "equipment_terms": ("主机", "热泵"),
-        "required_terms": ("运行",),
-        "message": "主机或热泵相关逻辑缺少运行状态线索。",
-    },
-    {
-        "equipment_terms": ("蝶阀",),
-        "required_terms": ("到位", "反馈"),
-        "message": "蝶阀相关逻辑缺少到位或反馈线索。",
-    },
-)
+    "exceptions": (),
+    "requirement_rules": (
+        {
+            "id": "ahu_supply_air_status",
+            "equipment_terms": ("送风",),
+            "required_terms": ("故障", "缺风", "报警", "运行"),
+            "message": "AHU 送风相关逻辑缺少故障、缺风、报警或运行反馈线索。",
+        },
+        {
+            "id": "ahu_dx_fault",
+            "equipment_terms": ("直膨",),
+            "required_terms": ("故障",),
+            "message": "AHU 直膨机相关逻辑缺少故障状态线索。",
+        },
+        {
+            "id": "ahu_electric_heater_fault",
+            "equipment_terms": ("电加热",),
+            "required_terms": ("故障",),
+            "message": "AHU 电加热相关逻辑缺少故障状态线索。",
+        },
+        {
+            "id": "ahu_filter_alarm",
+            "equipment_terms": ("过滤", "滤网"),
+            "required_terms": ("报警",),
+            "message": "AHU 过滤网相关逻辑缺少报警线索。",
+        },
+        {
+            "id": "plant_pump_fault",
+            "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
+            "required_terms": ("故障",),
+            "message": "水泵相关逻辑缺少故障状态线索。",
+        },
+        {
+            "id": "plant_pump_running_feedback",
+            "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
+            "required_terms": ("运行", "反馈"),
+            "message": "水泵相关逻辑缺少运行或反馈线索。",
+        },
+        {
+            "id": "plant_chiller_fault",
+            "equipment_terms": ("主机", "热泵"),
+            "required_terms": ("故障",),
+            "message": "主机或热泵相关逻辑缺少故障状态线索。",
+        },
+        {
+            "id": "plant_chiller_running",
+            "equipment_terms": ("主机", "热泵"),
+            "required_terms": ("运行",),
+            "message": "主机或热泵相关逻辑缺少运行状态线索。",
+        },
+        {
+            "id": "plant_valve_feedback",
+            "equipment_terms": ("蝶阀",),
+            "required_terms": ("到位", "反馈"),
+            "message": "蝶阀相关逻辑缺少到位或反馈线索。",
+        },
+        {
+            "id": "plant_bypass_valve_limit",
+            "equipment_terms": ("旁通阀",),
+            "required_terms": ("限幅", "上限", "下限"),
+            "message": "旁通阀相关逻辑缺少上限、下限或限幅线索。",
+        },
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -95,6 +151,7 @@ class ValidationIssue:
     message: str
     node_id: str | None = None
     path: str | None = None
+    suggestion: str | None = None
 
 
 def _issue(
@@ -105,8 +162,18 @@ def _issue(
     *,
     node_id: str | None = None,
     path: str | None = None,
+    suggestion: str | None = None,
 ) -> None:
-    issues.append(ValidationIssue(severity=severity, code=code, message=message, node_id=node_id, path=path))
+    issues.append(
+        ValidationIssue(
+            severity=severity,
+            code=code,
+            message=message,
+            node_id=node_id,
+            path=path,
+            suggestion=suggestion,
+        )
+    )
 
 
 def validate_project(nodes: Any) -> dict[str, Any]:
@@ -179,6 +246,97 @@ def validate_project(nodes: Any) -> dict[str, Any]:
     _validate_io_communication_conflicts(nodes, issues)
     _validate_protection_logic_rules(nodes, issues)
 
+    return _build_report(issues)
+
+
+def validate_project_change(before_nodes: Any, after_nodes: Any) -> dict[str, Any]:
+    """校验工程变更风险，关注删除、断线和保护链路影响。"""
+
+    issues: list[ValidationIssue] = []
+    if not isinstance(before_nodes, list) or not isinstance(after_nodes, list):
+        _issue(issues, "error", "change_nodes_not_array", "变更风险校验需要变更前后的工程节点数组。")
+        return _build_report(issues)
+
+    rules = _protection_rules()
+    text_fields = rules["text_fields"]
+    before_lookup = _node_lookup(before_nodes)
+    after_lookup = _node_lookup(after_nodes)
+
+    removed_ids = set(before_lookup) - set(after_lookup)
+    for node_id in sorted(removed_ids):
+        before_node = before_lookup[node_id]
+        node_text = _node_text(before_node, text_fields)
+        if _has_any(node_text, rules["protection_signal_keywords"]):
+            _issue(
+                issues,
+                "error",
+                "change_removed_protection_node",
+                "变更删除了保护、故障、反馈或报警相关节点。",
+                node_id=node_id,
+                suggestion="恢复该节点，或提供明确授权并补充替代保护链路。",
+            )
+        if _is_critical_actuator(before_node, rules, text_fields):
+            _issue(
+                issues,
+                "error",
+                "change_removed_critical_actuator",
+                "变更删除了关键执行器输出节点。",
+                node_id=node_id,
+                suggestion="确认设备数量变化并保留回滚点；若为误删，应恢复执行器节点。",
+            )
+
+    for node_id in sorted(set(before_lookup) & set(after_lookup)):
+        before_node = before_lookup[node_id]
+        after_node = after_lookup[node_id]
+        before_text = _node_text(before_node, text_fields)
+        after_text = _node_text(after_node, text_fields)
+
+        if _has_any(before_text, rules["protection_signal_keywords"]) and not _has_any(after_text, rules["protection_signal_keywords"]):
+            _issue(
+                issues,
+                "warning",
+                "change_removed_protection_keyword",
+                "变更移除了节点名称或说明中的保护线索关键词。",
+                node_id=node_id,
+                suggestion="确认只是命名调整；如影响保护语义，应恢复保护关键词或补充说明。",
+            )
+
+        removed_source_ids = _removed_wire_source_ids(before_node, after_node)
+        for source_id in sorted(removed_source_ids):
+            source_node = before_lookup.get(source_id)
+            source_text = _node_text(source_node, text_fields) if source_node else ""
+            if _has_any(source_text, rules["protection_signal_keywords"]) or _is_critical_actuator(before_node, rules, text_fields):
+                _issue(
+                    issues,
+                    "error",
+                    "change_removed_protection_wire",
+                    "变更断开了保护相关信号或关键执行器的上游链路。",
+                    node_id=node_id,
+                    path="wires",
+                    suggestion="恢复断开的连线，或在 dry-run 摘要中明确替代联锁路径并人工确认。",
+                )
+
+    return _build_report(issues)
+
+
+def merge_validation_reports(*reports: dict[str, Any]) -> dict[str, Any]:
+    """合并多个校验报告，保留统一 summary 和导出阻塞原因。"""
+
+    issues: list[ValidationIssue] = []
+    for report in reports:
+        for item in report.get("issues", []):
+            if not isinstance(item, dict):
+                continue
+            issues.append(
+                ValidationIssue(
+                    severity=item.get("severity") if item.get("severity") in {"error", "warning"} else "error",
+                    code=str(item.get("code") or "unknown_validation_issue"),
+                    message=str(item.get("message") or ""),
+                    node_id=item.get("node_id") if isinstance(item.get("node_id"), str) else None,
+                    path=item.get("path") if isinstance(item.get("path"), str) else None,
+                    suggestion=item.get("suggestion") if isinstance(item.get("suggestion"), str) else None,
+                )
+            )
     return _build_report(issues)
 
 
@@ -708,15 +866,19 @@ def _validate_io_communication_conflicts(nodes: list[Any], issues: list[Validati
 
 
 def _validate_protection_logic_rules(nodes: list[Any], issues: list[ValidationIssue]) -> None:
+    rules = _protection_rules()
+    text_fields = rules["text_fields"]
+    node_lookup = _node_lookup(nodes)
+
     for index, node in enumerate(nodes):
         if not isinstance(node, dict):
             continue
 
         path = f"$[{index}]"
         node_id = node.get("id") if isinstance(node.get("id"), str) else None
-        node_text = _node_text(node)
+        node_text = _node_text(node, text_fields)
 
-        if _has_any(node_text, PROTECTION_SIGNAL_KEYWORDS) and _is_truthy(node.get("outOfService")):
+        if _has_any(node_text, rules["protection_signal_keywords"]) and _is_truthy(node.get("outOfService")):
             _issue(
                 issues,
                 "error",
@@ -726,7 +888,9 @@ def _validate_protection_logic_rules(nodes: list[Any], issues: list[ValidationIs
                 path=f"{path}.outOfService",
             )
 
-        if _is_unwired_critical_actuator(node):
+        _validate_direction_rules(node, rules, text_fields, issues, node_id=node_id, path=path)
+
+        if _is_unwired_critical_actuator(node, rules, text_fields):
             _issue(
                 issues,
                 "error",
@@ -736,10 +900,32 @@ def _validate_protection_logic_rules(nodes: list[Any], issues: list[ValidationIs
                 path=f"{path}.wires",
             )
 
-    for rule in PROTECTION_REQUIREMENT_RULES:
+        if _is_direct_bypass_critical_actuator(node, node_lookup, rules, text_fields) and not _is_protection_exception(
+            rules["exceptions"],
+            "critical_actuator_direct_bypass",
+            node,
+            node_text,
+        ):
+            _issue(
+                issues,
+                "error",
+                "critical_actuator_direct_bypass",
+                str(rules["direct_bypass"]["message"]),
+                node_id=node_id,
+                path=f"{path}.wires",
+            )
+
+        _validate_upstream_chain_rules(node, nodes, node_lookup, rules, text_fields, issues, node_id=node_id, path=path)
+
+    for rule in rules["requirement_rules"]:
         equipment_terms = rule["equipment_terms"]
         required_terms = rule["required_terms"]
-        if _has_equipment(nodes, equipment_terms) and not _has_equipment_protection(nodes, equipment_terms, required_terms):
+        if _has_equipment(nodes, equipment_terms, text_fields) and not _has_equipment_protection(
+            nodes,
+            equipment_terms,
+            required_terms,
+            text_fields,
+        ):
             _issue(
                 issues,
                 "error",
@@ -748,10 +934,180 @@ def _validate_protection_logic_rules(nodes: list[Any], issues: list[ValidationIs
             )
 
 
-def _is_unwired_critical_actuator(node: dict[str, Any]) -> bool:
-    if node.get("type") not in CRITICAL_ACTUATOR_TYPES:
+@lru_cache(maxsize=1)
+def _protection_rules() -> dict[str, Any]:
+    raw: dict[str, Any] = {}
+    if PROTECTION_RULES_PATH.exists():
+        with PROTECTION_RULES_PATH.open("r", encoding="utf-8") as file:
+            loaded = json.load(file)
+        if not isinstance(loaded, dict):
+            raise ValueError("保护逻辑规则文件根节点必须是对象。")
+        raw = loaded
+
+    critical_raw = raw.get("critical_actuator")
+    critical_default = DEFAULT_PROTECTION_RULES["critical_actuator"]
+    critical = critical_raw if isinstance(critical_raw, dict) else {}
+    direct_bypass_raw = raw.get("direct_bypass")
+    direct_bypass_default = DEFAULT_PROTECTION_RULES["direct_bypass"]
+    direct_bypass = direct_bypass_raw if isinstance(direct_bypass_raw, dict) else {}
+    direction_raw = raw.get("direction_rules")
+    direction_default = DEFAULT_PROTECTION_RULES["direction_rules"]
+    direction = direction_raw if isinstance(direction_raw, dict) else {}
+
+    return {
+        "text_fields": _tuple_strings(raw.get("text_fields"), DEFAULT_PROTECTION_RULES["text_fields"]),
+        "protection_signal_keywords": _tuple_strings(
+            raw.get("protection_signal_keywords"),
+            DEFAULT_PROTECTION_RULES["protection_signal_keywords"],
+        ),
+        "critical_actuator": {
+            "node_types": set(_tuple_strings(critical.get("node_types"), critical_default["node_types"])),
+            "keywords": _tuple_strings(critical.get("keywords"), critical_default["keywords"]),
+        },
+        "direct_bypass": {
+            "source_types": set(_tuple_strings(direct_bypass.get("source_types"), direct_bypass_default["source_types"])),
+            "source_keywords": _tuple_strings(
+                direct_bypass.get("source_keywords"),
+                direct_bypass_default["source_keywords"],
+            ),
+            "message": _string_value(direct_bypass.get("message"), direct_bypass_default["message"]),
+        },
+        "upstream_chain_rules": _load_upstream_chain_rules(
+            raw.get("upstream_chain_rules"),
+            DEFAULT_PROTECTION_RULES["upstream_chain_rules"],
+        ),
+        "direction_rules": {
+            "source_input_types": set(
+                _tuple_strings(direction.get("source_input_types"), direction_default["source_input_types"])
+            ),
+            "physical_output_types": set(
+                _tuple_strings(direction.get("physical_output_types"), direction_default["physical_output_types"])
+            ),
+            "read_signal_keywords": _tuple_strings(
+                direction.get("read_signal_keywords"),
+                direction_default["read_signal_keywords"],
+            ),
+            "input_has_upstream_message": _string_value(
+                direction.get("input_has_upstream_message"),
+                direction_default["input_has_upstream_message"],
+            ),
+            "output_read_signal_message": _string_value(
+                direction.get("output_read_signal_message"),
+                direction_default["output_read_signal_message"],
+            ),
+        },
+        "exceptions": _load_protection_exceptions(raw.get("exceptions"), DEFAULT_PROTECTION_RULES["exceptions"]),
+        "requirement_rules": _load_requirement_rules(
+            raw.get("requirement_rules"),
+            DEFAULT_PROTECTION_RULES["requirement_rules"],
+        ),
+    }
+
+
+def _tuple_strings(value: Any, default: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)) and all(isinstance(item, str) and item.strip() for item in value):
+        return tuple(value)
+    return tuple(default)
+
+
+def _string_value(value: Any, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
+
+def _int_value(value: Any, default: int, *, minimum: int = 1, maximum: int = 20) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and minimum <= value <= maximum:
+        return value
+    return default
+
+
+def _load_requirement_rules(value: Any, default: Any) -> tuple[dict[str, Any], ...]:
+    raw_rules = value if isinstance(value, list) else default
+    rules: list[dict[str, Any]] = []
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        equipment_terms = _tuple_strings(raw_rule.get("equipment_terms"), ())
+        required_terms = _tuple_strings(raw_rule.get("required_terms"), ())
+        message = raw_rule.get("message")
+        if not equipment_terms or not required_terms or not isinstance(message, str) or not message.strip():
+            continue
+        rules.append(
+            {
+                "id": str(raw_rule.get("id") or "unnamed"),
+                "equipment_terms": equipment_terms,
+                "required_terms": required_terms,
+                "message": message,
+            }
+        )
+    return tuple(rules)
+
+
+def _load_upstream_chain_rules(value: Any, default: Any) -> tuple[dict[str, Any], ...]:
+    raw_rules = value if isinstance(value, list) else default
+    rules: list[dict[str, Any]] = []
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        rule_id = raw_rule.get("id")
+        source_keywords = _tuple_strings(raw_rule.get("source_keywords"), ())
+        target_keywords = _tuple_strings(raw_rule.get("target_keywords"), ())
+        required_upstream_keywords = _tuple_strings(raw_rule.get("required_upstream_keywords"), ())
+        message = raw_rule.get("message")
+        if (
+            not isinstance(rule_id, str)
+            or not rule_id.strip()
+            or not source_keywords
+            or not target_keywords
+            or not required_upstream_keywords
+            or not isinstance(message, str)
+            or not message.strip()
+        ):
+            continue
+        rules.append(
+            {
+                "id": rule_id,
+                "source_keywords": source_keywords,
+                "target_keywords": target_keywords,
+                "required_upstream_keywords": required_upstream_keywords,
+                "max_depth": _int_value(raw_rule.get("max_depth"), 6),
+                "message": message,
+            }
+        )
+    return tuple(rules)
+
+
+def _load_protection_exceptions(value: Any, default: Any) -> tuple[dict[str, Any], ...]:
+    raw_items = value if isinstance(value, list) else default
+    exceptions: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        rule_ids = _tuple_strings(raw_item.get("rule_ids"), ("*",))
+        node_ids = _tuple_strings(raw_item.get("node_ids"), ())
+        node_types = _tuple_strings(raw_item.get("node_types"), ())
+        name_contains = _tuple_strings(raw_item.get("name_contains"), ())
+        if not node_ids and not node_types and not name_contains:
+            continue
+        exceptions.append(
+            {
+                "rule_ids": rule_ids,
+                "node_ids": set(node_ids),
+                "node_types": set(node_types),
+                "name_contains": name_contains,
+            }
+        )
+    return tuple(exceptions)
+
+
+def _is_unwired_critical_actuator(node: dict[str, Any], rules: dict[str, Any], text_fields: tuple[str, ...]) -> bool:
+    critical = rules["critical_actuator"]
+    if node.get("type") not in critical["node_types"]:
         return False
-    if not _has_any(_node_text(node), CRITICAL_ACTUATOR_KEYWORDS):
+    if not _has_any(_node_text(node, text_fields), critical["keywords"]):
         return False
     inputs = node.get("inputs")
     if not isinstance(inputs, int) or inputs <= 0:
@@ -762,24 +1118,211 @@ def _is_unwired_critical_actuator(node: dict[str, Any]) -> bool:
     return not any(isinstance(input_sources, list) and input_sources for input_sources in wires)
 
 
-def _node_text(node: dict[str, Any]) -> str:
+def _validate_direction_rules(
+    node: dict[str, Any],
+    rules: dict[str, Any],
+    text_fields: tuple[str, ...],
+    issues: list[ValidationIssue],
+    *,
+    node_id: str | None,
+    path: str,
+) -> None:
+    direction_rules = rules["direction_rules"]
+    node_text = _node_text(node, text_fields)
+
+    if (
+        node.get("type") in direction_rules["source_input_types"]
+        and _wire_source_ids(node)
+        and not _is_protection_exception(rules["exceptions"], "input_signal_has_upstream_source", node, node_text)
+    ):
+        _issue(
+            issues,
+            "error",
+            "input_signal_has_upstream_source",
+            str(direction_rules["input_has_upstream_message"]),
+            node_id=node_id,
+            path=f"{path}.wires",
+        )
+
+    if (
+        node.get("type") in direction_rules["physical_output_types"]
+        and _has_any(node_text, direction_rules["read_signal_keywords"])
+        and not _is_protection_exception(rules["exceptions"], "physical_output_looks_like_read_signal", node, node_text)
+    ):
+        _issue(
+            issues,
+            "error",
+            "physical_output_looks_like_read_signal",
+            str(direction_rules["output_read_signal_message"]),
+            node_id=node_id,
+            path=f"{path}.name",
+        )
+
+
+def _is_direct_bypass_critical_actuator(
+    node: dict[str, Any],
+    node_lookup: dict[str, dict[str, Any]],
+    rules: dict[str, Any],
+    text_fields: tuple[str, ...],
+) -> bool:
+    if not _is_critical_actuator(node, rules, text_fields):
+        return False
+    source_nodes = _direct_source_nodes(node, node_lookup)
+    if not source_nodes:
+        return False
+    return all(_is_bypass_source(source_node, rules, text_fields) for source_node in source_nodes)
+
+
+def _is_critical_actuator(node: dict[str, Any], rules: dict[str, Any], text_fields: tuple[str, ...]) -> bool:
+    critical = rules["critical_actuator"]
+    return node.get("type") in critical["node_types"] and _has_any(_node_text(node, text_fields), critical["keywords"])
+
+
+def _is_bypass_source(node: dict[str, Any], rules: dict[str, Any], text_fields: tuple[str, ...]) -> bool:
+    direct_bypass = rules["direct_bypass"]
+    return node.get("type") in direct_bypass["source_types"] or _has_any(_node_text(node, text_fields), direct_bypass["source_keywords"])
+
+
+def _validate_upstream_chain_rules(
+    node: dict[str, Any],
+    nodes: list[Any],
+    node_lookup: dict[str, dict[str, Any]],
+    rules: dict[str, Any],
+    text_fields: tuple[str, ...],
+    issues: list[ValidationIssue],
+    *,
+    node_id: str | None,
+    path: str,
+) -> None:
+    if not _is_critical_actuator(node, rules, text_fields):
+        return
+
+    node_text = _node_text(node, text_fields)
+    for rule in rules["upstream_chain_rules"]:
+        rule_id = rule["id"]
+        if not _has_any(node_text, rule["target_keywords"]):
+            continue
+        if not _has_equipment(nodes, rule["source_keywords"], text_fields):
+            continue
+        if _is_protection_exception(rules["exceptions"], rule_id, node, node_text):
+            continue
+        upstream_nodes = _upstream_nodes(node, node_lookup, max_depth=rule["max_depth"])
+        upstream_text = " ".join(_node_text(upstream_node, text_fields) for upstream_node in upstream_nodes)
+        if not _has_any(upstream_text, rule["required_upstream_keywords"]):
+            _issue(
+                issues,
+                "error",
+                "missing_protection_chain",
+                str(rule["message"]),
+                node_id=node_id,
+                path=f"{path}.wires",
+            )
+
+
+def _node_lookup(nodes: list[Any]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        if isinstance(node_id, str) and node_id.strip():
+            result[node_id] = node
+    return result
+
+
+def _direct_source_nodes(node: dict[str, Any], node_lookup: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for source_id in _wire_source_ids(node):
+        source_node = node_lookup.get(source_id)
+        if source_node is not None:
+            result.append(source_node)
+    return result
+
+
+def _upstream_nodes(node: dict[str, Any], node_lookup: dict[str, dict[str, Any]], *, max_depth: int) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    frontier = [(source_id, 1) for source_id in _wire_source_ids(node)]
+    while frontier:
+        source_id, depth = frontier.pop(0)
+        if source_id in seen or depth > max_depth:
+            continue
+        seen.add(source_id)
+        source_node = node_lookup.get(source_id)
+        if source_node is None:
+            continue
+        result.append(source_node)
+        frontier.extend((next_source_id, depth + 1) for next_source_id in _wire_source_ids(source_node))
+    return result
+
+
+def _wire_source_ids(node: dict[str, Any]) -> list[str]:
+    wires = node.get("wires")
+    if not isinstance(wires, list):
+        return []
+    result: list[str] = []
+    for input_sources in wires:
+        if not isinstance(input_sources, list):
+            continue
+        for source in input_sources:
+            source_id = source.get("id") if isinstance(source, dict) else source
+            if isinstance(source_id, str) and source_id.strip():
+                result.append(source_id)
+    return result
+
+
+def _removed_wire_source_ids(before_node: dict[str, Any], after_node: dict[str, Any]) -> set[str]:
+    return set(_wire_source_ids(before_node)) - set(_wire_source_ids(after_node))
+
+
+def _is_protection_exception(
+    exceptions: tuple[dict[str, Any], ...],
+    rule_id: str,
+    node: dict[str, Any],
+    node_text: str,
+) -> bool:
+    node_id = node.get("id")
+    node_type = node.get("type")
+    for exception in exceptions:
+        rule_ids = exception["rule_ids"]
+        if "*" not in rule_ids and rule_id not in rule_ids:
+            continue
+        node_ids = exception["node_ids"]
+        if node_ids and node_id not in node_ids:
+            continue
+        node_types = exception["node_types"]
+        if node_types and node_type not in node_types:
+            continue
+        name_contains = exception["name_contains"]
+        if name_contains and not _has_any(node_text, name_contains):
+            continue
+        return True
+    return False
+
+
+def _node_text(node: dict[str, Any], text_fields: tuple[str, ...]) -> str:
     parts = []
-    for field in PROTECTION_TEXT_FIELDS:
+    for field in text_fields:
         value = node.get(field)
         if isinstance(value, str):
             parts.append(value)
     return " ".join(parts)
 
 
-def _has_equipment(nodes: list[Any], equipment_terms: tuple[str, ...]) -> bool:
-    return any(isinstance(node, dict) and _has_any(_node_text(node), equipment_terms) for node in nodes)
+def _has_equipment(nodes: list[Any], equipment_terms: tuple[str, ...], text_fields: tuple[str, ...]) -> bool:
+    return any(isinstance(node, dict) and _has_any(_node_text(node, text_fields), equipment_terms) for node in nodes)
 
 
-def _has_equipment_protection(nodes: list[Any], equipment_terms: tuple[str, ...], required_terms: tuple[str, ...]) -> bool:
+def _has_equipment_protection(
+    nodes: list[Any],
+    equipment_terms: tuple[str, ...],
+    required_terms: tuple[str, ...],
+    text_fields: tuple[str, ...],
+) -> bool:
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        text = _node_text(node)
+        text = _node_text(node, text_fields)
         if _has_any(text, equipment_terms) and _has_any(text, required_terms):
             return True
     return False
@@ -830,14 +1373,61 @@ def _is_truthy(value: Any) -> bool:
 def _build_report(issues: list[ValidationIssue]) -> dict[str, Any]:
     error_count = sum(1 for issue in issues if issue.severity == "error")
     warning_count = sum(1 for issue in issues if issue.severity == "warning")
+    risk_count = sum(1 for issue in issues if issue.code.startswith("change_"))
     valid = error_count == 0
     blocked_export_reasons = [] if valid else ["存在 error 级校验问题。"]
+    public_issues = []
+    for issue in issues:
+        item = asdict(issue)
+        if item.get("suggestion") is None:
+            item["suggestion"] = _suggestion_for_issue(issue.code)
+        public_issues.append(item)
     return {
         "valid": valid,
         "exportable": valid,
+        "summary": {
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "risk_count": risk_count,
+        },
         "error_count": error_count,
         "warning_count": warning_count,
         "issue_count": len(issues),
-        "issues": [asdict(issue) for issue in issues],
+        "issues": public_issues,
         "blocked_export_reasons": blocked_export_reasons,
     }
+
+
+def _suggestion_for_issue(code: str) -> str:
+    suggestions = {
+        "root_not_array": "导出前确认工程 JSON 根节点是节点数组。",
+        "node_not_object": "移除非对象数组项，或恢复为合法节点对象。",
+        "missing_id": "为节点补充非空唯一 id。",
+        "missing_type": "为节点补充合法 type，或从 schema 重新生成节点。",
+        "duplicate_id": "重写重复节点 id，并同步修复引用该 id 的连线。",
+        "unknown_flow_scope": "确认节点 z 字段引用的 tab 或 subflow 是否存在。",
+        "invalid_wires": "将 wires 修正为按 input_sources 语义组织的数组。",
+        "invalid_wire_input": "将该输入端口的 wires 项修正为上游源 id 数组。",
+        "invalid_wire_source": "使用非空上游源 id，或包含 id 字段的源引用对象。",
+        "missing_wire_source": "恢复缺失的上游源节点，或删除该无效连线。",
+        "wires_inputs_mismatch": "同步调整 inputs 和 wires 长度，确保每个输入端口都有对应数组。",
+        "schema_unknown_field": "移除未知字段，或先在 schema 中声明该参数。",
+        "schema_missing_required_param": "按 schema 补齐必填参数。",
+        "schema_invalid_type": "按 schema 要求修正字段类型。",
+        "schema_invalid_enum": "使用 schema 允许的枚举值。",
+        "schema_below_minimum": "将参数调高到 schema 最小值以上。",
+        "schema_above_maximum": "将参数调低到 schema 最大值以下。",
+        "hardware_io_channel_conflict": "调整硬件扩展板或通道，确保同一通道只绑定一个点位。",
+        "modbus_point_conflict": "调整 Modbus 设备地址、功能码或寄存器地址，避免重复写同一点位。",
+        "bacnet_object_conflict": "调整 BACnet 对象类型或实例号，避免本地对象重复。",
+        "bacip_point_conflict": "调整 BACnet/IP 设备实例、对象类型或对象实例。",
+        "mqtt_object_name_conflict": "调整 MQTT objectName，确保对象名唯一。",
+        "protection_signal_disabled": "重新启用保护、故障、反馈或报警相关信号。",
+        "critical_actuator_without_interlock": "为关键执行器恢复上游联锁或控制输入。",
+        "critical_actuator_direct_bypass": "移除常量直连旁路，恢复经过联锁和保护的控制链路。",
+        "missing_protection_chain": "恢复保护信号到目标执行器的上游链路，或补充等效保护路径。",
+        "missing_protection_logic": "补充对应设备的故障、运行、反馈或到位保护线索。",
+        "input_signal_has_upstream_source": "物理输入或订阅输入应作为信号源，移除其上游驱动连线。",
+        "physical_output_looks_like_read_signal": "将读信号改为输入/状态发布点，或更正物理输出点位名称。",
+    }
+    return suggestions.get(code, "根据问题信息修复工程 JSON 后重新校验。")
