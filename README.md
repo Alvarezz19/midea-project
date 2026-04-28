@@ -25,6 +25,7 @@
 - 支持按 `block_id` 加载局部 JSON 上下文，返回节点摘要、内部边、边界边和预算信息。
 - 工作流已接入确定性结构化需求摘要，能在模板选择前识别项目类型、设备、控制功能、通讯/IO、保护逻辑和待澄清问题。
 - 模板候选会展示匹配项、缺失项、预计改造成本和风险点，便于工程师确认模板基底。
+- 模板选择评测已扩充到 AHU 和机房群控各 10 个样例，并在测试中统计 Top-1/Top-3 命中。
 - 新增 LLM Gateway，默认接入 DeepSeek API，并预留 OpenAI、Azure OpenAI、Anthropic 配置入口。
 - 支持使用 LLM 做结构化需求抽取，返回项目类型、设备、控制功能、通讯、保护逻辑、缺失字段和澄清问题。
 - 支持显式开启 LLM 结构化补丁规划，并立即进入 dry-run；LLM 只输出受 schema 约束的补丁意图，实际修改仍由 patch engine 执行。
@@ -32,12 +33,17 @@
 - LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
 - LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会先停在确认状态，确认后才创建新版本。
 - 手动结构化补丁中的 `add_node_from_schema`、`connect`、`disconnect`、疑似 IO/通讯字段修改等中高风险操作会先 dry-run 并等待确认，不会直接落盘。
+- `enable_dynamic_input` 会被识别为中风险结构变更，确认前只 dry-run，不创建新版本。
 - 支持自然语言规划低风险修改：
   - 节点改名。
+  - 替换常量、软件输入设定值或静态阈值。
   - 修改已有节点参数。
   - 添加备注节点。
+- 支持结构化启用动态输入端口，并在确认后同步维护 `inputs`、`inputsOption`/`inputAuxEnable` 和 `wires`。
 - 支持结构化补丁操作：
   - `update_param`
+  - `replace_constant`
+  - `enable_dynamic_input`
   - `rename_node`
   - `add_comment`
   - `add_node_from_schema`
@@ -64,7 +70,6 @@
 以下能力仍在后续计划中：
 
 - `copy_block`
-- `enable_dynamic_input`
 - planner 自动组合“新增节点 + 连线”的多步补丁。
 - 全工程 schema 参数校验。
 - 局部流程图展示。
@@ -237,6 +242,36 @@ LLM 结构化补丁规划默认关闭，调用时显式传入 `use_llm: true`。
 }
 ```
 
+替换常量或设定值：
+
+```json
+{
+  "op": "replace_constant",
+  "node_selector": {"id": "67febfa"},
+  "field": "fixedValue",
+  "value": "6"
+}
+```
+
+启用动态输入端口：
+
+```json
+{
+  "op": "enable_dynamic_input",
+  "node_selector": {"id": "f22a5df"}
+}
+```
+
+PID 等带选项的动态输入需要指定选项：
+
+```json
+{
+  "op": "enable_dynamic_input",
+  "node_selector": {"id": "a2f6cc2"},
+  "input_option": "highPidOutLimit"
+}
+```
+
 节点改名：
 
 ```json
@@ -298,7 +333,7 @@ pytest -q
 当前验收结果：
 
 ```text
-58 passed
+67 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
@@ -347,5 +382,5 @@ pytest -q
 优先用当前工作台跑真实样例，记录交互问题，再决定下一步：
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
-2. 增强后端局部子图能力：`copy_block`、`enable_dynamic_input`。
-3. 扩充 LLM planner 真实评测样例，并继续推进 `replace_constant`、`enable_dynamic_input` 等阶段 5 补丁能力。
+2. 增强后端局部子图能力：`copy_block`、`set_io_point`。
+3. 扩充 LLM planner 真实评测样例，并继续推进 `copy_block`、`set_io_point` 等阶段 5 补丁能力。

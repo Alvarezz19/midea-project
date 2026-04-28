@@ -102,6 +102,23 @@ def test_workflow_plans_and_applies_natural_language_patch(tmp_path: Path) -> No
     assert renamed["name"] == "工作流规划-水泵比较节点"
 
 
+def test_workflow_plans_and_applies_replace_constant_patch(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把节点 67febfa 的常量值改为 6"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["pending_patch"]["op"] == "replace_constant"
+    assert result["risk_assessment"]["risk_level"] == "low"
+    assert result["risk_assessment"]["requires_confirmation"] is False
+    nodes = load_project(result["current_project_path"])
+    assert next(item for item in nodes if item.get("id") == "67febfa")["fixedValue"] == "6"
+
+
 def test_workflow_returns_clarification_when_planner_is_ambiguous(tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)
@@ -317,6 +334,21 @@ def test_workflow_requires_confirmation_for_manual_medium_risk_patch(tmp_path: P
     assert result["pending_confirmation_patch"]["op"] == "disconnect"
     assert result["planner_dry_run"]["valid"]
     assert result["risk_assessment"]["risk_level"] == "medium"
+
+
+def test_workflow_requires_confirmation_for_dynamic_input_patch(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    state["pending_patch"] = {"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}
+
+    result = invoke_workflow(state)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["pending_patch"] is None
+    assert result["pending_confirmation_patch"]["op"] == "enable_dynamic_input"
+    assert result["risk_assessment"]["risk_level"] == "medium"
+    assert result["planner_dry_run"]["diff"]["summary"]["modified_count"] == 1
 
 
 def test_workflow_reports_ambiguous_patch(tmp_path: Path) -> None:

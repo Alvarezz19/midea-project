@@ -16,6 +16,8 @@ PlannerStatus = Literal["planned", "needs_clarification"]
 Intent = Literal["modify_existing_logic", "add_logic", "annotate", "unknown"]
 PatchOp = Literal[
     "update_param",
+    "replace_constant",
+    "enable_dynamic_input",
     "rename_node",
     "add_comment",
     "add_node_from_schema",
@@ -43,6 +45,10 @@ class PlannedOperation(BaseModel):
     node_selector: dict[str, Any] | None = None
     new_name: str | None = None
     params: dict[str, Any] | None = None
+    field: str | None = None
+    value: Any = None
+    input_option: str | None = None
+    input_options: list[str] | None = None
     tab_selector: dict[str, Any] | None = None
     text: str | None = None
     info: str | None = None
@@ -61,6 +67,19 @@ class PlannedOperation(BaseModel):
         if self.op == "update_param":
             _require_dict(self.node_selector, "update_param.node_selector")
             _require_dict(self.params, "update_param.params")
+        elif self.op == "replace_constant":
+            _require_dict(self.node_selector, "replace_constant.node_selector")
+            if self.value is None:
+                raise ValueError("replace_constant.value 不能为空。")
+            if self.field is not None and not _non_empty_string(self.field):
+                raise ValueError("replace_constant.field 必须是非空字符串。")
+        elif self.op == "enable_dynamic_input":
+            _require_dict(self.node_selector, "enable_dynamic_input.node_selector")
+            if self.input_options is not None:
+                if not self.input_options or any(not _non_empty_string(option) for option in self.input_options):
+                    raise ValueError("enable_dynamic_input.input_options 必须是非空字符串数组。")
+            if self.input_option is not None and not _non_empty_string(self.input_option):
+                raise ValueError("enable_dynamic_input.input_option 必须是非空字符串。")
         elif self.op == "rename_node":
             _require_dict(self.node_selector, "rename_node.node_selector")
             if not _non_empty_string(self.new_name):
@@ -121,11 +140,12 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
   "risk_level": "low | medium | high",
   "risk_reasons": ["风险原因"],
   "required_context": [{"type": "block", "query": "水泵控制", "reason": "用于定位"}],
-  "operations": [
+    "operations": [
     {
-      "op": "update_param",
+      "op": "replace_constant",
       "node_selector": {"id": "3a4c97e"},
-      "params": {"tripPoint": 3}
+      "field": "tripPoint",
+      "value": 3
     }
   ],
   "validation_expectations": ["目标节点唯一", "dry-run 校验通过"],
@@ -134,11 +154,13 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 
 允许的 op 只有：
 1. update_param：需要 node_selector 和 params，只能修改已存在参数。
-2. rename_node：需要 node_selector 和 new_name。
-3. add_comment：需要 tab_selector 和 text。
-4. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
-5. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
-6. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
+2. replace_constant：需要 node_selector 和 value；可选 field。只用于替换常量、软件输入设定值、比较阈值或数学模块固定值，不用于结构字段。
+3. enable_dynamic_input：需要 node_selector；PID、线性变换等需要 input_option 或 input_options；只打开动态输入端口并维护 inputs、inputsOption/inputAuxEnable、wires，不自动连线。
+4. rename_node：需要 node_selector 和 new_name。
+5. add_comment：需要 tab_selector 和 text。
+6. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
+7. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
+8. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
 
 选择器规则：
 1. 已知节点优先使用 {"id": "..."}。
@@ -147,8 +169,8 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 4. 无法唯一定位节点、页面、端口或参数时，status 必须是 needs_clarification，并提出具体追问。
 
 风险规则：
-1. rename_node、update_param、add_comment 通常是 low。
-2. add_node_from_schema、connect、disconnect 至少是 medium。
+1. rename_node、update_param、replace_constant、add_comment 通常是 low。
+2. enable_dynamic_input、add_node_from_schema、connect、disconnect 至少是 medium。
 3. 删除、断线、修改 IO/通讯地址、修改设备数量、影响保护逻辑必须是 high；当前没有 delete/copy/set_io op，遇到这类需求应追问或说明需要人工确认。
 """
 

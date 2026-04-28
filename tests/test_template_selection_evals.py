@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,11 @@ def test_template_selection_eval_cases_top3_and_clarification() -> None:
     cases = _load_cases()
     assert cases
 
+    evaluable_counts: Counter[str] = Counter()
+    top1_hits = 0
+    top3_hits = 0
+    evaluated_count = 0
+
     for case in cases:
         summary = analyze_requirement(case["message"], project_type=case.get("project_type"))
         assert bool(summary["blocking_missing_fields"]) is bool(case["expected_clarification"]), case["case_id"]
@@ -26,8 +32,22 @@ def test_template_selection_eval_cases_top3_and_clarification() -> None:
 
         candidates = search_templates(case["message"], project_type=summary["project_type"], limit=3)
         top3_ids = [candidate["template_id"] for candidate in candidates]
+        expected_top1 = case["expected_top1"]
+        assert expected_top1 is not None, case["case_id"]
+        assert top3_ids, case["case_id"]
+        assert top3_ids[0] == expected_top1, case["case_id"]
         for expected_id in case["expected_top3"]:
             assert expected_id in top3_ids, case["case_id"]
+
+        evaluated_count += 1
+        top1_hits += int(top3_ids[0] == expected_top1)
+        top3_hits += int(expected_top1 in top3_ids)
+        evaluable_counts[str(summary["project_type"])] += 1
+
+    assert evaluable_counts["ahu"] >= 10
+    assert evaluable_counts["plant_room"] >= 10
+    assert top1_hits == evaluated_count
+    assert top3_hits == evaluated_count
 
 
 def test_template_candidate_explanation_reports_match_missing_cost_and_risks() -> None:

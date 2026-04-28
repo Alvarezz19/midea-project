@@ -154,6 +154,70 @@ def test_llm_planner_validates_structured_patch_plan(monkeypatch: pytest.MonkeyP
     assert result["llm_meta"]["provider"] == "deepseek"
 
 
+def test_llm_planner_accepts_replace_constant_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_replace", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "替换常量节点的固定值。",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [{"type": "node", "query": "67febfa 常量", "reason": "定位目标常量"}],
+            "operations": [{"op": "replace_constant", "node_selector": {"id": "67febfa"}, "field": "fixedValue", "value": "6"}],
+            "validation_expectations": ["目标节点唯一", "只修改 fixedValue"],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "把节点 67febfa 的常量值替换为 6",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "planned"
+    assert result["risk_level"] == "low"
+    assert result["pending_patch"] == {
+        "operations": [{"op": "replace_constant", "node_selector": {"id": "67febfa"}, "field": "fixedValue", "value": "6"}]
+    }
+
+
+def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_dynamic", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "启用比较节点的动态阈值输入。",
+            "risk_level": "medium",
+            "risk_reasons": ["修改节点输入端口数量"],
+            "required_context": [{"type": "node", "query": "f22a5df 比较判断", "reason": "定位目标节点"}],
+            "operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}],
+            "validation_expectations": ["目标节点唯一", "inputs 和 wires 同步"],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "启用节点 f22a5df 的动态阈值输入",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "planned"
+    assert result["risk_level"] == "medium"
+    assert result["pending_patch"] == {"operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}]}
+
+
 def test_llm_planner_rejects_unknown_operations(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_bad", versions_dir=tmp_path)
 

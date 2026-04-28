@@ -249,6 +249,76 @@ def test_patch_engine_updates_renames_comments_and_validates(tmp_path: Path) -> 
     assert find_nodes(reloaded, {"id": "67febfa"})[0]["fixedValue"] == "5"
 
 
+def test_patch_engine_replaces_constant_value_with_dry_run_diff() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+
+    result = dry_run_patch(nodes, {"op": "replace_constant", "node_selector": {"id": "67febfa"}, "value": "6"})
+
+    assert result["saved"] is False
+    assert result["valid"] is True
+    assert result["changes"] == [
+        {
+            "op": "replace_constant",
+            "node_id": "67febfa",
+            "field": "fixedValue",
+            "old_value": "4",
+            "new_value": "6",
+        }
+    ]
+    assert result["diff"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "modified_count": 1,
+        "affected_node_count": 1,
+    }
+    assert result["diff"]["affected_node_ids"] == ["67febfa"]
+    assert find_nodes(nodes, {"id": "67febfa"})[0]["fixedValue"] == "4"
+
+
+def test_patch_engine_enables_aux_dynamic_input() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+    target = find_nodes(nodes, {"id": "f22a5df"})[0]
+    assert target["type"] == "compare"
+    assert target["inputAuxEnable"] is False
+    assert target["inputs"] == 1
+
+    result = dry_run_patch(nodes, {"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}})
+
+    assert result["valid"] is True
+    assert result["changed"] is True
+    updated = find_nodes(result["nodes"], {"id": "f22a5df"})[0]
+    assert updated["inputAuxEnable"] is True
+    assert updated["inputs"] == 2
+    assert updated["wires"] == [[{"id": "1f65cd8", "port": 0}], []]
+    assert result["diff"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "modified_count": 1,
+        "affected_node_count": 1,
+    }
+    assert find_nodes(nodes, {"id": "f22a5df"})[0]["inputs"] == 1
+
+
+def test_patch_engine_enables_pid_dynamic_input_option() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+    target = find_nodes(nodes, {"id": "a2f6cc2"})[0]
+    assert target["type"] == "pid"
+    assert "highPidOutLimit" not in target["inputsOption"]
+    assert target["inputs"] == 8
+
+    result = dry_run_patch(
+        nodes,
+        {"op": "enable_dynamic_input", "node_selector": {"id": "a2f6cc2"}, "input_option": "highPidOutLimit"},
+    )
+
+    assert result["valid"] is True
+    updated = find_nodes(result["nodes"], {"id": "a2f6cc2"})[0]
+    assert updated["inputsOption"] == ["proportional", "integral", "derivative", "interval", "deadBand", "highPidOutLimit"]
+    assert updated["inputs"] == 9
+    assert len(updated["wires"]) == 9
+    assert updated["wires"][-1] == []
+
+
 def test_patch_engine_dry_run_returns_diff_without_mutating_source() -> None:
     nodes = load_project(PLANT_TEMPLATE)
     original_name = find_nodes(nodes, {"id": "3a4c97e"})[0].get("name")
@@ -369,6 +439,18 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
     with pytest.raises(PatchEngineError, match="不允许新增未知参数"):
         apply_patch(nodes, {"op": "update_param", "node_selector": {"id": "67febfa"}, "params": {"unknownField": 1}})
 
+    with pytest.raises(PatchEngineError, match="不支持节点类型"):
+        apply_patch(nodes, {"op": "replace_constant", "node_selector": {"id": "73b96a8"}, "field": "fixedValue", "value": 1})
+
+    with pytest.raises(PatchEngineError, match="不允许修改 compare 的字段"):
+        apply_patch(nodes, {"op": "replace_constant", "node_selector": {"id": "3a4c97e"}, "field": "outOfServiceValue", "value": 1})
+
+    with pytest.raises(PatchEngineError, match="需要 input_option"):
+        apply_patch(nodes, {"op": "enable_dynamic_input", "node_selector": {"id": "c8d7d0"}})
+
+    with pytest.raises(PatchEngineError, match="不允许 pid 的选项"):
+        apply_patch(nodes, {"op": "enable_dynamic_input", "node_selector": {"id": "c8d7d0"}, "input_option": "badOption"})
+
     with pytest.raises(PatchEngineError, match="schema 未定义参数"):
         apply_patch(
             nodes,
@@ -480,6 +562,35 @@ def test_planner_creates_update_and_comment_patches(tmp_path: Path) -> None:
     assert comment["pending_patch"]["op"] == "add_comment"
     assert comment["pending_patch"]["tab_selector"] == {"id": "73b96a8"}
     assert comment["pending_patch"]["text"] == "planner 测试备注"
+
+
+def test_planner_creates_replace_constant_patch_by_node_id(tmp_path: Path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="planner_project", version_id="v_replace_constant", versions_dir=tmp_path)
+
+    result = plan_patch_request("把节点 67febfa 的常量值改为 6", project_path=metadata["version_path"])
+
+    assert result["status"] == "planned"
+    assert result["pending_patch"] == {
+        "op": "replace_constant",
+        "node_selector": {"id": "67febfa"},
+        "field": "fixedValue",
+        "value": "6",
+    }
+    dry_run = dry_run_patch(load_project(metadata["version_path"]), result["pending_patch"])
+    assert dry_run["valid"]
+    assert dry_run["diff"]["summary"]["modified_count"] == 1
+
+
+def test_planner_creates_enable_dynamic_input_patch_by_node_id(tmp_path: Path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="planner_project", version_id="v_dynamic_input", versions_dir=tmp_path)
+
+    result = plan_patch_request("启用节点 f22a5df 的动态阈值输入", project_path=metadata["version_path"])
+
+    assert result["status"] == "planned"
+    assert result["pending_patch"] == {"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}
+    dry_run = dry_run_patch(load_project(metadata["version_path"]), result["pending_patch"])
+    assert dry_run["valid"]
+    assert find_nodes(dry_run["nodes"], {"id": "f22a5df"})[0]["inputs"] == 2
 
 
 def test_planner_can_target_unique_node_by_tab_and_type(tmp_path: Path) -> None:

@@ -112,6 +112,14 @@ def plan_patch_request(
     if rename_plan:
         return {**rename_plan, **context}
 
+    dynamic_input_plan = _plan_enable_dynamic_input(message, nodes)
+    if dynamic_input_plan:
+        return {**dynamic_input_plan, **context}
+
+    replace_constant_plan = _plan_replace_constant(message, nodes)
+    if replace_constant_plan:
+        return {**replace_constant_plan, **context}
+
     update_plan = _plan_update_param(message, nodes)
     if update_plan:
         return {**update_plan, **context}
@@ -225,6 +233,87 @@ def _plan_update_param(message: str, nodes: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def _plan_replace_constant(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not any(keyword in message for keyword in ["替换常量", "修改常量", "常量值", "固定值", "设定值"]):
+        return None
+
+    field_name = _infer_replace_constant_field(message)
+    value_match = re.search(r"(?:改为|设为|设置为|调整为|替换为)\s*(?P<value>[-+]?\d+(?:\.\d+)?|[^，。\s]+)", message)
+    if not value_match:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["请说明常量或设定值要替换成什么值。"],
+            "reason": "replace_constant 请求缺少新值。",
+        }
+
+    target_text = _extract_update_target_text(message, field_name) if field_name else _clean_target_text(re.split(r"改为|设为|设置为|调整为|替换为", message, maxsplit=1)[0])
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    if selector_result["status"] != "resolved":
+        return selector_result
+
+    node = find_nodes(nodes, selector_result["selector"])[0]
+    field_name = field_name or _default_replace_constant_field(node)
+    if not field_name or field_name not in node:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["目标节点不是可直接替换的常量、软件输入设定值或静态阈值，请确认目标节点。"],
+            "reason": "目标节点缺少可替换值字段。",
+            "target_node": _summarize_node(node),
+        }
+
+    raw_value = value_match.group("value").strip()
+    new_value = _coerce_value(raw_value, node.get(field_name), field_name)
+
+    return {
+        "status": "planned",
+        "pending_patch": {
+            "op": "replace_constant",
+            "node_selector": selector_result["selector"],
+            "field": field_name,
+            "value": new_value,
+        },
+        "questions": [],
+        "reason": f"识别为替换常量/设定值请求，目标字段为 {field_name}，且已唯一确定目标节点。",
+        "target_node": selector_result["node"],
+    }
+
+
+def _plan_enable_dynamic_input(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not ("动态" in message and "输入" in message and any(keyword in message for keyword in ["启用", "开启", "打开"])):
+        return None
+
+    target_text = _clean_target_text(re.split(r"启用|开启|打开", message, maxsplit=1)[-1])
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    if selector_result["status"] != "resolved":
+        return selector_result
+
+    node = find_nodes(nodes, selector_result["selector"])[0]
+    node_type = node.get("type")
+    input_option = _infer_dynamic_input_option(message, node_type=str(node_type))
+    if node_type in {"pid", "fuzzypid", "linear"} and not input_option:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["请说明要启用哪个动态输入选项，例如 proportional、integral、deadBand、inputD 或 outputD。"],
+            "reason": "动态输入请求缺少具体选项。",
+            "target_node": _summarize_node(node),
+        }
+
+    pending_patch: dict[str, Any] = {"op": "enable_dynamic_input", "node_selector": selector_result["selector"]}
+    if input_option:
+        pending_patch["input_option"] = input_option
+
+    return {
+        "status": "planned",
+        "pending_patch": pending_patch,
+        "questions": [],
+        "reason": "识别为启用动态输入端口请求，已唯一确定目标节点。",
+        "target_node": selector_result["node"],
+    }
+
+
 def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
     node_id = _extract_node_id(message)
     if node_id:
@@ -329,6 +418,51 @@ def _infer_field_name(message: str) -> str | None:
     for keyword, field in FIELD_ALIASES.items():
         if keyword in message:
             return field
+    return None
+
+
+def _infer_replace_constant_field(message: str) -> str | None:
+    if any(keyword in message for keyword in ["常量值", "固定值", "fixedValue"]):
+        return "fixedValue"
+    if any(keyword in message for keyword in ["默认输出值", "离线值", "掉线值", "outOfServiceValue"]):
+        return "outOfServiceValue"
+    if any(keyword in message for keyword in ["阈值", "门限", "tripPoint"]):
+        return "tripPoint"
+    return None
+
+
+def _infer_dynamic_input_option(message: str, *, node_type: str) -> str | None:
+    aliases = {
+        "proportional": ["proportional", "比例增益", "P值"],
+        "integral": ["integral", "积分增益", "I值"],
+        "derivative": ["derivative", "微分增益", "D值"],
+        "highPidOutLimit": ["highPidOutLimit", "输出上限值", "输出上限"],
+        "lowPidOutLimit": ["lowPidOutLimit", "输出下限值", "输出下限"],
+        "interval": ["interval", "运算间隔", "计算间隔"],
+        "deadBand": ["deadBand", "死区"],
+        "pidMode": ["pidMode", "运算方向", "模式"],
+        "disabledOutValue": ["disabledOutValue", "禁止输出模式"],
+        "inputD": ["inputD", "输入范围", "输入量程"],
+        "outputD": ["outputD", "输出范围", "输出量程"],
+    }
+    if node_type in {"compare", "limit"}:
+        return None
+    for option, keywords in aliases.items():
+        if any(keyword in message for keyword in keywords):
+            return option
+    return None
+
+
+def _default_replace_constant_field(node: dict[str, Any]) -> str | None:
+    node_type = node.get("type")
+    if node_type == "constInput":
+        return "fixedValue"
+    if node_type == "swInput":
+        return "outOfServiceValue"
+    if node_type == "compare":
+        return "tripPoint"
+    if node_type in {"add", "subtract", "multiply", "divide"}:
+        return "fixedValue"
     return None
 
 

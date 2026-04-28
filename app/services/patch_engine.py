@@ -14,6 +14,47 @@ class PatchEngineError(ValueError):
 
 
 PROTECTED_UPDATE_FIELDS = {"id", "type", "z", "wires"}
+REPLACE_CONSTANT_FIELDS_BY_TYPE = {
+    "constInput": {"fixedValue", "outOfServiceValue"},
+    "swInput": {"outOfServiceValue", "swInputDefault"},
+    "compare": {"tripPoint"},
+    "add": {"fixedValue"},
+    "subtract": {"fixedValue"},
+    "multiply": {"fixedValue"},
+    "divide": {"fixedValue"},
+}
+DEFAULT_REPLACE_CONSTANT_FIELD_BY_TYPE = {
+    "constInput": "fixedValue",
+    "swInput": "outOfServiceValue",
+    "compare": "tripPoint",
+    "add": "fixedValue",
+    "subtract": "fixedValue",
+    "multiply": "fixedValue",
+    "divide": "fixedValue",
+}
+AUX_DYNAMIC_INPUT_TYPES = {"compare", "limit"}
+OPTION_DYNAMIC_INPUT_BASE_COUNTS = {"pid": 3, "fuzzypid": 3}
+OPTION_DYNAMIC_INPUT_ALLOWED = {
+    "pid": [
+        "proportional",
+        "integral",
+        "derivative",
+        "highPidOutLimit",
+        "lowPidOutLimit",
+        "interval",
+        "deadBand",
+        "pidMode",
+    ],
+    "fuzzypid": [
+        "highPidOutLimit",
+        "lowPidOutLimit",
+        "interval",
+        "deadBand",
+        "pidMode",
+        "disabledOutValue",
+    ],
+}
+LINEAR_DYNAMIC_INPUT_TARGETS = {"inputD": 3, "outputD": 5}
 
 
 def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str, Any]:
@@ -29,6 +70,10 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
         op = operation.get("op")
         if op == "update_param":
             changes.extend(_update_param(next_nodes, operation, index))
+        elif op == "replace_constant":
+            changes.extend(_replace_constant(next_nodes, operation, index))
+        elif op == "enable_dynamic_input":
+            changes.extend(_enable_dynamic_input(next_nodes, operation, index))
         elif op == "rename_node":
             changes.extend(_rename_node(next_nodes, operation, index))
         elif op == "add_comment":
@@ -217,6 +262,117 @@ def _update_param(nodes: list[dict[str, Any]], operation: dict[str, Any], op_ind
                 "new_value": new_value,
             }
         )
+    return changes
+
+
+def _replace_constant(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    selector = operation.get("node_selector")
+    if not isinstance(selector, dict):
+        raise PatchEngineError("replace_constant 需要 node_selector。")
+    if "value" not in operation:
+        raise PatchEngineError("replace_constant 需要 value。")
+
+    node = _select_one(nodes, selector, op_index)
+    node_type = str(node.get("type", ""))
+    allowed_fields = REPLACE_CONSTANT_FIELDS_BY_TYPE.get(node_type)
+    if not allowed_fields:
+        raise PatchEngineError(f"replace_constant 不支持节点类型: {node_type}")
+
+    field = operation.get("field")
+    if field is None:
+        field = DEFAULT_REPLACE_CONSTANT_FIELD_BY_TYPE.get(node_type)
+    if not isinstance(field, str) or not field:
+        raise PatchEngineError("replace_constant 的 field 必须是非空字符串。")
+    if field in PROTECTED_UPDATE_FIELDS:
+        raise PatchEngineError(f"replace_constant 不允许修改结构字段: {field}")
+    if field not in allowed_fields:
+        raise PatchEngineError(f"replace_constant 不允许修改 {node_type} 的字段: {field}")
+    if field not in node:
+        raise PatchEngineError(f"replace_constant 目标节点缺少字段: {field}")
+
+    old_value = node.get(field)
+    new_value = operation["value"]
+    if old_value == new_value:
+        return []
+    node[field] = new_value
+    return [
+        {
+            "op": "replace_constant",
+            "node_id": node.get("id"),
+            "field": field,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+    ]
+
+
+def _enable_dynamic_input(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    selector = operation.get("node_selector")
+    if not isinstance(selector, dict):
+        raise PatchEngineError("enable_dynamic_input 需要 node_selector。")
+
+    node = _select_one(nodes, selector, op_index)
+    node_type = str(node.get("type", ""))
+    if node_type in AUX_DYNAMIC_INPUT_TYPES:
+        return _enable_aux_dynamic_input(node)
+    if node_type in OPTION_DYNAMIC_INPUT_ALLOWED:
+        options = _dynamic_input_options(operation)
+        if not options:
+            raise PatchEngineError(f"enable_dynamic_input 对 {node_type} 需要 input_option 或 input_options。")
+        return _enable_option_dynamic_input(node, options)
+    if node_type == "linear":
+        options = _dynamic_input_options(operation)
+        if not options:
+            raise PatchEngineError("enable_dynamic_input 对 linear 需要 input_option 或 input_options。")
+        return _enable_linear_dynamic_input(node, options)
+    raise PatchEngineError(f"enable_dynamic_input 不支持节点类型: {node_type}")
+
+
+def _enable_aux_dynamic_input(node: dict[str, Any]) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    if node.get("inputAuxEnable") is not True:
+        changes.append(_field_change("enable_dynamic_input", node, "inputAuxEnable", True))
+        node["inputAuxEnable"] = True
+    changes.extend(_set_input_count(node, 2, op="enable_dynamic_input"))
+    return changes
+
+
+def _enable_option_dynamic_input(node: dict[str, Any], options: list[str]) -> list[dict[str, Any]]:
+    node_type = str(node.get("type", ""))
+    allowed = OPTION_DYNAMIC_INPUT_ALLOWED[node_type]
+    existing = node.get("inputsOption")
+    if existing is None:
+        existing = []
+    if not isinstance(existing, list) or any(not isinstance(item, str) for item in existing):
+        raise PatchEngineError(f"节点 {node.get('id')} 的 inputsOption 必须是字符串数组。")
+
+    next_options = list(existing)
+    for option in options:
+        if option not in allowed:
+            raise PatchEngineError(f"enable_dynamic_input 不允许 {node_type} 的选项: {option}")
+        if option not in next_options:
+            next_options.append(option)
+
+    changes: list[dict[str, Any]] = []
+    if next_options != existing:
+        changes.append(_field_change("enable_dynamic_input", node, "inputsOption", next_options))
+        node["inputsOption"] = next_options
+    target_inputs = OPTION_DYNAMIC_INPUT_BASE_COUNTS[node_type] + len(next_options)
+    changes.extend(_set_input_count(node, target_inputs, op="enable_dynamic_input"))
+    return changes
+
+
+def _enable_linear_dynamic_input(node: dict[str, Any], options: list[str]) -> list[dict[str, Any]]:
+    target_inputs = int(node.get("inputs", 1)) if isinstance(node.get("inputs"), int) else 1
+    changes: list[dict[str, Any]] = []
+    for option in options:
+        if option not in LINEAR_DYNAMIC_INPUT_TARGETS:
+            raise PatchEngineError(f"enable_dynamic_input 不允许 linear 的选项: {option}")
+        if node.get(option) is not True:
+            changes.append(_field_change("enable_dynamic_input", node, option, True))
+            node[option] = True
+        target_inputs = max(target_inputs, LINEAR_DYNAMIC_INPUT_TARGETS[option])
+    changes.extend(_set_input_count(node, target_inputs, op="enable_dynamic_input"))
     return changes
 
 
@@ -442,6 +598,65 @@ def _ensure_input_wires(node: dict[str, Any]) -> list[list[Any]]:
             raise PatchEngineError(f"节点 {node.get('id')} 的 wires[{index}] 必须是数组。")
     node["wires"] = wires
     return wires
+
+
+def _set_input_count(node: dict[str, Any], target_inputs: int, *, op: str) -> list[dict[str, Any]]:
+    if target_inputs < 0:
+        raise PatchEngineError("target_inputs 必须是非负整数。")
+    current_inputs = node.get("inputs")
+    if not isinstance(current_inputs, int) or current_inputs < 0:
+        raise PatchEngineError(f"节点 {node.get('id')} 缺少有效 inputs。")
+    if target_inputs < current_inputs:
+        raise PatchEngineError("enable_dynamic_input 不支持减少输入端口。")
+
+    changes: list[dict[str, Any]] = []
+    if current_inputs != target_inputs:
+        changes.append(_field_change(op, node, "inputs", target_inputs))
+        node["inputs"] = target_inputs
+    if "inputsCount" in node and node.get("inputsCount") != target_inputs:
+        changes.append(_field_change(op, node, "inputsCount", target_inputs))
+        node["inputsCount"] = target_inputs
+
+    before_wires = copy.deepcopy(node.get("wires"))
+    wires = _ensure_input_wires(node)
+    if before_wires != wires:
+        changes.append(
+            {
+                "op": op,
+                "node_id": node.get("id"),
+                "field": "wires",
+                "old_value": before_wires,
+                "new_value": copy.deepcopy(wires),
+            }
+        )
+    return changes
+
+
+def _dynamic_input_options(operation: dict[str, Any]) -> list[str]:
+    raw_options = operation.get("input_options")
+    if raw_options is None and "input_option" in operation:
+        raw_options = [operation["input_option"]]
+    if raw_options is None and "option" in operation:
+        raw_options = [operation["option"]]
+    if raw_options is None:
+        return []
+    if not isinstance(raw_options, list) or any(not isinstance(item, str) or not item.strip() for item in raw_options):
+        raise PatchEngineError("enable_dynamic_input 的 input_options 必须是非空字符串数组。")
+    result: list[str] = []
+    for option in raw_options:
+        if option not in result:
+            result.append(option)
+    return result
+
+
+def _field_change(op: str, node: dict[str, Any], field: str, new_value: Any) -> dict[str, Any]:
+    return {
+        "op": op,
+        "node_id": node.get("id"),
+        "field": field,
+        "old_value": copy.deepcopy(node.get(field)),
+        "new_value": copy.deepcopy(new_value),
+    }
 
 
 def _wire_ref_equals(value: Any, source_id: str, source_output: int | None) -> bool:

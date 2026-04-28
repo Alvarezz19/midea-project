@@ -439,7 +439,7 @@ def _assess_patch_risk(patch: Any, *, planner_result: Any = None) -> dict[str, A
 
     for operation in operations:
         op = operation.get("op")
-        if op in {"add_node_from_schema", "connect", "disconnect", "copy_block", "delete_node", "delete_block", "set_io_point"}:
+        if op in {"add_node_from_schema", "connect", "disconnect", "enable_dynamic_input", "copy_block", "delete_node", "delete_block", "set_io_point"}:
             risk_level = _max_risk(risk_level, "medium")
             reasons.append(f"{op} 属于需要确认的结构或连线变更。")
         if op in {"copy_block", "delete_node", "delete_block", "set_io_point"}:
