@@ -71,7 +71,9 @@
 - 提供 FastAPI API。
 - 提供 FastAPI 托管的前端工作台。
 - 应用启动时复用已编译的 LangGraph 工作流。
-- 会话状态已通过文件型 session store 持久化到本地目录，后续可替换为 PostgreSQL。
+- 会话状态默认通过文件型 session store 持久化到本地目录，也可切换到 PostgreSQL 运行时存储。
+- 支持 PostgreSQL 运行时业务存储：session、project/version 元数据、patch、validation、export、audit 可写入 PostgreSQL，工程 JSON 文件本体仍保存在版本目录。
+- 支持 LangGraph PostgreSQL checkpointer 配置，并已完成 Docker PostgreSQL 本地集成验收。
 - 已有 pytest 验收覆盖服务层、工作流和 API。
 
 ## 尚未完成
@@ -83,15 +85,17 @@
 - 更完整的 JSON diff 可视化。
 - 更完整的前端交互体验。
 - 向量库/混合检索。
-- PostgreSQL 业务表运行时存储、权限、审计等生产化能力。
+- PostgreSQL 权限模型、运维查询和更完整生产化配套。
+- LangGraph 原生 interrupt/恢复式确认流。
 
 ## 目录结构
 
 ```text
 app/
-  main.py                 FastAPI 入口和 API
-  graph/                  LangGraph 工作流
-  services/               确定性工具层
+  main.py                 FastAPI 入口、API 和静态工作台托管
+  core/                   环境变量配置与日志初始化
+  graph/                  LangGraph 状态、节点、workflow、checkpointer
+  services/               检索、补丁、校验、运行时存储等服务层
   static/                 前端工作台静态文件
 
 scripts/
@@ -104,10 +108,12 @@ indexes/
   nodes/                  节点级索引
 
 knowledge/                控制策略和工程规范知识文档
+rules/                    机器可读工程规则
+migrations/               PostgreSQL 迁移脚本
 programs/                 原始工程模板
 schemas/                  模块 schema 描述
-rules/                    机器可读工程规则
-projects/                 运行时工程版本输出
+projects/                 运行时工程版本与会话输出目录
+文档/                     项目结构、演进记录、生产化方案等维护文档
 tests/                    自动化测试
 evals/                    模板选择、LLM planner 等评测样例
 ```
@@ -374,7 +380,19 @@ pytest -q
 93 passed, 3 skipped
 ```
 
-PostgreSQL 集成验收可使用 Docker 本地实例：
+当前测试文件包括：
+
+- `tests/test_services.py`：服务层、检索、补丁、校验和规则回归。
+- `tests/test_workflow_api.py`：LangGraph 工作流和 FastAPI API 端到端回归。
+- `tests/test_template_selection_evals.py`：模板选择与澄清评测样例。
+- `tests/test_planner_evals.py`：LLM planner 评测样例和真实 DeepSeek 结构化规划验收。
+- `tests/test_llm_gateway.py`：LLM Gateway、需求抽取和 planner schema/dry-run 反馈重试。
+- `tests/test_checkpointing.py`：LangGraph PostgreSQL checkpointer 配置边界。
+- `tests/test_session_store.py`：文件型会话存储边界。
+- `tests/test_migrations.py`：PostgreSQL 迁移脚本结构约束。
+- `tests/test_postgres_integration.py`：Docker PostgreSQL 真实集成验收，默认跳过。
+
+PostgreSQL 集成验收可使用 Docker 本地实例，覆盖业务 schema、运行时存储和 LangGraph checkpointer：
 
 ```powershell
 conda activate midea
@@ -425,12 +443,12 @@ pytest -q
 - `projects/versions/`：默认工程版本输出目录。
   - `{version_id}.json`：不可变工程版本。
   - `{version_id}.meta.json`：版本来源、父版本、hash、补丁摘要和校验摘要。
-- `projects/sessions/`：默认会话状态输出目录。
+- `projects/sessions/`：`RUNTIME_STORE_BACKEND=file` 时的默认会话状态输出目录。
 - `projects/exports/`：预留导出目录。
 - `.env`：本地环境变量，不应提交。
 - `uvicorn-workbench.log`：本地运行日志，可按需删除。
 
-测试中通常使用临时目录，避免污染真实项目版本目录。
+切换到 `RUNTIME_STORE_BACKEND=postgres` 后，session、project/version 元数据、patch、validation、export、audit 会写入 PostgreSQL，工程 JSON 文件本体仍保存在版本目录。测试中通常使用临时目录，避免污染真实项目版本目录。
 
 ## 相关文档
 
