@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -119,6 +120,10 @@ class RollbackProjectRequest(BaseModel):
     target_version_id: str = Field(min_length=1)
 
 
+class PatchConfirmationRequest(BaseModel):
+    action: Literal["approve", "cancel"]
+
+
 @app.get("/", include_in_schema=False)
 def frontend() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -167,6 +172,50 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     if request.llm_max_attempts is not None:
         state["llm_max_attempts"] = request.llm_max_attempts
 
+    try:
+        next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
+    except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+        raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
+
+    _session_store().save(thread_id, next_state)
+    return {"thread_id": thread_id, "state": _public_state(next_state)}
+
+
+@app.post("/api/sessions/{thread_id}/patch-confirmation")
+def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> dict[str, Any]:
+    state = _session_store().get(thread_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在。")
+    if state.get("status") != "awaiting_patch_confirmation" or state.get("next_action") != "confirm_patch":
+        raise HTTPException(status_code=400, detail="当前会话没有等待确认的补丁。")
+
+    pending_patch = state.get("pending_confirmation_patch")
+    if not isinstance(pending_patch, dict):
+        raise HTTPException(status_code=400, detail="待确认补丁不存在或格式无效。")
+
+    if request.action == "cancel":
+        state["pending_patch"] = None
+        state["pending_confirmation_patch"] = None
+        state["patch_confirmation"] = {
+            "action": "cancelled",
+            "cancelled_at": _utc_now_iso(),
+            "risk_assessment": state.get("risk_assessment"),
+        }
+        state["status"] = "patch_confirmation_cancelled"
+        state["next_action"] = "send_message"
+        state["error"] = None
+        state["messages"] = list(state.get("messages") or []) + [{"role": "assistant", "content": "已取消待确认补丁，当前工程版本未变化。"}]
+        _session_store().save(thread_id, state)
+        return {"thread_id": thread_id, "state": _public_state(state)}
+
+    state["pending_patch"] = pending_patch
+    state["patch_confirmation"] = {
+        "action": "approved",
+        "confirmed_patch": pending_patch,
+        "confirmed_project_version_id": state.get("current_project_version_id"),
+        "confirmed_at": _utc_now_iso(),
+        "risk_assessment": state.get("risk_assessment"),
+    }
     try:
         next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
@@ -441,15 +490,20 @@ def _empty_state(
         "messages": [],
         "project_type": project_type,
         "requirement_summary": {},
+        "open_questions": [],
+        "confirmed_requirements": [],
         "template_candidates": [],
         "selected_template_id": None,
         "current_project_id": None,
         "current_project_version_id": None,
         "current_project_path": None,
         "pending_patch": None,
+        "pending_confirmation_patch": None,
         "planner_result": None,
         "planner_dry_run": None,
         "planner_attempts": [],
+        "risk_assessment": None,
+        "patch_confirmation": None,
         "patch_result": None,
         "validation_report": None,
         "status": "created",
@@ -496,15 +550,20 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "messages": state.get("messages", []),
         "project_type": state.get("project_type"),
         "requirement_summary": state.get("requirement_summary", {}),
+        "open_questions": state.get("open_questions", []),
+        "confirmed_requirements": state.get("confirmed_requirements", []),
         "template_candidates": state.get("template_candidates", []),
         "selected_template_id": state.get("selected_template_id"),
         "current_project_id": state.get("current_project_id"),
         "current_project_version_id": state.get("current_project_version_id"),
         "current_project_path": state.get("current_project_path"),
         "patch_result": state.get("patch_result"),
+        "pending_confirmation_patch": state.get("pending_confirmation_patch"),
         "planner_result": state.get("planner_result"),
         "planner_dry_run": state.get("planner_dry_run"),
         "planner_attempts": state.get("planner_attempts", []),
+        "risk_assessment": state.get("risk_assessment"),
+        "patch_confirmation": state.get("patch_confirmation"),
         "validation_report": state.get("validation_report"),
         "status": state.get("status"),
         "next_action": state.get("next_action"),
@@ -526,3 +585,7 @@ def _resolve_allowed_project_file(path: str) -> Path:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()

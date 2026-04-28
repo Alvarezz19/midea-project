@@ -7,15 +7,20 @@ class AgentState(TypedDict):
     messages: list[dict[str, Any]]
     project_type: str | None
     requirement_summary: dict[str, Any]
+    open_questions: list[dict[str, Any]]
+    confirmed_requirements: list[str]
     template_candidates: list[dict[str, Any]]
     selected_template_id: str | None
     current_project_id: str | None
     current_project_version_id: str | None
     current_project_path: str | None
     pending_patch: dict[str, Any] | None
+    pending_confirmation_patch: dict[str, Any] | None
     planner_result: dict[str, Any] | None
     planner_dry_run: dict[str, Any] | None
     planner_attempts: list[dict[str, Any]]
+    risk_assessment: dict[str, Any] | None
+    patch_confirmation: dict[str, Any] | None
     patch_result: dict[str, Any] | None
     validation_report: dict[str, Any] | None
     status: str
@@ -34,15 +39,20 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "messages": [{"role": "user", "content": message}],
         "project_type": project_type,
         "requirement_summary": {},
+        "open_questions": [],
+        "confirmed_requirements": [],
         "template_candidates": [],
         "selected_template_id": None,
         "current_project_id": None,
         "current_project_version_id": None,
         "current_project_path": None,
         "pending_patch": None,
+        "pending_confirmation_patch": None,
         "planner_result": None,
         "planner_dry_run": None,
         "planner_attempts": [],
+        "risk_assessment": None,
+        "patch_confirmation": None,
         "patch_result": None,
         "validation_report": None,
         "status": "started",

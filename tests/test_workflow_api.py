@@ -298,8 +298,25 @@ def test_workflow_llm_planner_requires_confirmation_for_non_low_risk(
     assert result["status"] == "awaiting_patch_confirmation"
     assert result["next_action"] == "confirm_patch"
     assert result["pending_patch"] is None
+    assert result["pending_confirmation_patch"] == {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+    assert result["risk_assessment"]["requires_confirmation"] is True
     assert result["planner_dry_run"]["valid"]
     assert "需要确认后再应用" in result["messages"][-1]["content"]
+
+
+def test_workflow_requires_confirmation_for_manual_medium_risk_patch(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    state["pending_patch"] = {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+
+    result = invoke_workflow(state)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["pending_patch"] is None
+    assert result["pending_confirmation_patch"]["op"] == "disconnect"
+    assert result["planner_dry_run"]["valid"]
+    assert result["risk_assessment"]["risk_level"] == "medium"
 
 
 def test_workflow_reports_ambiguous_patch(tmp_path: Path) -> None:
@@ -483,6 +500,69 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     export_after_rollback = client.get(f"/api/projects/{state['current_project_id']}/export")
     assert export_after_rollback.status_code == 200
     assert export_after_rollback.content == export.content
+
+
+def test_api_confirms_or_cancels_medium_risk_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.state, "session_store", FileSessionStore(tmp_path / "sessions"))
+    client = TestClient(app)
+
+    created = client.post("/api/sessions", json={"auto_confirm_template": True, "versions_dir": str(tmp_path)})
+    assert created.status_code == 200
+    thread_id = created.json()["thread_id"]
+
+    message = client.post(
+        f"/api/sessions/{thread_id}/message",
+        json={"message": "我要做一个风冷热泵机房群控程序，包含水泵控制"},
+    )
+    assert message.status_code == 200
+    state = message.json()["state"]
+    original_version_id = state["current_project_version_id"]
+    patch = {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+
+    pending = client.post(
+        f"/api/sessions/{thread_id}/message",
+        json={"message": "断开比较节点的输入", "pending_patch": patch},
+    )
+    assert pending.status_code == 200
+    pending_state = pending.json()["state"]
+    assert pending_state["status"] == "awaiting_patch_confirmation"
+    assert pending_state["next_action"] == "confirm_patch"
+    assert pending_state["current_project_version_id"] == original_version_id
+    assert pending_state["pending_confirmation_patch"] == patch
+    assert pending_state["planner_dry_run"]["saved"] is False
+    assert pending_state["risk_assessment"]["risk_level"] == "medium"
+
+    versions_before_cancel = client.get(f"/api/projects/{state['current_project_id']}/versions")
+    assert len(versions_before_cancel.json()["versions"]) == 1
+
+    cancelled = client.post(f"/api/sessions/{thread_id}/patch-confirmation", json={"action": "cancel"})
+    assert cancelled.status_code == 200
+    cancelled_state = cancelled.json()["state"]
+    assert cancelled_state["status"] == "patch_confirmation_cancelled"
+    assert cancelled_state["pending_confirmation_patch"] is None
+    assert cancelled_state["current_project_version_id"] == original_version_id
+
+    pending_again = client.post(
+        f"/api/sessions/{thread_id}/message",
+        json={"message": "再次断开比较节点的输入", "pending_patch": patch},
+    )
+    assert pending_again.status_code == 200
+    assert pending_again.json()["state"]["status"] == "awaiting_patch_confirmation"
+
+    approved = client.post(f"/api/sessions/{thread_id}/patch-confirmation", json={"action": "approve"})
+    assert approved.status_code == 200
+    approved_state = approved.json()["state"]
+    assert approved_state["status"] == "patch_applied"
+    assert approved_state["validation_report"]["valid"]
+    assert approved_state["pending_confirmation_patch"] is None
+    assert approved_state["current_project_version_id"] != original_version_id
+    assert approved_state["patch_confirmation"]["action"] == "approved"
+    assert approved_state["patch_confirmation"]["confirmed_project_version_id"] == original_version_id
+
+    versions_after_approve = client.get(f"/api/projects/{state['current_project_id']}/versions")
+    version_items = versions_after_approve.json()["versions"]
+    assert len(version_items) == 2
+    assert version_items[1]["parent_version_id"] == original_version_id
 
 
 def test_export_rejects_invalid_project_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

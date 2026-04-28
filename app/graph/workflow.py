@@ -48,6 +48,7 @@ def build_workflow(*, checkpointer: Any | None = None):
         {
             "create_project_version": "create_project_version",
             "retrieve_template_candidates": "retrieve_template_candidates",
+            "summarize_result": "summarize_result",
         },
     )
     graph.add_edge("retrieve_template_candidates", "select_or_wait_template")

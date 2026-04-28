@@ -36,11 +36,24 @@
                 <option value="ahu">AHU 程序</option>
               </select>
             </label>
+            <div class="type-buttons" aria-label="项目类型快捷选择">
+              <button id="plantRoomTypeBtn" class="secondary" type="button">机房群控程序</button>
+              <button id="ahuTypeBtn" class="secondary" type="button">AHU 程序</button>
+            </div>
             <label class="checkbox-row">
               <input id="autoConfirmInput" type="checkbox" />
               自动确认首个模板
             </label>
           </div>
+
+          <section class="requirement-card">
+            <div class="card-title-row">
+              <h3>结构化需求</h3>
+              <span id="requirementReady" class="mini-pill">未开始</span>
+            </div>
+            <div id="confirmedRequirements" class="chip-list"></div>
+            <div id="openQuestions" class="question-list"></div>
+          </section>
 
           <div id="messages" class="messages" aria-live="polite"></div>
 
@@ -93,6 +106,16 @@
           </div>
 
           <div id="patchTab" class="tab-page">
+            <div id="confirmationPanel" class="confirmation-panel" hidden>
+              <div>
+                <strong>待确认补丁</strong>
+                <p id="confirmationText">dry-run 已通过，需要确认后应用。</p>
+              </div>
+              <div class="confirmation-actions">
+                <button id="approvePatchBtn" type="button">确认应用</button>
+                <button id="cancelPatchBtn" class="secondary danger-text" type="button">取消</button>
+              </div>
+            </div>
             <textarea id="patchInput" rows="10" spellcheck="false" placeholder='{"op":"rename_node","node_selector":{"id":"..."},"new_name":"..."}'></textarea>
             <div class="composer-actions">
               <button id="applyPatchBtn" type="button" disabled>应用补丁</button>

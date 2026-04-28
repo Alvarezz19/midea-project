@@ -12,7 +12,12 @@ const el = {
   validateBtn: document.getElementById("validateBtn"),
   exportBtn: document.getElementById("exportBtn"),
   projectTypeSelect: document.getElementById("projectTypeSelect"),
+  plantRoomTypeBtn: document.getElementById("plantRoomTypeBtn"),
+  ahuTypeBtn: document.getElementById("ahuTypeBtn"),
   autoConfirmInput: document.getElementById("autoConfirmInput"),
+  requirementReady: document.getElementById("requirementReady"),
+  confirmedRequirements: document.getElementById("confirmedRequirements"),
+  openQuestions: document.getElementById("openQuestions"),
   messages: document.getElementById("messages"),
   messageForm: document.getElementById("messageForm"),
   messageInput: document.getElementById("messageInput"),
@@ -24,6 +29,10 @@ const el = {
   versionId: document.getElementById("versionId"),
   projectPath: document.getElementById("projectPath"),
   stateSummary: document.getElementById("stateSummary"),
+  confirmationPanel: document.getElementById("confirmationPanel"),
+  confirmationText: document.getElementById("confirmationText"),
+  approvePatchBtn: document.getElementById("approvePatchBtn"),
+  cancelPatchBtn: document.getElementById("cancelPatchBtn"),
   patchInput: document.getElementById("patchInput"),
   patchResult: document.getElementById("patchResult"),
   applyPatchBtn: document.getElementById("applyPatchBtn"),
@@ -33,12 +42,17 @@ const el = {
 };
 
 el.createSessionBtn.addEventListener("click", createSession);
+el.plantRoomTypeBtn.addEventListener("click", () => setProjectType("plant_room"));
+el.ahuTypeBtn.addEventListener("click", () => setProjectType("ahu"));
+el.projectTypeSelect.addEventListener("change", () => renderProjectTypeButtons());
 el.messageForm.addEventListener("submit", (event) => {
   event.preventDefault();
   sendMessage();
 });
 el.planBtn.addEventListener("click", planPatch);
 el.applyPatchBtn.addEventListener("click", applyPatch);
+el.approvePatchBtn.addEventListener("click", () => confirmPatch("approve"));
+el.cancelPatchBtn.addEventListener("click", () => confirmPatch("cancel"));
 el.formatPatchBtn.addEventListener("click", formatPatch);
 el.validateBtn.addEventListener("click", validateProject);
 el.exportBtn.addEventListener("click", exportProject);
@@ -141,6 +155,23 @@ async function applyPatch() {
   setTab("patch");
 }
 
+async function confirmPatch(action) {
+  if (!state.threadId) {
+    showToast("请先新建会话", "warn");
+    return;
+  }
+  await runTask(async () => {
+    const data = await api(`/api/sessions/${state.threadId}/patch-confirmation`, {
+      method: "POST",
+      body: { action },
+    });
+    state.session = data.state;
+    render();
+    setTab("patch");
+    showToast(action === "approve" ? "补丁已确认并应用" : "已取消待确认补丁", action === "approve" ? "ok" : "warn");
+  });
+}
+
 function formatPatch() {
   try {
     el.patchInput.value = pretty(JSON.parse(el.patchInput.value));
@@ -214,10 +245,13 @@ function render() {
   el.versionId.textContent = session?.current_project_version_id || "-";
   el.projectPath.textContent = session?.current_project_path || "-";
   el.stateSummary.textContent = pretty(compactState(session));
-  el.patchResult.textContent = pretty(session?.patch_result || session?.planner_result || {});
+  el.patchResult.textContent = pretty(session?.patch_result || session?.planner_dry_run || session?.planner_result || {});
   el.validationResult.textContent = pretty(session?.validation_report || {});
+  renderRequirements(session);
+  renderConfirmation(session);
   renderMessages(session?.messages || []);
   renderTemplates(session?.template_candidates || []);
+  renderProjectTypeButtons();
   renderButtons();
 }
 
@@ -228,6 +262,8 @@ function renderButtons() {
   el.sendMessageBtn.disabled = state.busy || !hasThread;
   el.planBtn.disabled = state.busy || !state.session?.current_project_path;
   el.applyPatchBtn.disabled = state.busy || !hasThread;
+  el.approvePatchBtn.disabled = state.busy || state.session?.next_action !== "confirm_patch";
+  el.cancelPatchBtn.disabled = state.busy || state.session?.next_action !== "confirm_patch";
   el.validateBtn.disabled = state.busy || !hasProject;
   el.exportBtn.disabled = state.busy || !hasProject;
 }
@@ -288,6 +324,15 @@ function renderTemplates(candidates) {
       item.appendChild(reasons);
     }
 
+    const explanation = document.createElement("div");
+    explanation.className = "template-explanation";
+    explanation.append(explainLine("匹配", candidate.matched_items));
+    explanation.append(explainLine("缺失", candidate.missing_items));
+    const cost = candidate.estimated_modification_cost || {};
+    explanation.append(explainLine("成本", [`${cost.level || "unknown"}：${(cost.reasons || []).join("；") || "无"}`]));
+    explanation.append(explainLine("风险", candidate.risk_points));
+    item.appendChild(explanation);
+
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "使用此模板";
@@ -302,6 +347,71 @@ function renderTemplates(candidates) {
   });
 }
 
+function renderRequirements(session) {
+  const summary = session?.requirement_summary || {};
+  const ready = Boolean(summary.ready_for_template_search);
+  el.requirementReady.textContent = session ? (ready ? "可选模板" : "需补充") : "未开始";
+  el.requirementReady.classList.toggle("warn", session && !ready);
+
+  el.confirmedRequirements.innerHTML = "";
+  const confirmed = session?.confirmed_requirements || summary.confirmed_requirements || [];
+  if (confirmed.length) {
+    confirmed.forEach((item) => el.confirmedRequirements.append(tag(item)));
+  } else {
+    el.confirmedRequirements.appendChild(emptyInline("暂无确认项"));
+  }
+
+  el.openQuestions.innerHTML = "";
+  const questions = session?.open_questions || summary.open_questions || [];
+  if (questions.length) {
+    questions.slice(0, 5).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "question-item";
+      row.textContent = item.question || String(item);
+      el.openQuestions.appendChild(row);
+    });
+  } else {
+    el.openQuestions.appendChild(emptyInline("暂无待澄清问题"));
+  }
+}
+
+function renderProjectTypeButtons() {
+  el.plantRoomTypeBtn.classList.toggle("active-choice", el.projectTypeSelect.value === "plant_room");
+  el.ahuTypeBtn.classList.toggle("active-choice", el.projectTypeSelect.value === "ahu");
+}
+
+function setProjectType(value) {
+  el.projectTypeSelect.value = value;
+  renderProjectTypeButtons();
+}
+
+function explainLine(label, items) {
+  const row = document.createElement("div");
+  row.className = "explain-line";
+  const name = document.createElement("span");
+  name.className = "explain-label";
+  name.textContent = label;
+  row.appendChild(name);
+  const text = document.createElement("span");
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  text.textContent = values.length ? values.slice(0, 5).join("、") : "-";
+  row.appendChild(text);
+  return row;
+}
+
+function renderConfirmation(session) {
+  const awaiting = session?.next_action === "confirm_patch" && session?.pending_confirmation_patch;
+  el.confirmationPanel.hidden = !awaiting;
+  if (!awaiting) {
+    return;
+  }
+  const risk = session.risk_assessment || {};
+  const diffSummary = session.planner_dry_run?.diff?.summary || {};
+  const reasons = Array.isArray(risk.reasons) && risk.reasons.length ? `；${risk.reasons.join("；")}` : "";
+  el.confirmationText.textContent = `风险等级 ${risk.risk_level || "unknown"}，影响节点 ${diffSummary.affected_node_count ?? 0} 个${reasons}`;
+  el.patchInput.value = pretty(session.pending_confirmation_patch);
+}
+
 function compactState(session) {
   if (!session) {
     return {};
@@ -314,6 +424,8 @@ function compactState(session) {
     current_project_id: session.current_project_id,
     current_project_version_id: session.current_project_version_id,
     current_project_path: session.current_project_path,
+    risk_assessment: session.risk_assessment,
+    patch_confirmation: session.patch_confirmation,
     error: session.error,
   };
 }
@@ -342,6 +454,13 @@ function tag(text) {
 function emptyBlock(text) {
   const item = document.createElement("div");
   item.className = "message";
+  item.textContent = text;
+  return item;
+}
+
+function emptyInline(text) {
+  const item = document.createElement("span");
+  item.className = "muted inline-empty";
   item.textContent = text;
   return item;
 }

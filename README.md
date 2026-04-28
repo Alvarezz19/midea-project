@@ -23,12 +23,15 @@
 - 导出前会重新校验工程，存在 error 级问题时拒绝导出。
 - 支持生成功能块索引并检索水泵、旁通阀、排风机、直膨机等局部功能块。
 - 支持按 `block_id` 加载局部 JSON 上下文，返回节点摘要、内部边、边界边和预算信息。
+- 工作流已接入确定性结构化需求摘要，能在模板选择前识别项目类型、设备、控制功能、通讯/IO、保护逻辑和待澄清问题。
+- 模板候选会展示匹配项、缺失项、预计改造成本和风险点，便于工程师确认模板基底。
 - 新增 LLM Gateway，默认接入 DeepSeek API，并预留 OpenAI、Azure OpenAI、Anthropic 配置入口。
 - 支持使用 LLM 做结构化需求抽取，返回项目类型、设备、控制功能、通讯、保护逻辑、缺失字段和澄清问题。
 - 支持显式开启 LLM 结构化补丁规划，并立即进入 dry-run；LLM 只输出受 schema 约束的补丁意图，实际修改仍由 patch engine 执行。
 - 新增 LLM planner 评测样例，覆盖低/中风险补丁和目标不唯一追问。
 - LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
-- LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会停在确认状态，手动 `pending_patch` 仍走确定性执行链路。
+- LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会先停在确认状态，确认后才创建新版本。
+- 手动结构化补丁中的 `add_node_from_schema`、`connect`、`disconnect`、疑似 IO/通讯字段修改等中高风险操作会先 dry-run 并等待确认，不会直接落盘。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 修改已有节点参数。
@@ -93,7 +96,7 @@ programs/                 原始工程模板
 schemas/                  模块 schema 描述
 projects/                 运行时工程版本输出
 tests/                    自动化测试
-evals/                    LLM planner 等评测样例
+evals/                    模板选择、LLM planner 等评测样例
 ```
 
 ## 环境要求
@@ -154,6 +157,7 @@ http://127.0.0.1:8000/
 
 - 新建会话。
 - 输入项目需求。
+- 查看结构化需求清单和待澄清问题。
 - 展示并确认模板候选。
 - 创建工程版本。
 - 规划补丁。
@@ -168,6 +172,7 @@ http://127.0.0.1:8000/
 GET  /api/health
 POST /api/sessions
 POST /api/sessions/{thread_id}/message
+POST /api/sessions/{thread_id}/patch-confirmation
 POST /api/templates/search
 POST /api/blocks/search
 POST /api/blocks/context
@@ -201,6 +206,22 @@ LLM 结构化补丁规划默认关闭，调用时显式传入 `use_llm: true`。
   "message": "在水泵控制里新增一个常量并接到比较判断",
   "use_llm_planner": true,
   "llm_max_attempts": 2
+}
+```
+
+当会话状态返回 `next_action: "confirm_patch"` 时，说明补丁已 dry-run 通过但需要人工确认。确认或取消：
+
+```json
+{
+  "action": "approve"
+}
+```
+
+或：
+
+```json
+{
+  "action": "cancel"
 }
 ```
 
@@ -277,7 +298,7 @@ pytest -q
 当前验收结果：
 
 ```text
-54 passed
+58 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
@@ -327,4 +348,4 @@ pytest -q
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
 2. 增强后端局部子图能力：`copy_block`、`enable_dynamic_input`。
-3. 补齐 LLM planner 高风险确认和更多真实评测样例。
+3. 扩充 LLM planner 真实评测样例，并继续推进 `replace_constant`、`enable_dynamic_input` 等阶段 5 补丁能力。

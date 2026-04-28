@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
+from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
 from app.services.validator import validate_project
 
@@ -26,18 +28,24 @@ def classify_project_type(state: AgentState) -> dict[str, Any]:
 
 def collect_requirements(state: AgentState) -> dict[str, Any]:
     user_text = _last_user_content(state)
-    existing = dict(state.get("requirement_summary") or {})
-    raw_requirements = list(existing.get("raw_requirements", []))
-    if user_text and user_text not in raw_requirements:
-        raw_requirements.append(user_text)
-
-    summary = {
-        **existing,
-        "raw_requirements": raw_requirements,
-        "latest_user_message": user_text,
-        "project_type": state.get("project_type"),
+    summary = analyze_requirement(
+        user_text,
+        existing=state.get("requirement_summary"),
+        project_type=state.get("project_type"),
+    )
+    status = "requirements_collected" if summary.get("ready_for_template_search") else "awaiting_requirement_clarification"
+    next_action = None if summary.get("ready_for_template_search") else "clarify_requirements"
+    if "project_type" in summary.get("blocking_missing_fields", []):
+        status = "need_project_type"
+        next_action = "ask_project_type"
+    return {
+        "project_type": summary.get("project_type"),
+        "requirement_summary": summary,
+        "open_questions": summary.get("open_questions", []),
+        "confirmed_requirements": summary.get("confirmed_requirements", []),
+        "status": status,
+        "next_action": next_action,
     }
-    return {"requirement_summary": summary, "status": "requirements_collected"}
 
 
 def retrieve_template_candidates(state: AgentState) -> dict[str, Any]:
@@ -49,7 +57,8 @@ def retrieve_template_candidates(state: AgentState) -> dict[str, Any]:
     candidates = search_templates(query, project_type=project_type, limit=3)
     if not candidates:
         return {"template_candidates": [], "status": "no_template_candidate", "next_action": "ask_more_requirements"}
-    slim_candidates = [_slim_template_candidate(candidate) for candidate in candidates]
+    requirement_summary = state.get("requirement_summary") or {}
+    slim_candidates = [_slim_template_candidate(candidate, requirement_summary=requirement_summary) for candidate in candidates]
     return {
         "template_candidates": slim_candidates,
         "status": "template_candidates_ready",
@@ -184,19 +193,24 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str,
         planner_result = result.get("planner_result")
         risk_level = planner_result.get("risk_level") if isinstance(planner_result, dict) else None
         if risk_level != "low":
+            pending_patch = result.get("pending_patch")
             return {
                 "planner_result": planner_result,
                 "pending_patch": None,
+                "pending_confirmation_patch": pending_patch,
                 "planner_dry_run": result.get("dry_run"),
                 "planner_attempts": result.get("planner_attempts", []),
+                "risk_assessment": _assess_patch_risk(pending_patch, planner_result=planner_result),
                 "status": "awaiting_patch_confirmation",
                 "next_action": "confirm_patch",
             }
         return {
             "planner_result": planner_result,
             "pending_patch": result.get("pending_patch"),
+            "pending_confirmation_patch": None,
             "planner_dry_run": result.get("dry_run"),
             "planner_attempts": result.get("planner_attempts", []),
+            "risk_assessment": _assess_patch_risk(result.get("pending_patch"), planner_result=planner_result),
             "status": "patch_planned",
             "next_action": None,
         }
@@ -222,6 +236,21 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
         nodes = load_project(project_path)
         result = dry_run_patch(nodes, pending_patch)
         report = result["validation_report"]
+        planner_result = _matching_planner_result(state.get("planner_result"), pending_patch)
+        risk_assessment = _assess_patch_risk(pending_patch, planner_result=planner_result)
+        if report["valid"] and risk_assessment["requires_confirmation"] and not _is_patch_confirmed(state, pending_patch):
+            dry_run_preview = dict(result)
+            dry_run_preview.pop("nodes", None)
+            return {
+                "pending_patch": None,
+                "pending_confirmation_patch": pending_patch,
+                "planner_dry_run": dry_run_preview,
+                "risk_assessment": risk_assessment,
+                "validation_report": report,
+                "patch_result": None,
+                "status": "awaiting_patch_confirmation",
+                "next_action": "confirm_patch",
+            }
         if report["valid"]:
             if not state.get("current_project_id"):
                 return {"status": "error", "error": "无法创建补丁版本：current_project_id 为空。", "next_action": "fix_project_version"}
@@ -242,6 +271,8 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
         "patch_result": {"changed": result["changed"], "changes": result["changes"], "diff": result["diff"]},
         "validation_report": report,
         "pending_patch": None,
+        "pending_confirmation_patch": None,
+        "risk_assessment": risk_assessment,
         "status": "patch_applied" if report["valid"] else "validation_failed",
         "next_action": None if report["valid"] else "revise_patch",
     }
@@ -285,6 +316,8 @@ def route_after_template_selection(state: AgentState) -> str:
 
 
 def route_after_requirements(state: AgentState) -> str:
+    if state.get("status") in {"awaiting_requirement_clarification", "need_project_type"}:
+        return "summarize_result"
     if state.get("current_project_path"):
         return "create_project_version"
     return "retrieve_template_candidates"
@@ -319,7 +352,8 @@ def _requirement_query(state: AgentState) -> str:
     return _last_user_content(state)
 
 
-def _slim_template_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+def _slim_template_candidate(candidate: dict[str, Any], *, requirement_summary: dict[str, Any]) -> dict[str, Any]:
+    explanation = explain_template_candidate(candidate, requirement_summary)
     return {
         "template_id": candidate["template_id"],
         "project_type": candidate["project_type"],
@@ -332,6 +366,10 @@ def _slim_template_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "score": candidate["score"],
         "reasons": candidate["reasons"],
         "summary": candidate["summary"],
+        "matched_items": explanation["matched_items"],
+        "missing_items": explanation["missing_items"],
+        "estimated_modification_cost": explanation["estimated_modification_cost"],
+        "risk_points": explanation["risk_points"],
     }
 
 
@@ -348,11 +386,20 @@ def _build_assistant_summary(state: AgentState) -> str:
     status = state.get("status")
     if status == "need_project_type":
         return "请先确认项目类型：机房群控程序或 AHU 程序。"
+    if status == "awaiting_requirement_clarification":
+        questions = state.get("open_questions") or []
+        question_texts = [str(item.get("question")) for item in questions if isinstance(item, dict) and item.get("question")]
+        return "需要先补充需求：" + "；".join(question_texts or ["请补充项目类型和主要设备/控制目标。"])
     if status == "awaiting_template_confirmation":
         candidates = state.get("template_candidates") or []
         lines = ["已找到候选模板，请确认使用哪一个："]
         for index, candidate in enumerate(candidates, start=1):
-            lines.append(f"{index}. {candidate['file_name']}，得分 {candidate['score']}，{candidate['summary']}")
+            cost = candidate.get("estimated_modification_cost") or {}
+            missing = candidate.get("missing_items") or []
+            missing_text = "；缺失：" + "、".join(missing) if missing else ""
+            lines.append(
+                f"{index}. {candidate['file_name']}，得分 {candidate['score']}，改造成本 {cost.get('level', 'unknown')}，{candidate['summary']}{missing_text}"
+            )
         return "\n".join(lines)
     if status == "project_version_ready":
         return f"已创建工程版本：{state.get('current_project_version_id')}，路径：{state.get('current_project_path')}。"
@@ -364,11 +411,14 @@ def _build_assistant_summary(state: AgentState) -> str:
         return "需要补充信息：" + "；".join(str(question) for question in questions)
     if status == "awaiting_patch_confirmation":
         planner_result = state.get("planner_result") or {}
-        risk_level = planner_result.get("risk_level", "unknown")
+        risk_assessment = state.get("risk_assessment") or {}
+        risk_level = risk_assessment.get("risk_level") or planner_result.get("risk_level", "unknown")
         dry_run = state.get("planner_dry_run") or {}
         diff = dry_run.get("diff") or {}
         summary = diff.get("summary") or {}
         return f"补丁 dry-run 已通过，风险等级 {risk_level}，影响节点 {summary.get('affected_node_count', 0)} 个，需要确认后再应用。"
+    if status == "patch_confirmation_cancelled":
+        return "已取消待确认补丁，当前工程版本未变化。"
     if status == "patch_applied":
         patch_result = state.get("patch_result") or {}
         changes = patch_result.get("changes") or []
@@ -379,3 +429,82 @@ def _build_assistant_summary(state: AgentState) -> str:
     if status in {"patch_failed", "error"}:
         return f"处理失败：{state.get('error')}"
     return f"当前状态：{status}。"
+
+
+def _assess_patch_risk(patch: Any, *, planner_result: Any = None) -> dict[str, Any]:
+    planner_risk = planner_result.get("risk_level") if isinstance(planner_result, dict) else None
+    operations = _normalize_patch_operations(patch)
+    risk_level = planner_risk if planner_risk in {"low", "medium", "high"} else "low"
+    reasons: list[str] = []
+
+    for operation in operations:
+        op = operation.get("op")
+        if op in {"add_node_from_schema", "connect", "disconnect", "copy_block", "delete_node", "delete_block", "set_io_point"}:
+            risk_level = _max_risk(risk_level, "medium")
+            reasons.append(f"{op} 属于需要确认的结构或连线变更。")
+        if op in {"copy_block", "delete_node", "delete_block", "set_io_point"}:
+            risk_level = _max_risk(risk_level, "high")
+        if op == "update_param":
+            params = operation.get("params") if isinstance(operation.get("params"), dict) else {}
+            risky_fields = [field for field in params if _is_risky_field(str(field))]
+            if risky_fields:
+                risk_level = _max_risk(risk_level, "high")
+                reasons.append(f"修改疑似 IO/通讯字段：{', '.join(risky_fields[:5])}。")
+
+    requires_confirmation = risk_level in {"medium", "high"}
+    if planner_risk in {"medium", "high"} and not reasons:
+        reasons.append("LLM planner 将该计划标记为中高风险。")
+    return {
+        "risk_level": risk_level,
+        "requires_confirmation": requires_confirmation,
+        "reasons": reasons,
+        "operation_count": len(operations),
+    }
+
+
+def _normalize_patch_operations(patch: Any) -> list[dict[str, Any]]:
+    if not isinstance(patch, dict):
+        return []
+    if isinstance(patch.get("operations"), list):
+        return [operation for operation in patch["operations"] if isinstance(operation, dict)]
+    if isinstance(patch.get("op"), str):
+        return [patch]
+    return []
+
+
+def _max_risk(left: str, right: str) -> str:
+    order = {"low": 0, "medium": 1, "high": 2}
+    return left if order.get(left, 0) >= order.get(right, 0) else right
+
+
+def _is_risky_field(field: str) -> bool:
+    normalized = field.casefold()
+    tokens = ("io", "address", "addr", "channel", "modbus", "bacnet", "mqtt", "object", "point")
+    return any(token in normalized for token in tokens) or any(token in field for token in ("地址", "通道", "点位", "对象"))
+
+
+def _is_patch_confirmed(state: AgentState, patch: dict[str, Any]) -> bool:
+    confirmation = state.get("patch_confirmation")
+    if not isinstance(confirmation, dict) or confirmation.get("action") != "approved":
+        return False
+    if confirmation.get("confirmed_project_version_id") != state.get("current_project_version_id"):
+        return False
+    confirmed_patch = confirmation.get("confirmed_patch")
+    try:
+        return json.dumps(confirmed_patch, sort_keys=True, ensure_ascii=False) == json.dumps(patch, sort_keys=True, ensure_ascii=False)
+    except TypeError:
+        return False
+
+
+def _matching_planner_result(planner_result: Any, patch: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(planner_result, dict):
+        return None
+    planned_patch = planner_result.get("pending_patch")
+    if planned_patch is None:
+        return None
+    try:
+        if json.dumps(planned_patch, sort_keys=True, ensure_ascii=False) == json.dumps(patch, sort_keys=True, ensure_ascii=False):
+            return planner_result
+    except TypeError:
+        return None
+    return None

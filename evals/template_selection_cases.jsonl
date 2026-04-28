@@ -1,0 +1,6 @@
+{"case_id":"plant_air_source_heat_pump_top1","message":"我要做风冷热泵机房群控程序，包含水泵、旁通阀和 Modbus 通讯。","project_type":"plant_room","expected_top3":["plant_room_efb00c114dcb"],"expected_clarification":false}
+{"case_id":"plant_water_cooled_top3","message":"我要做水冷机房群控，2 台主机、3 台冷冻冷却水泵、2 台冷却塔，包含加减载和轮询。","project_type":"plant_room","expected_top3":["plant_room_95d26a623493"],"expected_clarification":false}
+{"case_id":"ahu_dx_exhaust_modbus_top3","message":"我要做 AHU 程序，需要直膨机、排风机、新风阀和 Modbus 通讯。","project_type":"ahu","expected_top3":["ahu_5e351de94700","ahu_931102191d62","ahu_0a10a03e07d4"],"expected_clarification":false}
+{"case_id":"ahu_co2_needs_template","message":"我要做 AHU 空调箱，包含 CO2 控制、新风阀联动和硬接 IO。","project_type":"ahu","expected_top3":["ahu_5e351de94700","ahu_931102191d62","ahu_0a10a03e07d4"],"expected_clarification":false}
+{"case_id":"unknown_type_requires_question","message":"我要做一个控制程序，后续再告诉你设备。","project_type":null,"expected_top3":[],"expected_clarification":true}
+{"case_id":"plant_vague_requires_equipment_question","message":"我要做机房群控程序。","project_type":"plant_room","expected_top3":[],"expected_clarification":true}

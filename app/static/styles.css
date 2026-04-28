@@ -199,6 +199,75 @@ button:focus {
   color: var(--text) !important;
 }
 
+.type-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.active-choice {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+
+.requirement-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdfd;
+}
+
+.card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-title-row h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mini-pill {
+  border: 1px solid #c7d9cf;
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: #eef8f2;
+  color: var(--ok);
+  font-size: 12px;
+}
+
+.mini-pill.warn {
+  border-color: #e2c799;
+  background: #fff8ec;
+  color: var(--warn);
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.question-list {
+  display: grid;
+  gap: 6px;
+}
+
+.question-item {
+  border-left: 3px solid var(--warn);
+  background: #fff8ec;
+  padding: 6px 8px;
+  color: #5d4630;
+}
+
+.inline-empty {
+  font-size: 12px;
+}
+
 .messages,
 .template-list {
   flex: 1;
@@ -243,6 +312,44 @@ button:focus {
   background: var(--panel-soft);
 }
 
+.confirmation-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #d9c7a9;
+  border-radius: 8px;
+  background: #fff8ec;
+  padding: 10px 12px;
+}
+
+.confirmation-panel[hidden] {
+  display: none;
+}
+
+.confirmation-panel strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.confirmation-panel p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.danger-text {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
 .template-item {
   display: grid;
   gap: 8px;
@@ -274,6 +381,26 @@ button:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.template-explanation {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid #edf1f3;
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.explain-line {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.explain-label {
+  color: var(--text);
+  font-weight: 650;
 }
 
 .tag {
@@ -415,5 +542,9 @@ button:focus {
 
   .panel {
     min-height: 520px;
+  }
+
+  .confirmation-panel {
+    grid-template-columns: 1fr;
   }
 }
