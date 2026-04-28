@@ -7,6 +7,7 @@ from typing import Any
 
 from app.graph.state import AgentState
 from app.services.json_project import ROOT_DIR, resolve_project_path
+from app.services.runtime_store import postgres_runtime_enabled
 
 
 class SessionStoreError(ValueError):
@@ -81,3 +82,11 @@ class FileSessionStore:
 
 def default_session_store() -> FileSessionStore:
     return FileSessionStore(ROOT_DIR / "projects" / "sessions")
+
+
+def create_session_store(root_dir: str | Path | None = None):
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import PostgresSessionStore
+
+        return PostgresSessionStore()
+    return FileSessionStore(root_dir or ROOT_DIR / "projects" / "sessions")

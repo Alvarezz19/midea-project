@@ -12,6 +12,7 @@ from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
+from app.services.runtime_store import postgres_runtime_enabled
 from app.services.validator import validate_project
 
 
@@ -106,6 +107,9 @@ def create_project_version_node(state: AgentState) -> dict[str, Any]:
             template["source_path"],
             versions_dir=state.get("versions_dir", "projects/versions"),
             note="由 LangGraph 最小工作流创建。",
+            project_type=str(state.get("project_type") or template.get("project_type") or "ahu"),
+            project_name=str(template.get("file_name") or selected_template_id),
+            source_template_id=str(selected_template_id),
         )
     except (RetrievalError, ValueError) as exc:
         return {"status": "error", "error": str(exc), "next_action": "fix_template_selection"}
@@ -262,6 +266,10 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
                 source_template_path=_selected_template_source_path(state),
                 patch_summary={"changed": result["changed"], "changes": result["changes"], "diff_summary": result["diff"]["summary"]},
                 validation_report=report,
+                patch=pending_patch,
+                risk_level=str(risk_assessment.get("risk_level") or "low"),
+                request_message=_last_user_content(state),
+                patch_result={"changed": result["changed"], "changes": result["changes"], "diff": result["diff"]},
                 note="由结构化补丁创建。",
             )
     except (PatchEngineError, ValueError) as exc:
@@ -293,6 +301,14 @@ def validate_current_project_node(state: AgentState) -> dict[str, Any]:
 
     try:
         report = validate_project(load_project(project_path))
+        if postgres_runtime_enabled() and state.get("current_project_id"):
+            from app.services.postgres_runtime import record_project_validation
+
+            record_project_validation(
+                str(state["current_project_id"]),
+                state.get("current_project_version_id"),
+                report,
+            )
     except ValueError as exc:
         return {"status": "validation_failed", "error": str(exc), "next_action": "fix_project_json"}
     return {

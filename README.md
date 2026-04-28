@@ -83,7 +83,7 @@
 - 更完整的 JSON diff 可视化。
 - 更完整的前端交互体验。
 - 向量库/混合检索。
-- PostgreSQL checkpointer、权限、审计、回滚等生产化能力。
+- PostgreSQL 业务表运行时存储、权限、审计等生产化能力。
 
 ## 目录结构
 
@@ -371,7 +371,29 @@ pytest -q
 当前验收结果：
 
 ```text
-89 passed
+93 passed, 3 skipped
+```
+
+PostgreSQL 集成验收可使用 Docker 本地实例：
+
+```powershell
+conda activate midea
+python -m pip install -e ".[postgres]"
+docker run -d --name midea-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=midea_agent -p 5432:5432 postgres:16-alpine
+$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/midea_agent?sslmode=disable'
+Get-Content -Raw -Encoding UTF8 'migrations/postgres/001_initial_schema.sql' | docker exec -i midea-postgres psql -U postgres -d midea_agent -v ON_ERROR_STOP=1
+Get-Content -Raw -Encoding UTF8 'migrations/postgres/002_runtime_public_ids.sql' | docker exec -i midea-postgres psql -U postgres -d midea_agent -v ON_ERROR_STOP=1
+$env:RUNTIME_STORE_BACKEND='postgres'
+$env:LANGGRAPH_CHECKPOINTER_BACKEND='postgres'
+$env:LANGGRAPH_CHECKPOINTER_SETUP='true'
+$env:RUN_POSTGRES_INTEGRATION='1'
+pytest tests\test_postgres_integration.py -q
+```
+
+当前 PostgreSQL 集成验收结果：
+
+```text
+3 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：

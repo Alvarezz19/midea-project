@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 POSTGRES_INITIAL_SCHEMA = Path("migrations/postgres/001_initial_schema.sql")
+POSTGRES_RUNTIME_PUBLIC_IDS = Path("migrations/postgres/002_runtime_public_ids.sql")
 
 
 def test_postgres_initial_schema_contains_required_tables() -> None:
@@ -46,3 +47,11 @@ def test_postgres_initial_schema_uses_input_sources_term() -> None:
 
     assert "input_sources jsonb NOT NULL" in sql
     assert "wires_to" not in sql
+
+
+def test_postgres_runtime_public_ids_migration_keeps_api_ids_stable() -> None:
+    sql = POSTGRES_RUNTIME_PUBLIC_IDS.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS public_project_id text" in sql
+    assert "idx_projects_public_project_id" in sql
+    assert "002_runtime_public_ids" in sql

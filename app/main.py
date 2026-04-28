@@ -24,7 +24,8 @@ from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patc
 from app.services.project_diff import ProjectDiffError, diff_project_versions
 from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
 from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_templates
-from app.services.session_store import FileSessionStore
+from app.services.runtime_store import postgres_runtime_enabled
+from app.services.session_store import create_session_store
 from app.services.validator import validate_project
 
 
@@ -32,7 +33,7 @@ configure_logging()
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.state.workflow = get_workflow()
-app.state.session_store = FileSessionStore(settings.project_sessions_dir)
+app.state.session_store = create_session_store(settings.project_sessions_dir)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
@@ -403,7 +404,9 @@ def get_project_diff(project_id: str, from_version_id: str | None = None, to_ver
 @app.post("/api/projects/{project_id}/validate")
 def validate_project_by_id(project_id: str) -> dict[str, Any]:
     path = _get_current_project_path(project_id)
-    return validate_project(load_project(path))
+    report = validate_project(load_project(path))
+    _record_validation_if_needed(project_id, _get_current_project_version_id(project_id), report)
+    return report
 
 
 @app.post("/api/projects/{project_id}/rollback")
@@ -421,6 +424,10 @@ def rollback_project(project_id: str, request: RollbackProjectRequest) -> dict[s
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not report["valid"]:
         raise HTTPException(status_code=400, detail="目标版本校验未通过，拒绝回滚。")
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import set_current_project_version
+
+        metadata = set_current_project_version(project_id, request.target_version_id, validation_report=report)
 
     public_state: dict[str, Any] | None = None
     for thread_id, state in session_items:
@@ -470,6 +477,7 @@ def _export_valid_project_file(target: Path) -> FileResponse:
                 "validation_report": report,
             },
         )
+    _record_export_if_needed(str(target), report)
     return FileResponse(
         target,
         media_type="application/json",
@@ -523,6 +531,12 @@ def _get_current_project_path(project_id: str) -> Path:
     for state in _session_store().find_by_project_id(project_id):
         if state.get("current_project_id") == project_id and state.get("current_project_path"):
             return _resolve_allowed_project_file(str(state["current_project_path"]))
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import current_project_version
+
+        metadata = current_project_version(project_id)
+        if metadata and metadata.get("version_path"):
+            return _resolve_allowed_project_file(str(metadata["version_path"]))
     raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
 
 
@@ -530,6 +544,12 @@ def _get_current_project_version_id(project_id: str) -> str:
     for state in _session_store().find_by_project_id(project_id):
         if state.get("current_project_id") == project_id and state.get("current_project_version_id"):
             return str(state["current_project_version_id"])
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import current_project_version
+
+        metadata = current_project_version(project_id)
+        if metadata and metadata.get("version_id"):
+            return str(metadata["version_id"])
     raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
 
 
@@ -541,8 +561,29 @@ def _get_versions_dir(project_id: str) -> str | None:
     return settings.project_versions_dir
 
 
-def _session_store() -> FileSessionStore:
+def _session_store():
     return app.state.session_store
+
+
+def _record_validation_if_needed(project_id: str, version_id: str | None, report: dict[str, Any]) -> None:
+    if not postgres_runtime_enabled():
+        return
+    from app.services.postgres_runtime import record_project_validation
+
+    record_project_validation(project_id, version_id, report)
+
+
+def _record_export_if_needed(project_path: str, report: dict[str, Any]) -> None:
+    if not postgres_runtime_enabled():
+        return
+    from app.services.postgres_runtime import record_project_export
+
+    for state in _session_store().list_states():
+        if state.get("current_project_path") == project_path:
+            project_id = state.get("current_project_id")
+            if project_id:
+                record_project_export(str(project_id), state.get("current_project_version_id"), report)
+            return
 
 
 def _public_state(state: AgentState) -> dict[str, Any]:

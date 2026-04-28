@@ -25,6 +25,13 @@ def load_env_file(path: str | Path = ROOT_DIR / ".env") -> None:
         os.environ[key] = value.strip().strip('"').strip("'")
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "Midea JSON Agent Prototype"
@@ -33,7 +40,10 @@ class Settings:
     log_level: str = "INFO"
     project_versions_dir: str = "projects/versions"
     project_sessions_dir: str = "projects/sessions"
+    runtime_store_backend: str = "file"
     langgraph_checkpointer_backend: str = "memory"
+    langgraph_checkpointer_setup: bool = True
+    database_url: str = ""
     llm_provider: str = "deepseek"
     llm_timeout_seconds: float = 90.0
     llm_temperature: float = 0.1
@@ -63,10 +73,13 @@ def get_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", Settings.log_level).upper(),
         project_versions_dir=os.getenv("PROJECT_VERSIONS_DIR", Settings.project_versions_dir),
         project_sessions_dir=os.getenv("PROJECT_SESSIONS_DIR", Settings.project_sessions_dir),
+        runtime_store_backend=os.getenv("RUNTIME_STORE_BACKEND", Settings.runtime_store_backend).lower(),
         langgraph_checkpointer_backend=os.getenv(
             "LANGGRAPH_CHECKPOINTER_BACKEND",
             Settings.langgraph_checkpointer_backend,
         ).lower(),
+        langgraph_checkpointer_setup=_env_bool("LANGGRAPH_CHECKPOINTER_SETUP", Settings.langgraph_checkpointer_setup),
+        database_url=os.getenv("DATABASE_URL", Settings.database_url),
         llm_provider=os.getenv("LLM_PROVIDER", Settings.llm_provider).lower(),
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", Settings.llm_timeout_seconds)),
         llm_temperature=float(os.getenv("LLM_TEMPERATURE", Settings.llm_temperature)),

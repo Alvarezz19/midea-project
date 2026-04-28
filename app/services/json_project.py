@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.runtime_store import postgres_runtime_enabled
+
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 PROJECTS_DIR = ROOT_DIR / "projects"
@@ -170,6 +172,9 @@ def create_project_version(
     version_id: str | None = None,
     versions_dir: str | Path = VERSIONS_DIR,
     note: str = "",
+    project_type: str = "ahu",
+    project_name: str | None = None,
+    source_template_id: str | None = None,
 ) -> dict[str, Any]:
     """从模板创建工程版本，返回版本元数据。"""
 
@@ -200,6 +205,15 @@ def create_project_version(
         "summary": summarize_project(nodes),
     }
     save_metadata(meta_path, metadata)
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import create_initial_version_record
+
+        create_initial_version_record(
+            metadata,
+            project_type=project_type,
+            project_name=project_name,
+            source_template_id=source_template_id,
+        )
     return metadata
 
 
@@ -213,6 +227,10 @@ def create_project_version_from_nodes(
     source_template_path: str | None = None,
     patch_summary: dict[str, Any] | None = None,
     validation_report: dict[str, Any] | None = None,
+    patch: dict[str, Any] | None = None,
+    risk_level: str = "low",
+    request_message: str = "",
+    patch_result: dict[str, Any] | None = None,
     note: str = "",
 ) -> dict[str, Any]:
     """从已修改节点创建不可变子版本。"""
@@ -246,10 +264,26 @@ def create_project_version_from_nodes(
         "summary": summarize_project(nodes),
     }
     save_metadata(meta_path, metadata)
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import create_child_version_record
+
+        create_child_version_record(
+            metadata,
+            patch=patch,
+            risk_level=risk_level,
+            request_message=request_message,
+            patch_result=patch_result,
+            validation_report=report,
+        )
     return metadata
 
 
 def list_project_versions(project_id: str, *, versions_dir: str | Path = VERSIONS_DIR) -> list[dict[str, Any]]:
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import list_project_version_records
+
+        return list_project_version_records(project_id)
+
     version_root = resolve_project_path(versions_dir) / project_id
     if not version_root.exists():
         return []
@@ -268,6 +302,11 @@ def list_project_versions(project_id: str, *, versions_dir: str | Path = VERSION
 
 
 def get_project_version(project_id: str, version_id: str, *, versions_dir: str | Path = VERSIONS_DIR) -> dict[str, Any]:
+    if postgres_runtime_enabled():
+        from app.services.postgres_runtime import get_project_version_record
+
+        return get_project_version_record(project_id, version_id)
+
     for metadata in list_project_versions(project_id, versions_dir=versions_dir):
         if metadata.get("version_id") == version_id:
             return metadata
