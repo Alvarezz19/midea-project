@@ -18,10 +18,14 @@ from app.services.json_project import (
 from app.services.knowledge import get_knowledge_context, load_knowledge_chunks, search_knowledge
 from app.services.patch_engine import PatchEngineError, apply_patch, dry_run_patch
 from app.services.planner import plan_patch_request
+from app.services.project_diff import ProjectDiffError, diff_project_versions
 from app.services.retrieval import (
     RetrievalError,
     get_template_by_id,
+    load_block_context,
+    load_block_index,
     load_node_neighborhood,
+    search_blocks,
     search_nodes,
     search_tabs,
     search_templates,
@@ -39,6 +43,8 @@ def test_existing_templates_validate_cleanly() -> None:
     for path in paths:
         report = validate_project(load_project(path))
         assert report["valid"], path
+        assert report["exportable"], path
+        assert report["blocked_export_reasons"] == []
         assert report["error_count"] == 0
         assert report["warning_count"] == 0
 
@@ -105,6 +111,44 @@ def test_create_child_project_version_does_not_overwrite_parent(tmp_path: Path) 
     assert get_project_version("versioned_project", "v_child", versions_dir=tmp_path)["parent_version_id"] == "v_parent"
 
 
+def test_project_diff_between_versions_returns_node_summary(tmp_path: Path) -> None:
+    parent = create_project_version(
+        PLANT_TEMPLATE,
+        project_id="diff_project",
+        version_id="v_parent",
+        versions_dir=tmp_path,
+    )
+    child_nodes = load_project(parent["version_path"])
+    original_name = find_nodes(child_nodes, {"id": "3a4c97e"})[0].get("name")
+    find_nodes(child_nodes, {"id": "3a4c97e"})[0]["name"] = "版本diff-水泵比较节点"
+    create_project_version_from_nodes(
+        child_nodes,
+        project_id="diff_project",
+        parent_version_id="v_parent",
+        version_id="v_child",
+        versions_dir=tmp_path,
+        validation_report={"valid": True, "error_count": 0, "warning_count": 0},
+    )
+
+    result = diff_project_versions("diff_project", "v_parent", "v_child", versions_dir=tmp_path)
+
+    assert result["from_version"]["version_id"] == "v_parent"
+    assert result["to_version"]["version_id"] == "v_child"
+    assert result["diff"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "modified_count": 1,
+        "affected_node_count": 1,
+    }
+    assert result["diff"]["affected_node_ids"] == ["3a4c97e"]
+    assert result["diff"]["modified"][0]["field_changes"] == [
+        {"field": "name", "old_value": original_name, "new_value": "版本diff-水泵比较节点"}
+    ]
+
+    with pytest.raises(ProjectDiffError, match="不能相同"):
+        diff_project_versions("diff_project", "v_child", "v_child", versions_dir=tmp_path)
+
+
 def test_retrieval_template_tab_node_and_neighborhood() -> None:
     templates = search_templates("风冷热泵 水泵 旁通阀", project_type="plant_room", limit=1)
     assert templates
@@ -126,9 +170,60 @@ def test_retrieval_template_tab_node_and_neighborhood() -> None:
     assert not neighborhood["truncated"]
 
 
+def test_retrieval_searches_function_blocks() -> None:
+    best = search_templates("风冷热泵 水泵 旁通阀", project_type="plant_room", limit=1)[0]
+
+    pump_blocks = search_blocks("水泵控制", template_id=best["template_id"], limit=3)
+    assert pump_blocks
+    assert pump_blocks[0]["function_type"] == "pump_control"
+    assert pump_blocks[0]["tab_label"] == "水泵控制"
+    assert pump_blocks[0]["node_ids"]
+    assert pump_blocks[0]["anchor_node_ids"]
+    assert pump_blocks[0]["node_count"] == len(pump_blocks[0]["node_ids"])
+
+    bypass_blocks = search_blocks("旁通阀 压差", template_id=best["template_id"], limit=3)
+    assert bypass_blocks
+    assert bypass_blocks[0]["function_type"] == "bypass_valve_control"
+    assert "control_loop" in bypass_blocks[0]["risk_tags"]
+
+    ahu_blocks = search_blocks("排风机联动", project_type="ahu", limit=5)
+    assert ahu_blocks
+    assert ahu_blocks[0]["function_type"] == "exhaust_fan_linkage"
+
+
+def test_retrieval_loads_block_context_with_budget() -> None:
+    best = search_templates("风冷热泵 水泵 旁通阀", project_type="plant_room", limit=1)[0]
+    block = search_blocks("旁通阀 压差", template_id=best["template_id"], limit=1)[0]
+
+    context = load_block_context(block["block_id"], max_nodes=12, max_chars=12000)
+
+    assert context["block"]["block_id"] == block["block_id"]
+    assert context["block"]["function_type"] == "bypass_valve_control"
+    assert context["source_path"] == best["source_path"]
+    assert 1 <= len(context["nodes"]) <= 12
+    assert all("raw" not in node for node in context["nodes"])
+    assert all(set(node).issubset({"id", "type", "z", "name", "label", "inputs", "outputs", "x", "y", "wires", "fixedValue", "outOfServiceValue", "tripPoint", "as"}) for node in context["nodes"])
+    selected_ids = {node["id"] for node in context["nodes"]}
+    assert all(edge["source"] in selected_ids and edge["target"] in selected_ids for edge in context["internal_edges"])
+    assert "inbound_edges" in context["boundary"]
+    assert "outbound_edges" in context["boundary"]
+    assert context["budget"]["max_nodes"] == 12
+    assert context["budget"]["estimated_chars"] <= 12000
+
+    tiny_context = load_block_context(block["block_id"], max_nodes=3, max_chars=1600)
+    assert len(tiny_context["nodes"]) <= 3
+    assert tiny_context["budget"]["truncated_by_node_count"] or tiny_context["budget"]["truncated_by_chars"]
+
+    raw_context = load_block_context(block["block_id"], max_nodes=1, max_chars=6000, include_raw_nodes=True)
+    assert "raw" in raw_context["nodes"][0]
+
+
 def test_retrieval_reports_missing_node() -> None:
     with pytest.raises(RetrievalError, match="锚点节点不存在"):
         load_node_neighborhood(PLANT_TEMPLATE, ["missing-node"], depth=1)
+
+    with pytest.raises(RetrievalError, match="功能块不存在"):
+        load_block_context("missing-block-id")
 
 
 def test_patch_engine_updates_renames_comments_and_validates(tmp_path: Path) -> None:
@@ -303,13 +398,21 @@ def test_index_files_are_parseable() -> None:
 
     tab_lines = Path("indexes/tabs/tab_index.jsonl").read_text(encoding="utf-8").splitlines()
     node_lines = Path("indexes/nodes/node_index.jsonl").read_text(encoding="utf-8").splitlines()
+    block_lines = Path("indexes/blocks/block_index.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(tab_lines) == 31
     assert len(node_lines) == 8413
+    assert len(block_lines) >= 100
     assert all(isinstance(json.loads(line), dict) for line in tab_lines[:5])
     assert all(isinstance(json.loads(line), dict) for line in node_lines[:5])
+    assert all(isinstance(json.loads(line), dict) for line in block_lines[:5])
     first_node = json.loads(node_lines[0])
     assert "input_sources" in first_node
     assert "wires_to" not in first_node
+    first_block = json.loads(block_lines[0])
+    assert "block_id" in first_block
+    assert "node_ids" in first_block
+    assert "risk_tags" in first_block
+    assert len(load_block_index()) == len(block_lines)
 
 
 def test_knowledge_chunks_and_search() -> None:

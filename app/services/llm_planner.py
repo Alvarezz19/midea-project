@@ -1,0 +1,304 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from app.services.json_project import get_tabs, load_project, summarize_project
+from app.services.knowledge import search_knowledge
+from app.services.llm_gateway import LLMGatewayError, chat_json
+from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_nodes, search_tabs
+
+
+RiskLevel = Literal["low", "medium", "high"]
+PlannerStatus = Literal["planned", "needs_clarification"]
+Intent = Literal["modify_existing_logic", "add_logic", "annotate", "unknown"]
+PatchOp = Literal[
+    "update_param",
+    "rename_node",
+    "add_comment",
+    "add_node_from_schema",
+    "connect",
+    "disconnect",
+]
+
+
+class LLMPlannerError(ValueError):
+    """LLM 补丁规划失败。"""
+
+
+class RequiredContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["tab", "node", "block", "knowledge"] = "block"
+    query: str = ""
+    reason: str = ""
+
+
+class PlannedOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: PatchOp
+    node_selector: dict[str, Any] | None = None
+    new_name: str | None = None
+    params: dict[str, Any] | None = None
+    tab_selector: dict[str, Any] | None = None
+    text: str | None = None
+    info: str | None = None
+    schema_selector: dict[str, Any] | None = None
+    module_type: str | None = None
+    source_node_selector: dict[str, Any] | None = None
+    target_node_selector: dict[str, Any] | None = None
+    source_output: int | None = None
+    target_input: int | None = None
+    x: int | None = None
+    y: int | None = None
+    position: dict[str, int] | None = None
+
+    @model_validator(mode="after")
+    def validate_operation_contract(self) -> PlannedOperation:
+        if self.op == "update_param":
+            _require_dict(self.node_selector, "update_param.node_selector")
+            _require_dict(self.params, "update_param.params")
+        elif self.op == "rename_node":
+            _require_dict(self.node_selector, "rename_node.node_selector")
+            if not _non_empty_string(self.new_name):
+                raise ValueError("rename_node.new_name 不能为空。")
+        elif self.op == "add_comment":
+            _require_dict(self.tab_selector, "add_comment.tab_selector")
+            if not _non_empty_string(self.text):
+                raise ValueError("add_comment.text 不能为空。")
+        elif self.op == "add_node_from_schema":
+            if not isinstance(self.schema_selector, dict) and not _non_empty_string(self.module_type):
+                raise ValueError("add_node_from_schema 需要 schema_selector 或 module_type。")
+            _require_dict(self.tab_selector, "add_node_from_schema.tab_selector")
+        elif self.op == "connect":
+            _require_dict(self.source_node_selector, "connect.source_node_selector")
+            _require_dict(self.target_node_selector, "connect.target_node_selector")
+            _require_non_negative_int(self.source_output, "connect.source_output")
+            _require_non_negative_int(self.target_input, "connect.target_input")
+        elif self.op == "disconnect":
+            _require_dict(self.target_node_selector, "disconnect.target_node_selector")
+            if self.source_output is not None:
+                _require_non_negative_int(self.source_output, "disconnect.source_output")
+            if self.target_input is not None:
+                _require_non_negative_int(self.target_input, "disconnect.target_input")
+        return self
+
+
+class StructuredPatchPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: PlannerStatus = "needs_clarification"
+    intent: Intent = "unknown"
+    summary: str = ""
+    risk_level: RiskLevel = "low"
+    risk_reasons: list[str] = Field(default_factory=list)
+    required_context: list[RequiredContext] = Field(default_factory=list)
+    operations: list[PlannedOperation] = Field(default_factory=list)
+    validation_expectations: list[str] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_plan_contract(self) -> StructuredPatchPlan:
+        if self.status == "planned" and not self.operations:
+            raise ValueError("planned 状态必须包含至少一个操作。")
+        if self.status == "needs_clarification" and not self.questions:
+            raise ValueError("needs_clarification 状态必须包含追问问题。")
+        return self
+
+
+SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规划器。
+你只能输出 JSON 对象，不要输出 markdown。你不能输出完整工程 JSON，不能要求直接写文件。
+你的任务是把用户修改意图转成结构化补丁计划；后续会由确定性 patch engine dry-run、校验并保存。
+
+输出 JSON 必须符合：
+{
+  "status": "planned | needs_clarification",
+  "intent": "modify_existing_logic | add_logic | annotate | unknown",
+  "summary": "一句话中文摘要",
+  "risk_level": "low | medium | high",
+  "risk_reasons": ["风险原因"],
+  "required_context": [{"type": "block", "query": "水泵控制", "reason": "用于定位"}],
+  "operations": [
+    {
+      "op": "update_param",
+      "node_selector": {"id": "3a4c97e"},
+      "params": {"tripPoint": 3}
+    }
+  ],
+  "validation_expectations": ["目标节点唯一", "dry-run 校验通过"],
+  "questions": []
+}
+
+允许的 op 只有：
+1. update_param：需要 node_selector 和 params，只能修改已存在参数。
+2. rename_node：需要 node_selector 和 new_name。
+3. add_comment：需要 tab_selector 和 text。
+4. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
+5. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
+6. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
+
+选择器规则：
+1. 已知节点优先使用 {"id": "..."}。
+2. 新增节点后要连线时，connect 可用新增节点的稳定名称和 type 作为 source_node_selector，例如 {"type": "constInput", "name": "CO2设定值"}。
+3. 禁止只用 {"type": "compare"} 这类明显不唯一的选择器。
+4. 无法唯一定位节点、页面、端口或参数时，status 必须是 needs_clarification，并提出具体追问。
+
+风险规则：
+1. rename_node、update_param、add_comment 通常是 low。
+2. add_node_from_schema、connect、disconnect 至少是 medium。
+3. 删除、断线、修改 IO/通讯地址、修改设备数量、影响保护逻辑必须是 high；当前没有 delete/copy/set_io op，遇到这类需求应追问或说明需要人工确认。
+"""
+
+
+def plan_patch_with_llm(
+    message: str,
+    *,
+    project_path: str,
+    template_id: str | None = None,
+    project_type: str | None = None,
+    provider: str | None = None,
+    max_block_contexts: int = 2,
+    max_attempts: int = 2,
+    feedback_messages: list[str] | None = None,
+) -> dict[str, Any]:
+    """使用 LLM 生成结构化补丁计划，但不执行工程修改。"""
+
+    if not message.strip():
+        raise LLMPlannerError("修改需求不能为空。")
+    if max_attempts < 1:
+        raise LLMPlannerError("max_attempts 必须大于 0。")
+
+    context = _build_planner_context(
+        message,
+        project_path=project_path,
+        template_id=template_id,
+        project_type=project_type,
+        max_block_contexts=max_block_contexts,
+    )
+    feedback_history = list(feedback_messages or [])
+    schema_errors: list[str] = []
+    for attempt_index in range(max_attempts):
+        try:
+            raw_result = chat_json(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": _build_user_prompt(message, context, feedback_history)},
+                ],
+                provider=provider,
+            )
+        except LLMGatewayError as exc:
+            raise LLMPlannerError(str(exc)) from exc
+
+        meta = raw_result.pop("_llm_meta", None)
+        try:
+            plan = StructuredPatchPlan.model_validate(raw_result)
+            break
+        except ValidationError as exc:
+            error_text = f"第 {attempt_index + 1} 次 LLM 输出未通过 schema 校验: {_truncate(str(exc))}"
+            schema_errors.append(error_text)
+            feedback_history.append(
+                "上一次输出未通过 schema 校验。请只使用允许的 op，补齐必需字段；"
+                f"错误摘要：{_truncate(str(exc), limit=900)}"
+            )
+    else:
+        raise LLMPlannerError("LLM 补丁规划结果不符合 schema: " + " | ".join(schema_errors))
+
+    data = plan.model_dump(exclude_none=True)
+    data["planner"] = "llm"
+    data["llm_meta"] = meta
+    data["context"] = context
+    data["pending_patch"] = {"operations": data["operations"]} if plan.status == "planned" else None
+    data["planner_attempt_count"] = attempt_index + 1
+    if feedback_history:
+        data["feedback_messages"] = feedback_history
+    return data
+
+
+def _build_planner_context(
+    message: str,
+    *,
+    project_path: str,
+    template_id: str | None,
+    project_type: str | None,
+    max_block_contexts: int,
+) -> dict[str, Any]:
+    nodes = load_project(project_path)
+    blocks = (
+        search_blocks(message, template_id=template_id, project_type=project_type, limit=max_block_contexts)
+        if template_id
+        else []
+    )
+    block_contexts: list[dict[str, Any]] = []
+    for block in blocks:
+        block_id = block.get("block_id")
+        if not isinstance(block_id, str):
+            continue
+        try:
+            block_contexts.append(load_block_context(block_id, max_nodes=24, max_chars=9000))
+        except RetrievalError:
+            continue
+
+    return {
+        "project_type": project_type,
+        "template_id": template_id,
+        "project_summary": summarize_project(nodes),
+        "tabs": [{"id": tab_id, "label": label} for tab_id, label in get_tabs(nodes).items()],
+        "knowledge": search_knowledge(message, limit=3),
+        "related_tabs": search_tabs(message, template_id=template_id, limit=3) if template_id else [],
+        "related_nodes": search_nodes(message, template_id=template_id, limit=10) if template_id else [],
+        "related_blocks": blocks,
+        "block_contexts": block_contexts,
+    }
+
+
+def _build_user_prompt(message: str, context: dict[str, Any], feedback_messages: list[str] | None = None) -> str:
+    prompt = (
+        "请基于以下用户需求和局部上下文输出结构化补丁计划。\n"
+        "如果上下文不足以唯一定位目标，返回 needs_clarification。\n\n"
+        f"用户需求：{message}\n\n"
+        "局部上下文 JSON：\n"
+        f"{json.dumps(_compact_context_for_prompt(context), ensure_ascii=False, separators=(',', ':'))}"
+    )
+    if feedback_messages:
+        prompt += (
+            "\n\n上一次规划失败反馈：\n"
+            + "\n".join(f"- {item}" for item in feedback_messages[-5:])
+            + "\n请修正后重新输出完整 JSON。"
+        )
+    return prompt
+
+
+def _compact_context_for_prompt(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project_type": context.get("project_type"),
+        "template_id": context.get("template_id"),
+        "project_summary": context.get("project_summary"),
+        "tabs": context.get("tabs"),
+        "knowledge": context.get("knowledge"),
+        "related_tabs": context.get("related_tabs"),
+        "related_nodes": context.get("related_nodes"),
+        "block_contexts": context.get("block_contexts"),
+    }
+
+
+def _non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _require_dict(value: Any, field: str) -> None:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{field} 必须是非空对象。")
+
+
+def _require_non_negative_int(value: Any, field: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{field} 必须是非负整数。")
+
+
+def _truncate(value: str, limit: int = 500) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}..."

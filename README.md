@@ -19,6 +19,15 @@
 - 创建工程版本副本，不覆盖原始模板。
 - 每次补丁应用成功后创建新的子版本，不覆盖父版本。
 - 支持将当前项目指针回滚到已有版本，保留完整历史版本。
+- 支持按版本生成节点级 diff 摘要，用于前端预览历史版本差异。
+- 导出前会重新校验工程，存在 error 级问题时拒绝导出。
+- 支持生成功能块索引并检索水泵、旁通阀、排风机、直膨机等局部功能块。
+- 支持按 `block_id` 加载局部 JSON 上下文，返回节点摘要、内部边、边界边和预算信息。
+- 新增 LLM Gateway，默认接入 DeepSeek API，并预留 OpenAI、Azure OpenAI、Anthropic 配置入口。
+- 支持使用 LLM 做结构化需求抽取，返回项目类型、设备、控制功能、通讯、保护逻辑、缺失字段和澄清问题。
+- 支持显式开启 LLM 结构化补丁规划，并立即进入 dry-run；LLM 只输出受 schema 约束的补丁意图，实际修改仍由 patch engine 执行。
+- 新增 LLM planner 评测样例，覆盖低/中风险补丁和目标不唯一追问。
+- LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 修改已有节点参数。
@@ -39,6 +48,7 @@
   - tab/subflow 引用。
   - wires 上游源引用。
   - inputs 与 wires 基础一致性。
+  - 导出阻塞原因。
 - 提供 FastAPI API。
 - 提供 FastAPI 托管的前端工作台。
 - 应用启动时复用已编译的 LangGraph 工作流。
@@ -53,7 +63,8 @@
 - `enable_dynamic_input`
 - planner 自动组合“新增节点 + 连线”的多步补丁。
 - 全工程 schema 参数校验。
-- JSON diff 和局部流程图展示。
+- 局部流程图展示。
+- 更完整的 JSON diff 可视化。
 - 更完整的前端交互体验。
 - 向量库/混合检索。
 - PostgreSQL checkpointer、权限、审计、回滚等生产化能力。
@@ -73,6 +84,7 @@ scripts/
 indexes/
   templates/              模板级索引
   tabs/                   页面级索引
+  blocks/                 功能块级索引
   nodes/                  节点级索引
 
 knowledge/                控制策略和工程规范知识文档
@@ -80,6 +92,7 @@ programs/                 原始工程模板
 schemas/                  模块 schema 描述
 projects/                 运行时工程版本输出
 tests/                    自动化测试
+evals/                    LLM planner 等评测样例
 ```
 
 ## 环境要求
@@ -120,6 +133,7 @@ python scripts\build_indexes.py
 模板数量: 5
 页面数量: 31
 节点数量: 8413
+功能块数量: 129
 ```
 
 ## 启动后端和工作台
@@ -154,13 +168,29 @@ GET  /api/health
 POST /api/sessions
 POST /api/sessions/{thread_id}/message
 POST /api/templates/search
+POST /api/blocks/search
+POST /api/blocks/context
 POST /api/knowledge/search
+POST /api/requirements/extract
 POST /api/planner/plan
 POST /api/planner/dry-run
 GET  /api/projects/{project_id}/versions
+GET  /api/projects/{project_id}/diff
 POST /api/projects/{project_id}/validate
 POST /api/projects/{project_id}/rollback
 GET  /api/projects/{project_id}/export
+```
+
+LLM 结构化补丁规划默认关闭，调用时显式传入 `use_llm: true`。示例：
+
+```json
+{
+  "project_path": "projects/versions/demo/v1.json",
+  "message": "在水泵控制里新增一个常量并接到比较判断",
+  "template_id": "plant_room_efb00c114dcb",
+  "project_type": "plant_room",
+  "use_llm": true
+}
 ```
 
 ## 结构化补丁示例
@@ -236,7 +266,23 @@ pytest -q
 当前验收结果：
 
 ```text
-25 passed
+47 passed, 2 skipped
+```
+
+真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
+
+```powershell
+conda activate midea
+$env:RUN_LLM_INTEGRATION='1'
+pytest tests\test_llm_gateway.py::test_requirement_extractor_real_deepseek -q -s
+```
+
+LLM planner 真实结构化规划验收：
+
+```powershell
+conda activate midea
+$env:RUN_LLM_INTEGRATION='1'
+pytest tests\test_planner_evals.py::test_llm_planner_real_deepseek_returns_structured_dry_runnable_plan -q -s
 ```
 
 建议完整验收命令：
@@ -270,4 +316,4 @@ pytest -q
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
 2. 增强后端局部子图能力：`copy_block`、`enable_dynamic_input`。
-3. 将 `add_node_from_schema`、`connect`、`disconnect` 接入 planner，让自然语言能生成多步结构化补丁。
+3. 补齐 LLM planner 高风险确认和更多真实评测样例。

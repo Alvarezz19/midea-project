@@ -179,10 +179,14 @@ def _validate_wires(
 def _build_report(issues: list[ValidationIssue]) -> dict[str, Any]:
     error_count = sum(1 for issue in issues if issue.severity == "error")
     warning_count = sum(1 for issue in issues if issue.severity == "warning")
+    valid = error_count == 0
+    blocked_export_reasons = [] if valid else ["存在 error 级校验问题。"]
     return {
-        "valid": error_count == 0,
+        "valid": valid,
+        "exportable": valid,
         "error_count": error_count,
         "warning_count": warning_count,
         "issue_count": len(issues),
         "issues": [asdict(issue) for issue in issues],
+        "blocked_export_reasons": blocked_export_reasons,
     }

@@ -147,6 +147,28 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     search = client.post("/api/templates/search", json={"query": "风冷热泵 水泵 旁通阀", "project_type": "plant_room", "limit": 2})
     assert search.status_code == 200
     assert search.json()["items"][0]["file_name"] == "风冷热泵标准控制程序[风冷涡旋]20240905.json"
+    template_id = search.json()["items"][0]["template_id"]
+
+    blocks = client.post("/api/blocks/search", json={"query": "水泵控制", "template_id": template_id, "limit": 3})
+    assert blocks.status_code == 200
+    block_items = blocks.json()["items"]
+    assert block_items
+    assert block_items[0]["function_type"] == "pump_control"
+    assert block_items[0]["node_ids"]
+    block_context = client.post(
+        "/api/blocks/context",
+        json={"block_id": block_items[0]["block_id"], "max_nodes": 6, "max_chars": 8000},
+    )
+    assert block_context.status_code == 200
+    block_context_data = block_context.json()
+    assert block_context_data["block"]["block_id"] == block_items[0]["block_id"]
+    assert 1 <= len(block_context_data["nodes"]) <= 6
+    assert "internal_edges" in block_context_data
+    assert "budget" in block_context_data
+
+    missing_block_context = client.post("/api/blocks/context", json={"block_id": "missing-block-id"})
+    assert missing_block_context.status_code == 400
+    assert "功能块不存在" in missing_block_context.json()["detail"]
 
     knowledge = client.post("/api/knowledge/search", json={"query": "AHU 防冻保护 新风阀", "limit": 3})
     assert knowledge.status_code == 200
@@ -236,6 +258,25 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert [item["version_id"] for item in version_items] == [state["current_project_version_id"], patched_state["current_project_version_id"]]
     assert version_items[1]["parent_version_id"] == state["current_project_version_id"]
 
+    diff = client.get(f"/api/projects/{state['current_project_id']}/diff")
+    assert diff.status_code == 200
+    diff_data = diff.json()
+    assert diff_data["from_version"]["version_id"] == state["current_project_version_id"]
+    assert diff_data["to_version"]["version_id"] == patched_state["current_project_version_id"]
+    assert diff_data["diff"]["summary"]["modified_count"] == 1
+    assert diff_data["diff"]["affected_node_ids"] == [node["node_id"]]
+
+    explicit_diff = client.get(
+        f"/api/projects/{state['current_project_id']}/diff",
+        params={"from_version_id": state["current_project_version_id"], "to_version_id": patched_state["current_project_version_id"]},
+    )
+    assert explicit_diff.status_code == 200
+    assert explicit_diff.json()["diff"] == diff_data["diff"]
+
+    no_parent_diff = client.get(f"/api/projects/{state['current_project_id']}/diff", params={"to_version_id": state["current_project_version_id"]})
+    assert no_parent_diff.status_code == 400
+    assert "目标版本没有父版本" in no_parent_diff.json()["detail"]
+
     rollback = client.post(
         f"/api/projects/{state['current_project_id']}/rollback",
         json={"target_version_id": state["current_project_version_id"]},
@@ -256,3 +297,50 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     export_after_rollback = client.get(f"/api/projects/{state['current_project_id']}/export")
     assert export_after_rollback.status_code == 200
     assert export_after_rollback.content == export.content
+
+
+def test_export_rejects_invalid_project_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session_store = FileSessionStore(tmp_path / "sessions")
+    monkeypatch.setattr(app.state, "session_store", session_store)
+    client = TestClient(app)
+
+    invalid_path = tmp_path / "invalid.json"
+    invalid_path.write_text(
+        '[{"id":"target","type":"compare","inputs":1,"outputs":1,"wires":[["missing-source"]]}]\n',
+        encoding="utf-8",
+    )
+
+    export_by_path = client.get("/api/projects/export", params={"path": str(invalid_path)})
+    assert export_by_path.status_code == 400
+    path_detail = export_by_path.json()["detail"]
+    assert path_detail["message"] == "工程校验未通过，拒绝导出。"
+    assert path_detail["validation_report"]["exportable"] is False
+    assert path_detail["validation_report"]["blocked_export_reasons"] == ["存在 error 级校验问题。"]
+    assert path_detail["validation_report"]["issues"][0]["code"] == "missing_wire_source"
+
+    session_store.save(
+        "invalid-export-thread",
+        {
+            "messages": [],
+            "project_type": "plant_room",
+            "requirement_summary": {},
+            "template_candidates": [],
+            "selected_template_id": None,
+            "current_project_id": "invalid_export_project",
+            "current_project_version_id": "v_invalid",
+            "current_project_path": str(invalid_path),
+            "pending_patch": None,
+            "planner_result": None,
+            "patch_result": None,
+            "validation_report": None,
+            "status": "project_version_ready",
+            "next_action": None,
+            "error": None,
+            "auto_confirm_template": True,
+            "project_created_in_current_run": False,
+            "versions_dir": str(tmp_path),
+        },
+    )
+    export_by_project = client.get("/api/projects/invalid_export_project/export")
+    assert export_by_project.status_code == 400
+    assert export_by_project.json()["detail"]["validation_report"]["issues"][0]["code"] == "missing_wire_source"

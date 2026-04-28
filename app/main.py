@@ -16,9 +16,12 @@ from app.graph.state import AgentState
 from app.graph.workflow import get_workflow, invoke_workflow
 from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
 from app.services.knowledge import search_knowledge
+from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
 from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
 from app.services.planner import plan_patch_request
-from app.services.retrieval import search_templates
+from app.services.project_diff import ProjectDiffError, diff_project_versions
+from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
+from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_templates
 from app.services.session_store import FileSessionStore
 from app.services.validator import validate_project
 
@@ -52,6 +55,22 @@ class TemplateSearchRequest(BaseModel):
     min_score: float = 0.0
 
 
+class BlockSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    template_id: str | None = None
+    project_type: str | None = None
+    function_type: str | None = None
+    limit: int = Field(default=8, ge=1, le=20)
+    min_score: float = 0.0
+
+
+class BlockContextRequest(BaseModel):
+    block_id: str = Field(min_length=1)
+    max_nodes: int = Field(default=80, ge=1, le=200)
+    max_chars: int = Field(default=16000, ge=1000, le=100000)
+    include_raw_nodes: bool = False
+
+
 class ValidateProjectRequest(BaseModel):
     path: str
 
@@ -63,11 +82,19 @@ class KnowledgeSearchRequest(BaseModel):
     min_score: float = 0.1
 
 
+class RequirementExtractRequest(BaseModel):
+    message: str = Field(min_length=1)
+    provider: str | None = None
+
+
 class PlanPatchRequest(BaseModel):
     message: str = Field(min_length=1)
     project_path: str
     template_id: str | None = None
     project_type: str | None = None
+    use_llm: bool = False
+    provider: str | None = None
+    llm_max_attempts: int = Field(default=2, ge=1, le=3)
 
 
 class PlannerDryRunRequest(BaseModel):
@@ -76,6 +103,9 @@ class PlannerDryRunRequest(BaseModel):
     pending_patch: dict[str, Any] | None = None
     template_id: str | None = None
     project_type: str | None = None
+    use_llm: bool = False
+    provider: str | None = None
+    llm_max_attempts: int = Field(default=2, ge=1, le=3)
 
 
 class RollbackProjectRequest(BaseModel):
@@ -142,6 +172,33 @@ def search_templates_api(request: TemplateSearchRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/api/blocks/search")
+def search_blocks_api(request: BlockSearchRequest) -> dict[str, Any]:
+    return {
+        "items": search_blocks(
+            request.query,
+            template_id=request.template_id,
+            project_type=request.project_type,
+            function_type=request.function_type,
+            limit=request.limit,
+            min_score=request.min_score,
+        )
+    }
+
+
+@app.post("/api/blocks/context")
+def load_block_context_api(request: BlockContextRequest) -> dict[str, Any]:
+    try:
+        return load_block_context(
+            request.block_id,
+            max_nodes=request.max_nodes,
+            max_chars=request.max_chars,
+            include_raw_nodes=request.include_raw_nodes,
+        )
+    except RetrievalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/knowledge/search")
 def search_knowledge_api(request: KnowledgeSearchRequest) -> dict[str, Any]:
     return {
@@ -154,12 +211,32 @@ def search_knowledge_api(request: KnowledgeSearchRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/api/requirements/extract")
+def extract_requirement_api(request: RequirementExtractRequest) -> dict[str, Any]:
+    try:
+        return extract_requirement_with_llm(request.message, provider=request.provider)
+    except RequirementExtractionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/planner/plan")
 def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
-    _resolve_allowed_project_file(request.project_path)
+    path = _resolve_allowed_project_file(request.project_path)
+    if request.use_llm:
+        try:
+            return plan_patch_with_llm(
+                request.message,
+                project_path=str(path),
+                template_id=request.template_id,
+                project_type=request.project_type,
+                provider=request.provider,
+                max_attempts=request.llm_max_attempts,
+            )
+        except LLMPlannerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return plan_patch_request(
         request.message,
-        project_path=request.project_path,
+        project_path=str(path),
         template_id=request.template_id,
         project_type=request.project_type,
     )
@@ -168,6 +245,9 @@ def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
 @app.post("/api/planner/dry-run")
 def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
     path = _resolve_allowed_project_file(request.project_path)
+    if request.use_llm and request.pending_patch is None:
+        return _planner_llm_dry_run_with_feedback(request, str(path))
+
     planner_result: dict[str, Any] | None = None
     pending_patch = request.pending_patch
     if pending_patch is None:
@@ -201,6 +281,98 @@ def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
     }
 
 
+def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_path: str) -> dict[str, Any]:
+    if not request.message:
+        raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
+
+    feedback_messages: list[str] = []
+    planner_attempts: list[dict[str, Any]] = []
+    last_error: str | None = None
+    planner_result: dict[str, Any] | None = None
+    pending_patch: dict[str, Any] | None = None
+
+    for attempt_index in range(request.llm_max_attempts):
+        try:
+            planner_result = plan_patch_with_llm(
+                request.message,
+                project_path=project_path,
+                template_id=request.template_id,
+                project_type=request.project_type,
+                provider=request.provider,
+                max_attempts=request.llm_max_attempts,
+                feedback_messages=feedback_messages,
+            )
+        except LLMPlannerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        pending_patch = planner_result.get("pending_patch")
+        planner_attempts.append(
+            {
+                "attempt": attempt_index + 1,
+                "planner_status": planner_result.get("status"),
+                "risk_level": planner_result.get("risk_level"),
+                "operation_count": len(pending_patch.get("operations", [])) if isinstance(pending_patch, dict) else 0,
+            }
+        )
+        if not pending_patch:
+            return {
+                "status": "needs_clarification",
+                "planner_result": planner_result,
+                "pending_patch": None,
+                "dry_run": None,
+                "planner_attempts": planner_attempts,
+            }
+
+        try:
+            dry_run = dry_run_patch_to_project(project_path, pending_patch)
+        except PatchEngineError as exc:
+            last_error = str(exc)
+            feedback_messages.append(f"dry-run 执行失败：{last_error}")
+            planner_attempts[-1]["dry_run_error"] = last_error
+            continue
+
+        dry_run.pop("nodes", None)
+        if dry_run["valid"]:
+            return {
+                "status": "dry_run_valid",
+                "planner_result": planner_result,
+                "pending_patch": pending_patch,
+                "dry_run": dry_run,
+                "planner_attempts": planner_attempts,
+            }
+
+        last_error = _summarize_validation_failure(dry_run.get("validation_report"))
+        feedback_messages.append(f"dry-run 校验未通过：{last_error}")
+        planner_attempts[-1]["dry_run_valid"] = False
+        planner_attempts[-1]["validation_error"] = last_error
+
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "message": "LLM planner dry-run 重试后仍失败。",
+            "last_error": last_error,
+            "planner_attempts": planner_attempts,
+        },
+    )
+
+
+def _summarize_validation_failure(report: Any) -> str:
+    if not isinstance(report, dict):
+        return "缺少有效校验报告。"
+    issues = report.get("issues")
+    if not isinstance(issues, list) or not issues:
+        return "校验报告标记为无效，但未返回具体问题。"
+    summaries: list[str] = []
+    for issue in issues[:5]:
+        if not isinstance(issue, dict):
+            continue
+        code = issue.get("code", "unknown")
+        message = issue.get("message", "")
+        node_id = issue.get("node_id")
+        summaries.append(f"{code}: {message} node_id={node_id}")
+    return "；".join(summaries) if summaries else "校验报告中没有可读问题。"
+
+
 @app.get("/api/projects/{project_id}/versions")
 def get_project_versions(project_id: str) -> dict[str, Any]:
     versions: list[dict[str, Any]] = []
@@ -210,6 +382,30 @@ def get_project_versions(project_id: str) -> dict[str, Any]:
     if not versions:
         raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有该项目会话。")
     return {"project_id": project_id, "versions": versions}
+
+
+@app.get("/api/projects/{project_id}/diff")
+def get_project_diff(project_id: str, from_version_id: str | None = None, to_version_id: str | None = None) -> dict[str, Any]:
+    versions_dir = _get_versions_dir(project_id)
+    if versions_dir is None:
+        raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有该项目会话。")
+
+    if to_version_id is None:
+        to_version_id = _get_current_project_version_id(project_id)
+    try:
+        to_metadata = get_project_version(project_id, to_version_id, versions_dir=versions_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if from_version_id is None:
+        parent_version_id = to_metadata.get("parent_version_id")
+        if not isinstance(parent_version_id, str) or not parent_version_id:
+            raise HTTPException(status_code=400, detail="from_version_id 为空且目标版本没有父版本，无法生成 diff。")
+        from_version_id = parent_version_id
+
+    try:
+        return diff_project_versions(project_id, from_version_id, to_version_id, versions_dir=versions_dir)
+    except ProjectDiffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_id}/validate")
@@ -263,16 +459,25 @@ def validate_project_api(request: ValidateProjectRequest) -> dict[str, Any]:
 @app.get("/api/projects/{project_id}/export")
 def export_project_by_id(project_id: str) -> FileResponse:
     target = _get_current_project_path(project_id)
-    return FileResponse(
-        target,
-        media_type="application/json",
-        filename=target.name,
-    )
+    return _export_valid_project_file(target)
 
 
 @app.get("/api/projects/export")
 def export_project(path: str) -> FileResponse:
     target = _resolve_allowed_project_file(path)
+    return _export_valid_project_file(target)
+
+
+def _export_valid_project_file(target: Path) -> FileResponse:
+    report = validate_project(load_project(target))
+    if not report["exportable"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "工程校验未通过，拒绝导出。",
+                "validation_report": report,
+            },
+        )
     return FileResponse(
         target,
         media_type="application/json",
@@ -308,6 +513,13 @@ def _get_current_project_path(project_id: str) -> Path:
     for state in _session_store().find_by_project_id(project_id):
         if state.get("current_project_id") == project_id and state.get("current_project_path"):
             return _resolve_allowed_project_file(str(state["current_project_path"]))
+    raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
+
+
+def _get_current_project_version_id(project_id: str) -> str:
+    for state in _session_store().find_by_project_id(project_id):
+        if state.get("current_project_id") == project_id and state.get("current_project_version_id"):
+            return str(state["current_project_version_id"])
     raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有可用工程版本。")
 
 
