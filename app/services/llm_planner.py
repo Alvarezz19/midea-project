@@ -18,6 +18,7 @@ PatchOp = Literal[
     "update_param",
     "replace_constant",
     "enable_dynamic_input",
+    "set_io_point",
     "rename_node",
     "add_comment",
     "add_node_from_schema",
@@ -88,6 +89,9 @@ class PlannedOperation(BaseModel):
                     raise ValueError("enable_dynamic_input.input_options 必须是非空字符串数组。")
             if self.input_option is not None and not _non_empty_string(self.input_option):
                 raise ValueError("enable_dynamic_input.input_option 必须是非空字符串。")
+        elif self.op == "set_io_point":
+            _require_dict(self.node_selector, "set_io_point.node_selector")
+            _require_dict(self.params, "set_io_point.params")
         elif self.op == "rename_node":
             _require_dict(self.node_selector, "rename_node.node_selector")
             if not _non_empty_string(self.new_name):
@@ -181,12 +185,13 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 1. update_param：需要 node_selector 和 params，只能修改已存在参数。
 2. replace_constant：需要 node_selector 和 value；可选 field。只用于替换常量、软件输入设定值、比较阈值或数学模块固定值，不用于结构字段。
 3. enable_dynamic_input：需要 node_selector；PID、线性变换等需要 input_option 或 input_options；只打开动态输入端口并维护 inputs、inputsOption/inputAuxEnable、wires，不自动连线。
-4. rename_node：需要 node_selector 和 new_name。
-5. add_comment：需要 tab_selector 和 text。
-6. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
-7. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix。只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
-8. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
-9. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
+4. set_io_point：需要 node_selector 和 params；只允许修改已有 IO/通讯点位白名单字段，例如 hwExpander、hwChannelIndex、modbusPort、modbusAddress、functionCode、modbusRegAddr、bacnetObjectType、bacnetObjectInstance、bacnetIpDeviceInstance、bacnetIpObjectType、bacnetIpObjectInstance、topic、objectName。
+5. rename_node：需要 node_selector 和 new_name。
+6. add_comment：需要 tab_selector 和 text。
+7. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
+8. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix。只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
+9. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
+10. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
 
 选择器规则：
 1. 已知节点优先使用 {"id": "..."}。
@@ -199,12 +204,14 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 2. 如果要把新增设定值接入 PID 参数动态端口，必须先 add_node_from_schema，再 enable_dynamic_input 并指定 input_option，最后 connect 到新增动态端口。
 3. 不要用 connect 隐式创建端口；端口数量变化必须显式表达为 enable_dynamic_input。
 4. copy_block 只能表达“复制局部功能块并暂不接外部线”；如果用户要求复制后自动接入现有 IO、保护、设备或通讯链路，必须先追问入口/出口和确认方式。
+5. set_io_point 只表达明确节点上的点位字段变更；如果没有明确节点、字段和值，必须追问。
 
 风险规则：
 1. rename_node、update_param、replace_constant、add_comment 通常是 low。
 2. enable_dynamic_input、add_node_from_schema、connect、disconnect 至少是 medium。
 3. copy_block 至少是 high。
-4. 删除、断线、修改 IO/通讯地址、修改设备数量、影响保护逻辑必须是 high；当前没有 delete/set_io op，遇到这类需求应追问或说明需要人工确认。
+4. set_io_point 至少是 high，必须人工确认。
+5. 删除、断线、修改设备数量、影响保护逻辑必须是 high；遇到没有对应 op 的需求应追问或说明需要人工确认。
 """
 
 

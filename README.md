@@ -32,9 +32,10 @@
 - 新增 LLM planner 评测样例，覆盖低/中风险补丁、组合补丁和目标不唯一追问。
 - LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
 - LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会先停在确认状态，确认后才创建新版本。
-- 手动结构化补丁中的 `add_node_from_schema`、`connect`、`disconnect`、疑似 IO/通讯字段修改等中高风险操作会先 dry-run 并等待确认，不会直接落盘。
+- 手动结构化补丁中的 `add_node_from_schema`、`connect`、`disconnect`、`set_io_point`、疑似 IO/通讯字段修改等中高风险操作会先 dry-run 并等待确认，不会直接落盘。
 - `enable_dynamic_input` 会被识别为中风险结构变更，确认前只 dry-run，不创建新版本。
 - `copy_block` 第一版会被识别为高风险结构变更，只复制功能块内部节点和内部连线，重写节点 id，丢弃外部入口/出口连线，并禁用复制节点上的本地 BACnet 暴露对象，确认前只 dry-run。
+- `set_io_point` 会被识别为高风险点位变更，只允许修改已有 IO/通讯/BACnet/MQTT 白名单字段，并复用 dry-run 校验发现点位冲突。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 替换常量、软件输入设定值或静态阈值。
@@ -45,6 +46,7 @@
   - `update_param`
   - `replace_constant`
   - `enable_dynamic_input`
+  - `set_io_point`
   - `rename_node`
   - `add_comment`
   - `add_node_from_schema`
@@ -63,6 +65,7 @@
   - schema 参数合法性，包括字段类型、枚举、范围、必填参数和未知字段。
   - 动态端口一致性，包括 `inputAuxEnable`、`inputsOption`、`inputD`、`outputD`、`inputsCount` 和 `wires`。
   - IO/通讯冲突，包括硬件 IO 通道、Modbus 点位、本地 BACnet 对象、BACnet/IP 远端点位和 MQTT `objectName`。
+  - 保护逻辑规则库第一版，包括关键执行器输出缺少上游联锁、保护/故障/反馈/报警信号被停用、设备相关逻辑缺少故障/运行/反馈线索。
   - 导出阻塞原因。
 - 提供 FastAPI API。
 - 提供 FastAPI 托管的前端工作台。
@@ -75,7 +78,6 @@
 以下能力仍在后续计划中：
 
 - planner 自动组合“新增节点 + 连线”的多步补丁。
-- 保护逻辑规则库。
 - 局部流程图展示。
 - 更完整的 JSON diff 可视化。
 - 更完整的前端交互体验。
@@ -317,6 +319,21 @@ PID 等带选项的动态输入需要指定选项：
 
 注意：`copy_block` 当前只复制功能块内部节点和内部连线，会重写所有复制节点 id，丢弃所有外部入口/出口连线，并禁用复制节点上的本地 BACnet 暴露对象，避免复用原对象号；复制后如需接入现有逻辑或重新配置点位，必须用后续显式补丁表达。
 
+设置 IO/通讯点位：
+
+```json
+{
+  "op": "set_io_point",
+  "node_selector": {"id": "22a27d1"},
+  "params": {
+    "hwExpander": "1",
+    "hwChannelIndex": "31"
+  }
+}
+```
+
+`set_io_point` 当前支持已有节点上的白名单字段：硬件 IO 的 `hwExpander`、`hwChannelIndex`；Modbus 的 `modbusPort`、`modbusTcpIPaddr`、`modbusTcpPort`、`modbusAddress`、`functionCode`、`modbusRegAddr`；本地 BACnet 暴露对象字段；BACnet/IP 的设备号、对象类型、对象实例和优先级；MQTT 的 `topic`、`objectName`。该操作必须人工确认后应用，dry-run 会复用 IO/通讯冲突校验。
+
 显式连线：
 
 ```json
@@ -352,7 +369,7 @@ pytest -q
 当前验收结果：
 
 ```text
-71 passed
+78 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
@@ -401,5 +418,5 @@ pytest -q
 优先用当前工作台跑真实样例，记录交互问题，再决定下一步：
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
-2. 增强后端局部子图能力：`set_io_point` 和更完整的 `copy_block` 外部入口/出口接线辅助。
-3. 继续推进阶段 6 保护逻辑规则库；推进 `set_io_point` 前先基于现有 IO/通讯冲突校验设计确认规则。
+2. 增强后端局部子图能力：更完整的 `copy_block` 外部入口/出口接线辅助。
+3. 继续细化阶段 6 保护逻辑规则库，补充读写方向、保护链路影响范围和业务例外白名单。

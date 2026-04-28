@@ -32,6 +32,60 @@ OPTION_DYNAMIC_INPUT_ALLOWED = {
     },
 }
 COMMON_NODE_FIELDS = {"id", "z", "type", "name", "label", "info", "x", "y", "wires", "inputs", "outputs"}
+PROTECTION_TEXT_FIELDS = ("name", "label", "labelName", "labelNameOld", "info", "objectName", "topic")
+PROTECTION_SIGNAL_KEYWORDS = ("防冻", "故障", "反馈", "过滤", "滤网", "缺风", "报警", "到位", "保护", "联锁")
+CRITICAL_ACTUATOR_TYPES = {"hwOutput", "modbusOutput", "bacipOutput", "mqttout"}
+CRITICAL_ACTUATOR_KEYWORDS = (
+    "送风机",
+    "排风机",
+    "新风阀",
+    "回风阀",
+    "直膨",
+    "水泵",
+    "冷冻泵",
+    "冷却泵",
+    "主机",
+    "热泵",
+    "蝶阀",
+    "旁通阀",
+)
+PROTECTION_REQUIREMENT_RULES = (
+    {
+        "equipment_terms": ("送风",),
+        "required_terms": ("故障", "缺风", "报警", "运行"),
+        "message": "AHU 送风相关逻辑缺少故障、缺风、报警或运行反馈线索。",
+    },
+    {
+        "equipment_terms": ("直膨",),
+        "required_terms": ("故障",),
+        "message": "AHU 直膨机相关逻辑缺少故障状态线索。",
+    },
+    {
+        "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
+        "required_terms": ("故障",),
+        "message": "水泵相关逻辑缺少故障状态线索。",
+    },
+    {
+        "equipment_terms": ("水泵", "冷冻泵", "冷却泵"),
+        "required_terms": ("运行", "反馈"),
+        "message": "水泵相关逻辑缺少运行或反馈线索。",
+    },
+    {
+        "equipment_terms": ("主机", "热泵"),
+        "required_terms": ("故障",),
+        "message": "主机或热泵相关逻辑缺少故障状态线索。",
+    },
+    {
+        "equipment_terms": ("主机", "热泵"),
+        "required_terms": ("运行",),
+        "message": "主机或热泵相关逻辑缺少运行状态线索。",
+    },
+    {
+        "equipment_terms": ("蝶阀",),
+        "required_terms": ("到位", "反馈"),
+        "message": "蝶阀相关逻辑缺少到位或反馈线索。",
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +177,7 @@ def validate_project(nodes: Any) -> dict[str, Any]:
                 )
 
     _validate_io_communication_conflicts(nodes, issues)
+    _validate_protection_logic_rules(nodes, issues)
 
     return _build_report(issues)
 
@@ -650,6 +705,88 @@ def _validate_io_communication_conflicts(nodes: list[Any], issues: list[Validati
             f"{messages[code]} key={key}，冲突节点={node_ids}。",
             node_id=node_ids[0],
         )
+
+
+def _validate_protection_logic_rules(nodes: list[Any], issues: list[ValidationIssue]) -> None:
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+
+        path = f"$[{index}]"
+        node_id = node.get("id") if isinstance(node.get("id"), str) else None
+        node_text = _node_text(node)
+
+        if _has_any(node_text, PROTECTION_SIGNAL_KEYWORDS) and _is_truthy(node.get("outOfService")):
+            _issue(
+                issues,
+                "error",
+                "protection_signal_disabled",
+                "保护、故障、反馈或报警相关信号不应被设置为 outOfService。",
+                node_id=node_id,
+                path=f"{path}.outOfService",
+            )
+
+        if _is_unwired_critical_actuator(node):
+            _issue(
+                issues,
+                "error",
+                "critical_actuator_without_interlock",
+                "关键执行器输出缺少上游联锁或控制输入，可能绕过保护逻辑。",
+                node_id=node_id,
+                path=f"{path}.wires",
+            )
+
+    for rule in PROTECTION_REQUIREMENT_RULES:
+        equipment_terms = rule["equipment_terms"]
+        required_terms = rule["required_terms"]
+        if _has_equipment(nodes, equipment_terms) and not _has_equipment_protection(nodes, equipment_terms, required_terms):
+            _issue(
+                issues,
+                "error",
+                "missing_protection_logic",
+                str(rule["message"]),
+            )
+
+
+def _is_unwired_critical_actuator(node: dict[str, Any]) -> bool:
+    if node.get("type") not in CRITICAL_ACTUATOR_TYPES:
+        return False
+    if not _has_any(_node_text(node), CRITICAL_ACTUATOR_KEYWORDS):
+        return False
+    inputs = node.get("inputs")
+    if not isinstance(inputs, int) or inputs <= 0:
+        return False
+    wires = node.get("wires")
+    if not isinstance(wires, list):
+        return True
+    return not any(isinstance(input_sources, list) and input_sources for input_sources in wires)
+
+
+def _node_text(node: dict[str, Any]) -> str:
+    parts = []
+    for field in PROTECTION_TEXT_FIELDS:
+        value = node.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+    return " ".join(parts)
+
+
+def _has_equipment(nodes: list[Any], equipment_terms: tuple[str, ...]) -> bool:
+    return any(isinstance(node, dict) and _has_any(_node_text(node), equipment_terms) for node in nodes)
+
+
+def _has_equipment_protection(nodes: list[Any], equipment_terms: tuple[str, ...], required_terms: tuple[str, ...]) -> bool:
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        text = _node_text(node)
+        if _has_any(text, equipment_terms) and _has_any(text, required_terms):
+            return True
+    return False
+
+
+def _has_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
 
 
 def _add_conflict_key(

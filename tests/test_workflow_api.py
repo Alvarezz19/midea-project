@@ -373,6 +373,22 @@ def test_workflow_requires_high_risk_confirmation_for_copy_block(tmp_path: Path)
     assert result["planner_dry_run"]["diff"]["summary"]["added_count"] == 17
 
 
+def test_workflow_requires_high_risk_confirmation_for_set_io_point(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    state["pending_patch"] = {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"hwChannelIndex": "31"}}
+
+    result = invoke_workflow(state)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["pending_patch"] is None
+    assert result["pending_confirmation_patch"]["op"] == "set_io_point"
+    assert result["risk_assessment"]["risk_level"] == "high"
+    assert result["planner_dry_run"]["valid"] is True
+    assert result["planner_dry_run"]["diff"]["summary"]["modified_count"] == 1
+
+
 def test_workflow_reports_ambiguous_patch(tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)

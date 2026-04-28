@@ -533,6 +533,111 @@ def test_validator_rejects_io_and_communication_conflicts() -> None:
     assert "mqtt_object_name_conflict" in codes
 
 
+def test_validator_rejects_protection_logic_violations() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "cmd", "type": "constInput", "z": "tab1", "name": "送风机启动命令", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "supply_fan_output",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "送风机启动输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 1,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[]],
+            "outOfService": 0,
+        },
+        {
+            "id": "fan_fault",
+            "type": "swInput",
+            "z": "tab1",
+            "name": "送风机故障反馈",
+            "inputs": 0,
+            "outputs": 1,
+            "wires": [],
+            "outOfService": 1,
+        },
+        {
+            "id": "pump_cmd",
+            "type": "hwOutput",
+            "z": "tab1",
+            "name": "冷冻水泵启停输出",
+            "hwExpander": 0,
+            "hwChannelIndex": 2,
+            "inputs": 1,
+            "outputs": 1,
+            "wires": [[{"id": "cmd", "port": 0}]],
+            "outOfService": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "critical_actuator_without_interlock" in codes
+    assert "protection_signal_disabled" in codes
+    assert "missing_protection_logic" in codes
+
+
+def test_patch_engine_sets_io_point_with_conflict_validation() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+
+    result = dry_run_patch(
+        nodes,
+        {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"hwExpander": "1", "hwChannelIndex": "31"}},
+    )
+
+    assert result["valid"] is True
+    assert result["changes"] == [
+        {
+            "op": "set_io_point",
+            "node_id": "22a27d1",
+            "field": "hwChannelIndex",
+            "old_value": "2",
+            "new_value": "31",
+        }
+    ]
+    assert result["diff"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "modified_count": 1,
+        "affected_node_count": 1,
+    }
+    assert find_nodes(result["nodes"], {"id": "22a27d1"})[0]["hwChannelIndex"] == "31"
+    assert find_nodes(nodes, {"id": "22a27d1"})[0]["hwChannelIndex"] == "2"
+
+    conflicting = dry_run_patch(
+        nodes,
+        {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"hwChannelIndex": "1"}},
+    )
+
+    assert conflicting["valid"] is False
+    assert "hardware_io_channel_conflict" in {issue["code"] for issue in conflicting["validation_report"]["issues"]}
+
+
+def test_patch_engine_sets_communication_point_fields() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+
+    result = dry_run_patch(
+        nodes,
+        {
+            "op": "set_io_point",
+            "node_selector": {"id": "f452f75"},
+            "params": {"modbusAddress": 3, "modbusRegAddr": "12000", "bacnetObjectInstance": "900"},
+        },
+    )
+
+    assert result["valid"] is True
+    updated = find_nodes(result["nodes"], {"id": "f452f75"})[0]
+    assert updated["modbusAddress"] == 3
+    assert updated["modbusRegAddr"] == "12000"
+    assert updated["bacnetObjectInstance"] == "900"
+    assert result["diff"]["summary"]["modified_count"] == 1
+
+
 def test_patch_engine_dry_run_returns_diff_without_mutating_source() -> None:
     nodes = load_project(PLANT_TEMPLATE)
     original_name = find_nodes(nodes, {"id": "3a4c97e"})[0].get("name")
@@ -731,6 +836,15 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
 
     with pytest.raises(PatchEngineError, match="不允许 pid 的选项"):
         apply_patch(nodes, {"op": "enable_dynamic_input", "node_selector": {"id": "c8d7d0"}, "input_option": "badOption"})
+
+    with pytest.raises(PatchEngineError, match="不允许修改 hwInput 的字段"):
+        apply_patch(nodes, {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"fixedValue": 1}})
+
+    with pytest.raises(PatchEngineError, match="必须在 1 到 32"):
+        apply_patch(nodes, {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"hwChannelIndex": 0}})
+
+    with pytest.raises(PatchEngineError, match="不支持节点类型"):
+        apply_patch(nodes, {"op": "set_io_point", "node_selector": {"id": "67febfa"}, "params": {"hwChannelIndex": 1}})
 
     with pytest.raises(PatchEngineError, match="schema 未定义参数"):
         apply_patch(

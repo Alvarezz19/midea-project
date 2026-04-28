@@ -56,6 +56,63 @@ OPTION_DYNAMIC_INPUT_ALLOWED = {
     ],
 }
 LINEAR_DYNAMIC_INPUT_TARGETS = {"inputD": 3, "outputD": 5}
+HARDWARE_IO_POINT_FIELDS = {"hwExpander", "hwChannelIndex"}
+MODBUS_POINT_FIELDS = {
+    "modbusPort",
+    "modbusTcpIPaddr",
+    "modbusTcpPort",
+    "modbusAddress",
+    "functionCode",
+    "modbusRegAddr",
+}
+LOCAL_BACNET_POINT_FIELDS = {
+    "bacnetVisible",
+    "bacnetObjectType",
+    "bacnetObjectInstanceAuto",
+    "bacnetObjectInstance",
+    "bacnetObjectPrefix",
+    "bacnetObjectDescription",
+    "bacnetObjectUnits",
+}
+BACIP_POINT_FIELDS = {
+    "bacnetIpDeviceInstance",
+    "bacnetIpObjectType",
+    "bacnetIpObjectInstance",
+    "bacnetIpPriority",
+}
+MQTT_POINT_FIELDS = {"topic", "objectName"}
+SET_IO_POINT_FIELDS_BY_TYPE = {
+    "hwInput": HARDWARE_IO_POINT_FIELDS | LOCAL_BACNET_POINT_FIELDS,
+    "hwOutput": HARDWARE_IO_POINT_FIELDS | LOCAL_BACNET_POINT_FIELDS,
+    "modbusOutput": MODBUS_POINT_FIELDS | LOCAL_BACNET_POINT_FIELDS,
+    "bacipOutput": BACIP_POINT_FIELDS,
+    "mqttin": MQTT_POINT_FIELDS,
+    "mqttout": MQTT_POINT_FIELDS,
+}
+SET_IO_POINT_INTEGER_RANGES = {
+    "hwExpander": (0, 31),
+    "hwChannelIndex": (1, 32),
+    "modbusTcpPort": (1, 65535),
+    "modbusAddress": (1, 247),
+    "functionCode": (1, 127),
+    "modbusRegAddr": (0, 65535),
+    "bacnetObjectInstance": (0, 4194303),
+    "bacnetIpDeviceInstance": (0, 4194303),
+    "bacnetIpObjectInstance": (0, 4194303),
+    "bacnetIpPriority": (1, 16),
+}
+SET_IO_POINT_BOOL_FIELDS = {"bacnetVisible", "bacnetObjectInstanceAuto"}
+SET_IO_POINT_STRING_FIELDS = {
+    "modbusPort",
+    "modbusTcpIPaddr",
+    "bacnetObjectType",
+    "bacnetObjectPrefix",
+    "bacnetObjectDescription",
+    "bacnetObjectUnits",
+    "bacnetIpObjectType",
+    "topic",
+    "objectName",
+}
 
 
 def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str, Any]:
@@ -75,6 +132,8 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
             changes.extend(_replace_constant(next_nodes, operation, index))
         elif op == "enable_dynamic_input":
             changes.extend(_enable_dynamic_input(next_nodes, operation, index))
+        elif op == "set_io_point":
+            changes.extend(_set_io_point(next_nodes, operation, index))
         elif op == "rename_node":
             changes.extend(_rename_node(next_nodes, operation, index))
         elif op == "add_comment":
@@ -329,6 +388,83 @@ def _enable_dynamic_input(nodes: list[dict[str, Any]], operation: dict[str, Any]
             raise PatchEngineError("enable_dynamic_input 对 linear 需要 input_option 或 input_options。")
         return _enable_linear_dynamic_input(node, options)
     raise PatchEngineError(f"enable_dynamic_input 不支持节点类型: {node_type}")
+
+
+def _set_io_point(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    selector = operation.get("node_selector")
+    params = operation.get("params")
+    if not isinstance(selector, dict):
+        raise PatchEngineError("set_io_point 需要 node_selector。")
+    if not isinstance(params, dict) or not params:
+        raise PatchEngineError("set_io_point 需要非空 params。")
+
+    node = _select_one(nodes, selector, op_index)
+    node_type = str(node.get("type", ""))
+    allowed_fields = SET_IO_POINT_FIELDS_BY_TYPE.get(node_type)
+    if not allowed_fields:
+        raise PatchEngineError(f"set_io_point 不支持节点类型: {node_type}")
+
+    changes: list[dict[str, Any]] = []
+    for field, new_value in params.items():
+        if not isinstance(field, str) or not field:
+            raise PatchEngineError("set_io_point 的字段名必须是非空字符串。")
+        if field in PROTECTED_UPDATE_FIELDS:
+            raise PatchEngineError(f"set_io_point 不允许修改结构字段: {field}")
+        if field not in allowed_fields:
+            raise PatchEngineError(f"set_io_point 不允许修改 {node_type} 的字段: {field}")
+        if field not in node:
+            raise PatchEngineError(f"set_io_point 目标节点缺少字段: {field}")
+        _validate_set_io_point_value(field, new_value)
+
+        old_value = node.get(field)
+        if old_value == new_value:
+            continue
+        node[field] = new_value
+        changes.append(
+            {
+                "op": "set_io_point",
+                "node_id": node.get("id"),
+                "field": field,
+                "old_value": old_value,
+                "new_value": new_value,
+            }
+        )
+    return changes
+
+
+def _validate_set_io_point_value(field: str, value: Any) -> None:
+    if field in SET_IO_POINT_INTEGER_RANGES:
+        minimum, maximum = SET_IO_POINT_INTEGER_RANGES[field]
+        numeric_value = _coerce_integer(value, field)
+        if numeric_value < minimum or numeric_value > maximum:
+            raise PatchEngineError(f"set_io_point 的 {field} 必须在 {minimum} 到 {maximum} 之间。")
+        return
+
+    if field in SET_IO_POINT_BOOL_FIELDS:
+        if not isinstance(value, bool):
+            raise PatchEngineError(f"set_io_point 的 {field} 必须是布尔值。")
+        return
+
+    if field in SET_IO_POINT_STRING_FIELDS:
+        if not isinstance(value, str):
+            raise PatchEngineError(f"set_io_point 的 {field} 必须是字符串。")
+        if field in {"topic", "objectName", "bacnetObjectType", "bacnetIpObjectType"} and not value.strip():
+            raise PatchEngineError(f"set_io_point 的 {field} 不能为空。")
+        return
+
+    raise PatchEngineError(f"set_io_point 不支持字段: {field}")
+
+
+def _coerce_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool):
+        raise PatchEngineError(f"set_io_point 的 {field} 必须是整数。")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text and text.lstrip("+-").isdigit():
+            return int(text)
+    raise PatchEngineError(f"set_io_point 的 {field} 必须是整数或整数字符串。")
 
 
 def _enable_aux_dynamic_input(node: dict[str, Any]) -> list[dict[str, Any]]:
