@@ -28,6 +28,7 @@
 - 支持显式开启 LLM 结构化补丁规划，并立即进入 dry-run；LLM 只输出受 schema 约束的补丁意图，实际修改仍由 patch engine 执行。
 - 新增 LLM planner 评测样例，覆盖低/中风险补丁和目标不唯一追问。
 - LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
+- LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会停在确认状态，手动 `pending_patch` 仍走确定性执行链路。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 修改已有节点参数。
@@ -193,6 +194,16 @@ LLM 结构化补丁规划默认关闭，调用时显式传入 `use_llm: true`。
 }
 ```
 
+工作流消息接口如需启用 LLM planner，传入 `use_llm_planner: true`；也可在创建会话时设置为会话默认值：
+
+```json
+{
+  "message": "在水泵控制里新增一个常量并接到比较判断",
+  "use_llm_planner": true,
+  "llm_max_attempts": 2
+}
+```
+
 ## 结构化补丁示例
 
 修改参数：
@@ -266,7 +277,7 @@ pytest -q
 当前验收结果：
 
 ```text
-47 passed, 2 skipped
+54 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：

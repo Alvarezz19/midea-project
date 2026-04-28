@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -114,6 +115,191 @@ def test_workflow_returns_clarification_when_planner_is_ambiguous(tmp_path: Path
     assert result["next_action"] == "clarify_patch"
     assert result["planner_result"]["status"] == "needs_clarification"
     assert "需要补充信息" in result["messages"][-1]["content"]
+
+
+def test_workflow_uses_llm_planner_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    def fake_llm_dry_run(
+        message: str,
+        *,
+        project_path: str,
+        template_id: str | None = None,
+        project_type: str | None = None,
+        provider: str | None = None,
+        llm_max_attempts: int = 2,
+    ) -> dict[str, Any]:
+        assert "比较判断改名" in message
+        assert project_path == created["current_project_path"]
+        assert template_id == created["selected_template_id"]
+        assert project_type == "plant_room"
+        assert provider == "deepseek"
+        assert llm_max_attempts == 2
+        pending_patch = {"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": "工作流LLM-比较节点"}
+        return {
+            "status": "dry_run_valid",
+            "planner_result": {
+                "status": "planned",
+                "planner": "llm",
+                "risk_level": "low",
+                "pending_patch": pending_patch,
+                "questions": [],
+            },
+            "pending_patch": pending_patch,
+            "dry_run": {"saved": False, "valid": True, "diff": {"summary": {"modified_count": 1}}},
+            "planner_attempts": [{"attempt": 1, "planner_status": "planned", "risk_level": "low", "operation_count": 1}],
+        }
+
+    monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    created["use_llm_planner"] = True
+    created["llm_provider"] = "deepseek"
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "请把比较判断改名"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["planner"] == "llm"
+    assert result["planner_attempts"][0]["planner_status"] == "planned"
+    nodes = load_project(result["current_project_path"])
+    renamed = next(item for item in nodes if item.get("id") == "3a4c97e")
+    assert renamed["name"] == "工作流LLM-比较节点"
+
+
+def test_workflow_llm_planner_retries_schema_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    calls: list[list[dict[str, str]]] = []
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del provider
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "status": "planned",
+                "intent": "delete_logic",
+                "summary": "错误地输出未知操作。",
+                "risk_level": "high",
+                "risk_reasons": ["未知操作"],
+                "required_context": [],
+                "operations": [{"op": "delete_node", "node_selector": {"id": "3a4c97e"}}],
+                "validation_expectations": [],
+                "questions": [],
+            }
+        assert "未通过 schema 校验" in messages[1]["content"]
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "改名目标节点。",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [],
+            "operations": [{"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": "工作流schema重试-比较节点"}],
+            "validation_expectations": ["目标节点唯一"],
+            "questions": [],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    created["use_llm_planner"] = True
+    created["llm_max_attempts"] = 2
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把节点 3a4c97e 改名"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["planner"] == "llm"
+    assert result["planner_result"]["planner_attempt_count"] == 2
+    assert len(calls) == 2
+    nodes = load_project(result["current_project_path"])
+    renamed = next(item for item in nodes if item.get("id") == "3a4c97e")
+    assert renamed["name"] == "工作流schema重试-比较节点"
+
+
+def test_workflow_llm_planner_returns_clarification_after_feedback_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.services.planner_execution import PlannerDryRunFeedbackError
+
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        raise PlannerDryRunFeedbackError(
+            {
+                "message": "LLM planner dry-run 重试后仍失败。",
+                "last_error": "第 0 个操作匹配到 12 个节点，必须唯一。",
+                "planner_attempts": [{"attempt": 1, "planner_status": "planned", "dry_run_error": "必须唯一"}],
+                "planner_result": {
+                    "status": "planned",
+                    "planner": "llm",
+                    "questions": [],
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    created["use_llm_planner"] = True
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把比较判断改名为 不应执行"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_clarification"
+    assert result["next_action"] == "clarify_patch"
+    assert result["pending_patch"] is None
+    assert result["planner_attempts"][0]["dry_run_error"] == "必须唯一"
+    assert "必须唯一" in result["messages"][-1]["content"]
+
+
+def test_workflow_llm_planner_requires_confirmation_for_non_low_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        pending_patch = {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+        return {
+            "status": "dry_run_valid",
+            "planner_result": {
+                "status": "planned",
+                "planner": "llm",
+                "risk_level": "medium",
+                "pending_patch": pending_patch,
+                "questions": [],
+            },
+            "pending_patch": pending_patch,
+            "dry_run": {
+                "saved": False,
+                "valid": True,
+                "diff": {"summary": {"affected_node_count": 1}},
+            },
+            "planner_attempts": [{"attempt": 1, "planner_status": "planned", "risk_level": "medium", "operation_count": 1}],
+        }
+
+    monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    created["use_llm_planner"] = True
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "断开一个输入"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["pending_patch"] is None
+    assert result["planner_dry_run"]["valid"]
+    assert "需要确认后再应用" in result["messages"][-1]["content"]
 
 
 def test_workflow_reports_ambiguous_patch(tmp_path: Path) -> None:

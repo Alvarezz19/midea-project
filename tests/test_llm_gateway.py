@@ -270,7 +270,7 @@ def test_llm_planner_dry_run_api_executes_structured_plan(monkeypatch: pytest.Mo
             "questions": [],
         }
 
-    monkeypatch.setattr("app.main.plan_patch_with_llm", fake_plan_patch_with_llm)
+    monkeypatch.setattr("app.services.planner_execution.plan_patch_with_llm", fake_plan_patch_with_llm)
     client = TestClient(app)
 
     response = client.post(
@@ -328,7 +328,7 @@ def test_llm_planner_dry_run_api_retries_patch_engine_failures(monkeypatch: pyte
             "questions": [],
         }
 
-    monkeypatch.setattr("app.main.plan_patch_with_llm", fake_plan_patch_with_llm)
+    monkeypatch.setattr("app.services.planner_execution.plan_patch_with_llm", fake_plan_patch_with_llm)
     client = TestClient(app)
 
     response = client.post(
@@ -350,6 +350,75 @@ def test_llm_planner_dry_run_api_retries_patch_engine_failures(monkeypatch: pyte
     assert len(data["planner_attempts"]) == 2
     assert "dry_run_error" in data["planner_attempts"][0]
     assert len(calls) == 2
+
+
+def test_llm_planner_dry_run_api_retries_validation_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_api_validation_retry", versions_dir=tmp_path)
+    planner_feedback: list[list[str] | None] = []
+    dry_run_calls: list[dict[str, Any]] = []
+
+    def fake_plan_patch_with_llm(
+        message: str,
+        *,
+        project_path: str,
+        template_id: str | None = None,
+        project_type: str | None = None,
+        provider: str | None = None,
+        max_attempts: int = 2,
+        feedback_messages: list[str] | None = None,
+    ) -> dict[str, Any]:
+        del message, project_path, template_id, project_type, provider, max_attempts
+        planner_feedback.append(feedback_messages)
+        suffix = len(planner_feedback)
+        return {
+            "status": "planned",
+            "planner": "llm",
+            "risk_level": "low",
+            "pending_patch": {"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": f"校验重试-{suffix}"},
+            "questions": [],
+        }
+
+    def fake_dry_run_patch_to_project(project_path: str, pending_patch: dict[str, Any]) -> dict[str, Any]:
+        del project_path
+        dry_run_calls.append(pending_patch)
+        if len(dry_run_calls) == 1:
+            return {
+                "saved": False,
+                "valid": False,
+                "validation_report": {
+                    "issues": [{"code": "missing_wire_source", "message": "缺少上游源引用。", "node_id": "3a4c97e"}]
+                },
+                "diff": {"summary": {"modified_count": 1}},
+                "nodes": [],
+            }
+        return {
+            "saved": False,
+            "valid": True,
+            "validation_report": {"valid": True, "issues": []},
+            "diff": {"summary": {"modified_count": 1}},
+            "nodes": [],
+        }
+
+    monkeypatch.setattr("app.services.planner_execution.plan_patch_with_llm", fake_plan_patch_with_llm)
+    monkeypatch.setattr("app.services.planner_execution.dry_run_patch_to_project", fake_dry_run_patch_to_project)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/planner/dry-run",
+        json={
+            "message": "把节点改名并触发校验失败重试",
+            "project_path": metadata["version_path"],
+            "use_llm": True,
+            "llm_max_attempts": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "dry_run_valid"
+    assert len(dry_run_calls) == 2
+    assert "dry-run 校验未通过" in planner_feedback[1][-1]
+    assert data["planner_attempts"][0]["validation_error"].startswith("missing_wire_source")
 
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_INTEGRATION") != "1", reason="需要显式开启真实 LLM 集成验收。")

@@ -19,6 +19,7 @@ from app.services.knowledge import search_knowledge
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
 from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
 from app.services.planner import plan_patch_request
+from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.project_diff import ProjectDiffError, diff_project_versions
 from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
 from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_templates
@@ -38,6 +39,9 @@ class CreateSessionRequest(BaseModel):
     project_type: str | None = None
     auto_confirm_template: bool = False
     versions_dir: str | None = None
+    use_llm_planner: bool = False
+    llm_provider: str | None = None
+    llm_max_attempts: int = Field(default=2, ge=1, le=3)
 
 
 class MessageRequest(BaseModel):
@@ -46,6 +50,9 @@ class MessageRequest(BaseModel):
     selected_template_id: str | None = None
     auto_confirm_template: bool | None = None
     pending_patch: dict[str, Any] | None = None
+    use_llm_planner: bool | None = None
+    llm_provider: str | None = None
+    llm_max_attempts: int | None = Field(default=None, ge=1, le=3)
 
 
 class TemplateSearchRequest(BaseModel):
@@ -130,6 +137,9 @@ def create_session(request: CreateSessionRequest | None = None) -> dict[str, Any
         project_type=request.project_type,
         auto_confirm_template=request.auto_confirm_template,
         versions_dir=request.versions_dir,
+        use_llm_planner=request.use_llm_planner,
+        llm_provider=request.llm_provider,
+        llm_max_attempts=request.llm_max_attempts,
     )
     _session_store().save(thread_id, state)
     return {"thread_id": thread_id, "state": _public_state(state)}
@@ -150,6 +160,12 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
         state["auto_confirm_template"] = request.auto_confirm_template
     if request.pending_patch is not None:
         state["pending_patch"] = request.pending_patch
+    if request.use_llm_planner is not None:
+        state["use_llm_planner"] = request.use_llm_planner
+    if request.llm_provider is not None:
+        state["llm_provider"] = request.llm_provider
+    if request.llm_max_attempts is not None:
+        state["llm_max_attempts"] = request.llm_max_attempts
 
     try:
         next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
@@ -285,92 +301,19 @@ def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_pa
     if not request.message:
         raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
 
-    feedback_messages: list[str] = []
-    planner_attempts: list[dict[str, Any]] = []
-    last_error: str | None = None
-    planner_result: dict[str, Any] | None = None
-    pending_patch: dict[str, Any] | None = None
-
-    for attempt_index in range(request.llm_max_attempts):
-        try:
-            planner_result = plan_patch_with_llm(
-                request.message,
-                project_path=project_path,
-                template_id=request.template_id,
-                project_type=request.project_type,
-                provider=request.provider,
-                max_attempts=request.llm_max_attempts,
-                feedback_messages=feedback_messages,
-            )
-        except LLMPlannerError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        pending_patch = planner_result.get("pending_patch")
-        planner_attempts.append(
-            {
-                "attempt": attempt_index + 1,
-                "planner_status": planner_result.get("status"),
-                "risk_level": planner_result.get("risk_level"),
-                "operation_count": len(pending_patch.get("operations", [])) if isinstance(pending_patch, dict) else 0,
-            }
+    try:
+        return plan_patch_with_llm_dry_run_feedback(
+            request.message,
+            project_path=project_path,
+            template_id=request.template_id,
+            project_type=request.project_type,
+            provider=request.provider,
+            llm_max_attempts=request.llm_max_attempts,
         )
-        if not pending_patch:
-            return {
-                "status": "needs_clarification",
-                "planner_result": planner_result,
-                "pending_patch": None,
-                "dry_run": None,
-                "planner_attempts": planner_attempts,
-            }
-
-        try:
-            dry_run = dry_run_patch_to_project(project_path, pending_patch)
-        except PatchEngineError as exc:
-            last_error = str(exc)
-            feedback_messages.append(f"dry-run 执行失败：{last_error}")
-            planner_attempts[-1]["dry_run_error"] = last_error
-            continue
-
-        dry_run.pop("nodes", None)
-        if dry_run["valid"]:
-            return {
-                "status": "dry_run_valid",
-                "planner_result": planner_result,
-                "pending_patch": pending_patch,
-                "dry_run": dry_run,
-                "planner_attempts": planner_attempts,
-            }
-
-        last_error = _summarize_validation_failure(dry_run.get("validation_report"))
-        feedback_messages.append(f"dry-run 校验未通过：{last_error}")
-        planner_attempts[-1]["dry_run_valid"] = False
-        planner_attempts[-1]["validation_error"] = last_error
-
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "message": "LLM planner dry-run 重试后仍失败。",
-            "last_error": last_error,
-            "planner_attempts": planner_attempts,
-        },
-    )
-
-
-def _summarize_validation_failure(report: Any) -> str:
-    if not isinstance(report, dict):
-        return "缺少有效校验报告。"
-    issues = report.get("issues")
-    if not isinstance(issues, list) or not issues:
-        return "校验报告标记为无效，但未返回具体问题。"
-    summaries: list[str] = []
-    for issue in issues[:5]:
-        if not isinstance(issue, dict):
-            continue
-        code = issue.get("code", "unknown")
-        message = issue.get("message", "")
-        node_id = issue.get("node_id")
-        summaries.append(f"{code}: {message} node_id={node_id}")
-    return "；".join(summaries) if summaries else "校验报告中没有可读问题。"
+    except LLMPlannerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PlannerDryRunFeedbackError as exc:
+        raise HTTPException(status_code=400, detail=exc.payload) from exc
 
 
 @app.get("/api/projects/{project_id}/versions")
@@ -485,7 +428,15 @@ def _export_valid_project_file(target: Path) -> FileResponse:
     )
 
 
-def _empty_state(*, project_type: str | None, auto_confirm_template: bool, versions_dir: str | None = None) -> AgentState:
+def _empty_state(
+    *,
+    project_type: str | None,
+    auto_confirm_template: bool,
+    versions_dir: str | None = None,
+    use_llm_planner: bool = False,
+    llm_provider: str | None = None,
+    llm_max_attempts: int = 2,
+) -> AgentState:
     state: AgentState = {
         "messages": [],
         "project_type": project_type,
@@ -497,6 +448,8 @@ def _empty_state(*, project_type: str | None, auto_confirm_template: bool, versi
         "current_project_path": None,
         "pending_patch": None,
         "planner_result": None,
+        "planner_dry_run": None,
+        "planner_attempts": [],
         "patch_result": None,
         "validation_report": None,
         "status": "created",
@@ -504,6 +457,9 @@ def _empty_state(*, project_type: str | None, auto_confirm_template: bool, versi
         "error": None,
         "auto_confirm_template": auto_confirm_template,
         "project_created_in_current_run": False,
+        "use_llm_planner": use_llm_planner,
+        "llm_provider": llm_provider,
+        "llm_max_attempts": llm_max_attempts,
     }
     state["versions_dir"] = versions_dir or settings.project_versions_dir
     return state
@@ -547,10 +503,13 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "current_project_path": state.get("current_project_path"),
         "patch_result": state.get("patch_result"),
         "planner_result": state.get("planner_result"),
+        "planner_dry_run": state.get("planner_dry_run"),
+        "planner_attempts": state.get("planner_attempts", []),
         "validation_report": state.get("validation_report"),
         "status": state.get("status"),
         "next_action": state.get("next_action"),
         "error": state.get("error"),
+        "use_llm_planner": state.get("use_llm_planner", False),
     }
 
 

@@ -7,6 +7,8 @@ from app.graph.state import AgentState
 from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
 from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import plan_patch_request
+from app.services.llm_planner import LLMPlannerError
+from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
 from app.services.validator import validate_project
 
@@ -114,6 +116,9 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     if not project_path:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
+    if state.get("use_llm_planner"):
+        return _plan_patch_with_llm_node(state, project_path)
+
     result = plan_patch_request(
         _last_user_content(state),
         project_path=project_path,
@@ -129,6 +134,77 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
         }
     return {
         "planner_result": result,
+        "status": "awaiting_patch_clarification",
+        "next_action": "clarify_patch",
+    }
+
+
+def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str, Any]:
+    try:
+        result = plan_patch_with_llm_dry_run_feedback(
+            _last_user_content(state),
+            project_path=project_path,
+            template_id=state.get("selected_template_id"),
+            project_type=state.get("project_type"),
+            provider=state.get("llm_provider"),
+            llm_max_attempts=int(state.get("llm_max_attempts") or 2),
+        )
+    except LLMPlannerError as exc:
+        return {
+            "planner_result": {"status": "needs_clarification", "planner": "llm", "questions": [str(exc)]},
+            "pending_patch": None,
+            "planner_dry_run": None,
+            "planner_attempts": [],
+            "status": "awaiting_patch_clarification",
+            "next_action": "clarify_patch",
+        }
+    except PlannerDryRunFeedbackError as exc:
+        payload = exc.payload
+        last_error = str(payload.get("last_error") or payload.get("message") or exc)
+        planner_result = payload.get("planner_result")
+        if not isinstance(planner_result, dict):
+            planner_result = {
+                "status": "needs_clarification",
+                "planner": "llm",
+                "questions": [last_error],
+            }
+        elif not planner_result.get("questions"):
+            planner_result = {**planner_result, "questions": [last_error]}
+        return {
+            "planner_result": planner_result,
+            "pending_patch": None,
+            "planner_dry_run": None,
+            "planner_attempts": payload.get("planner_attempts", []),
+            "status": "awaiting_patch_clarification",
+            "next_action": "clarify_patch",
+            "error": last_error,
+        }
+
+    if result.get("status") == "dry_run_valid":
+        planner_result = result.get("planner_result")
+        risk_level = planner_result.get("risk_level") if isinstance(planner_result, dict) else None
+        if risk_level != "low":
+            return {
+                "planner_result": planner_result,
+                "pending_patch": None,
+                "planner_dry_run": result.get("dry_run"),
+                "planner_attempts": result.get("planner_attempts", []),
+                "status": "awaiting_patch_confirmation",
+                "next_action": "confirm_patch",
+            }
+        return {
+            "planner_result": planner_result,
+            "pending_patch": result.get("pending_patch"),
+            "planner_dry_run": result.get("dry_run"),
+            "planner_attempts": result.get("planner_attempts", []),
+            "status": "patch_planned",
+            "next_action": None,
+        }
+    return {
+        "planner_result": result.get("planner_result"),
+        "pending_patch": None,
+        "planner_dry_run": result.get("dry_run"),
+        "planner_attempts": result.get("planner_attempts", []),
         "status": "awaiting_patch_clarification",
         "next_action": "clarify_patch",
     }
@@ -286,6 +362,13 @@ def _build_assistant_summary(state: AgentState) -> str:
         planner_result = state.get("planner_result") or {}
         questions = planner_result.get("questions") or ["请补充修改目标。"]
         return "需要补充信息：" + "；".join(str(question) for question in questions)
+    if status == "awaiting_patch_confirmation":
+        planner_result = state.get("planner_result") or {}
+        risk_level = planner_result.get("risk_level", "unknown")
+        dry_run = state.get("planner_dry_run") or {}
+        diff = dry_run.get("diff") or {}
+        summary = diff.get("summary") or {}
+        return f"补丁 dry-run 已通过，风险等级 {risk_level}，影响节点 {summary.get('affected_node_count', 0)} 个，需要确认后再应用。"
     if status == "patch_applied":
         patch_result = state.get("patch_result") or {}
         changes = patch_result.get("changes") or []

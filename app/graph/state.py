@@ -14,6 +14,8 @@ class AgentState(TypedDict):
     current_project_path: str | None
     pending_patch: dict[str, Any] | None
     planner_result: dict[str, Any] | None
+    planner_dry_run: dict[str, Any] | None
+    planner_attempts: list[dict[str, Any]]
     patch_result: dict[str, Any] | None
     validation_report: dict[str, Any] | None
     status: str
@@ -22,6 +24,9 @@ class AgentState(TypedDict):
     auto_confirm_template: NotRequired[bool]
     versions_dir: NotRequired[str]
     project_created_in_current_run: NotRequired[bool]
+    use_llm_planner: NotRequired[bool]
+    llm_provider: NotRequired[str | None]
+    llm_max_attempts: NotRequired[int]
 
 
 def initial_state(message: str, *, project_type: str | None = None, auto_confirm_template: bool = False) -> AgentState:
@@ -36,6 +41,8 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "current_project_path": None,
         "pending_patch": None,
         "planner_result": None,
+        "planner_dry_run": None,
+        "planner_attempts": [],
         "patch_result": None,
         "validation_report": None,
         "status": "started",
@@ -43,4 +50,7 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "error": None,
         "auto_confirm_template": auto_confirm_template,
         "project_created_in_current_run": False,
+        "use_llm_planner": False,
+        "llm_provider": None,
+        "llm_max_attempts": 2,
     }
