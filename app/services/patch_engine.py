@@ -513,6 +513,7 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
     selected_set = set(block_node_ids)
     copied_nodes: list[dict[str, Any]] = []
     dropped_external_input_count = 0
+    detached_bacnet_object_count = 0
     for old_id in block_node_ids:
         copied = copy.deepcopy(source_by_id[old_id])
         copied["id"] = id_mapping[old_id]
@@ -523,6 +524,9 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
             copied["y"] = int(copied["y"]) + y_offset
         if name_prefix and isinstance(copied.get("name"), str) and copied["name"]:
             copied["name"] = f"{name_prefix}{copied['name']}"
+
+        if _detach_copied_bacnet_object(copied):
+            detached_bacnet_object_count += 1
 
         wires = copied.get("wires")
         if isinstance(wires, list):
@@ -552,9 +556,26 @@ def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
             "copied_node_count": len(copied_nodes),
             "id_mapping": id_mapping,
             "dropped_external_input_count": dropped_external_input_count,
+            "detached_bacnet_object_count": detached_bacnet_object_count,
             "external_connections": "dropped",
         }
     ]
+
+
+def _detach_copied_bacnet_object(node: dict[str, Any]) -> bool:
+    if node.get("bacnetVisible") is not True:
+        return False
+    if str(node.get("bacnetObjectType", "")).strip() == "OBJECT_DISABLED":
+        return False
+
+    # 复制功能块时不能隐式复用原工程的 BACnet 对象号，避免导出重复点位。
+    node["bacnetVisible"] = False
+    node["bacnetObjectType"] = "OBJECT_DISABLED"
+    node["bacnetObjectInstanceAuto"] = True
+    node["bacnetObjectInstance"] = 1
+    node["bacnetObjectPrefix"] = ""
+    node["bacnetObjectDescription"] = ""
+    return True
 
 
 def _connect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:

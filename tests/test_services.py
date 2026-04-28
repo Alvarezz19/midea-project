@@ -373,6 +373,166 @@ def test_validator_rejects_dynamic_port_inconsistency() -> None:
     assert "invalid_inputs_option" in codes
 
 
+def test_validator_rejects_schema_parameter_violations() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {
+            "id": "compare_bad_schema",
+            "type": "compare",
+            "z": "tab1",
+            "name": "非法比较",
+            "inputs": 1,
+            "outputs": 1,
+            "as": "bad-mode",
+            "inputAuxEnable": False,
+            "tripPoint": "不是数字",
+            "inputsCount": 3,
+            "unknownField": 1,
+            "wires": [[]],
+        },
+        {
+            "id": "pid_bad_schema",
+            "type": "pid",
+            "z": "tab1",
+            "name": "非法PID",
+            "inputs": 3,
+            "outputs": 1,
+            "pidMode": "direct",
+            "proportional": 1,
+            "integral": 1,
+            "derivative": 0,
+            "highPidOutLimit": 100,
+            "lowPidOutLimit": 0,
+            "interval": 0,
+            "deadBand": 0,
+            "disabledOutValue": "hold",
+            "inputsCount": 3,
+            "inputsOption": [],
+            "wires": [[], [], []],
+        },
+        {
+            "id": "mqtt_bad_schema",
+            "type": "mqttout",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 2,
+            "objectName": 123,
+            "wires": [[]],
+            "qos": 0,
+            "retained": 0,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "schema_unknown_field" in codes
+    assert "schema_invalid_type" in codes
+    assert "schema_invalid_enum" in codes
+    assert "schema_above_maximum" in codes
+    assert "schema_below_minimum" in codes
+    assert "schema_missing_required_param" in codes
+
+
+def test_validator_rejects_io_and_communication_conflicts() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "hw_in_1", "type": "hwInput", "z": "tab1", "hwExpander": "1", "hwChannelIndex": "2", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "hw_out_1", "type": "hwOutput", "z": "tab1", "hwExpander": 1, "hwChannelIndex": 2, "inputs": 1, "outputs": 1, "wires": [[]]},
+        {
+            "id": "modbus_1",
+            "type": "modbusOutput",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 1,
+            "modbusPort": "2",
+            "modbusTcpIPaddr": "",
+            "modbusTcpPort": 502,
+            "modbusAddress": 1,
+            "functionCode": 3,
+            "modbusRegAddr": "100",
+            "wires": [[]],
+        },
+        {
+            "id": "modbus_2",
+            "type": "modbusOutput",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 1,
+            "modbusPort": 2,
+            "modbusTcpIPaddr": "",
+            "modbusTcpPort": "502",
+            "modbusAddress": "1",
+            "functionCode": "3",
+            "modbusRegAddr": 100,
+            "wires": [[]],
+        },
+        {
+            "id": "bacnet_1",
+            "type": "hwInput",
+            "z": "tab1",
+            "hwExpander": 0,
+            "hwChannelIndex": 3,
+            "inputs": 0,
+            "outputs": 1,
+            "bacnetVisible": True,
+            "bacnetObjectType": "OBJECT_BINARY_INPUT",
+            "bacnetObjectInstance": "7",
+            "wires": [],
+        },
+        {
+            "id": "bacnet_2",
+            "type": "hwInput",
+            "z": "tab1",
+            "hwExpander": 0,
+            "hwChannelIndex": 4,
+            "inputs": 0,
+            "outputs": 1,
+            "bacnetVisible": True,
+            "bacnetObjectType": "OBJECT_BINARY_INPUT",
+            "bacnetObjectInstance": 7,
+            "wires": [],
+        },
+        {
+            "id": "bacip_1",
+            "type": "bacipOutput",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 1,
+            "bacnetIpDeviceInstance": 10,
+            "bacnetIpObjectType": "OBJECT_ANALOG_VALUE",
+            "bacnetIpObjectInstance": "20",
+            "wires": [[]],
+        },
+        {
+            "id": "bacip_2",
+            "type": "bacipOutput",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 1,
+            "bacnetIpDeviceInstance": "10",
+            "bacnetIpObjectType": "OBJECT_ANALOG_VALUE",
+            "bacnetIpObjectInstance": 20,
+            "wires": [[]],
+        },
+        {"id": "mqtt_1", "type": "mqttin", "z": "tab1", "topic": "ahu/data", "objectName": "SupplyFan", "inputs": 0, "outputs": 1, "wires": []},
+        {"id": "mqtt_2", "type": "mqttout", "z": "tab1", "topic": "ahu/cmd", "objectName": "SupplyFan", "inputs": 1, "outputs": 2, "wires": [[]]},
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "hardware_io_channel_conflict" in codes
+    assert "modbus_point_conflict" in codes
+    assert "bacnet_object_conflict" in codes
+    assert "bacip_point_conflict" in codes
+    assert "mqtt_object_name_conflict" in codes
+
+
 def test_patch_engine_dry_run_returns_diff_without_mutating_source() -> None:
     nodes = load_project(PLANT_TEMPLATE)
     original_name = find_nodes(nodes, {"id": "3a4c97e"})[0].get("name")
@@ -503,6 +663,29 @@ def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> Non
         "modified_count": 0,
         "affected_node_count": len(copied_ids),
     }
+
+
+def test_patch_engine_detaches_bacnet_objects_when_copying_block() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+
+    result = dry_run_patch(
+        nodes,
+        {
+            "op": "copy_block",
+            "block_id": "block_3f996bfafceb",
+            "target_tab_selector": {"label": "旁通阀控制"},
+            "x_offset": 80,
+            "y_offset": 80,
+            "name_prefix": "复制-",
+        },
+    )
+
+    assert result["valid"] is True
+    change = result["changes"][0]
+    assert change["detached_bacnet_object_count"] > 0
+    copied_ids = set(change["id_mapping"].values())
+    copied_nodes = [node for node in result["nodes"] if node.get("id") in copied_ids]
+    assert any(node.get("bacnetVisible") is False and node.get("bacnetObjectType") == "OBJECT_DISABLED" for node in copied_nodes)
 
 
 def test_patch_engine_generates_schema_node_with_array_defaults() -> None:
