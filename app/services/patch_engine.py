@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from app.services.json_project import find_nodes, get_tabs, load_project, save_project
+from app.services.retrieval import RetrievalError, get_block_by_id
 from app.services.schema_library import SchemaLibraryError, generate_nodes_from_schema
 from app.services.validator import validate_project
 
@@ -80,6 +81,8 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
             changes.extend(_add_comment(next_nodes, operation, index))
         elif op == "add_node_from_schema":
             changes.extend(_add_node_from_schema(next_nodes, operation, index))
+        elif op == "copy_block":
+            changes.extend(_copy_block(next_nodes, operation, index))
         elif op == "connect":
             changes.extend(_connect(next_nodes, operation, index))
         elif op == "disconnect":
@@ -465,6 +468,95 @@ def _add_node_from_schema(nodes: list[dict[str, Any]], operation: dict[str, Any]
     ]
 
 
+def _copy_block(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    block_id = operation.get("block_id") or operation.get("source_block_id")
+    if not isinstance(block_id, str) or not block_id.strip():
+        raise PatchEngineError("copy_block 需要 block_id。")
+
+    try:
+        block = get_block_by_id(block_id)
+    except RetrievalError as exc:
+        raise PatchEngineError(f"第 {op_index} 个操作指定的功能块不存在: {block_id}") from exc
+
+    source_path = block.get("source_path")
+    block_node_ids = block.get("node_ids")
+    if not isinstance(source_path, str) or not source_path:
+        raise PatchEngineError(f"功能块 {block_id} 缺少 source_path。")
+    if not isinstance(block_node_ids, list) or not all(isinstance(node_id, str) for node_id in block_node_ids):
+        raise PatchEngineError(f"功能块 {block_id} 缺少有效 node_ids。")
+    if not block_node_ids:
+        raise PatchEngineError(f"功能块 {block_id} 没有可复制节点。")
+
+    target_tab_id = _resolve_tab_id_for_field(nodes, operation, op_index, field="target_tab_selector", op_name="copy_block")
+    try:
+        source_nodes = load_project(source_path)
+    except ValueError as exc:
+        raise PatchEngineError(f"读取功能块源工程失败: {exc}") from exc
+
+    source_by_id = {node.get("id"): node for node in source_nodes if isinstance(node.get("id"), str)}
+    missing_ids = [node_id for node_id in block_node_ids if node_id not in source_by_id]
+    if missing_ids:
+        raise PatchEngineError(f"功能块 {block_id} 的节点在源工程中不存在: {missing_ids[:10]}")
+
+    x_offset = _resolve_int(operation.get("x_offset", operation.get("offset", {}).get("x", 80) if isinstance(operation.get("offset"), dict) else 80), "x_offset")
+    y_offset = _resolve_int(operation.get("y_offset", operation.get("offset", {}).get("y", 80) if isinstance(operation.get("offset"), dict) else 80), "y_offset")
+    name_prefix = operation.get("name_prefix", "")
+    if name_prefix is not None and not isinstance(name_prefix, str):
+        raise PatchEngineError("copy_block 的 name_prefix 必须是字符串。")
+
+    existing_ids = {node.get("id") for node in nodes if isinstance(node.get("id"), str)}
+    id_mapping: dict[str, str] = {}
+    for old_id in block_node_ids:
+        new_id = _new_node_id_with_reserved(existing_ids | set(id_mapping.values()))
+        id_mapping[old_id] = new_id
+
+    selected_set = set(block_node_ids)
+    copied_nodes: list[dict[str, Any]] = []
+    dropped_external_input_count = 0
+    for old_id in block_node_ids:
+        copied = copy.deepcopy(source_by_id[old_id])
+        copied["id"] = id_mapping[old_id]
+        copied["z"] = target_tab_id
+        if isinstance(copied.get("x"), int):
+            copied["x"] = int(copied["x"]) + x_offset
+        if isinstance(copied.get("y"), int):
+            copied["y"] = int(copied["y"]) + y_offset
+        if name_prefix and isinstance(copied.get("name"), str) and copied["name"]:
+            copied["name"] = f"{name_prefix}{copied['name']}"
+
+        wires = copied.get("wires")
+        if isinstance(wires, list):
+            new_wires: list[list[Any]] = []
+            for input_sources in wires:
+                if not isinstance(input_sources, list):
+                    new_wires.append([])
+                    continue
+                next_sources: list[Any] = []
+                for source in input_sources:
+                    source_id = _wire_ref_id(source)
+                    if source_id in selected_set:
+                        next_sources.append(_remap_wire_ref(source, id_mapping[source_id]))
+                    else:
+                        dropped_external_input_count += 1
+                new_wires.append(next_sources)
+            copied["wires"] = new_wires
+        copied_nodes.append(copied)
+
+    nodes.extend(copied_nodes)
+    return [
+        {
+            "op": "copy_block",
+            "block_id": block_id,
+            "source_path": source_path,
+            "target_tab_id": target_tab_id,
+            "copied_node_count": len(copied_nodes),
+            "id_mapping": id_mapping,
+            "dropped_external_input_count": dropped_external_input_count,
+            "external_connections": "dropped",
+        }
+    ]
+
+
 def _connect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
     source = _select_one(nodes, _required_selector(operation, "source_node_selector", "connect"), op_index)
     target = _select_one(nodes, _required_selector(operation, "target_node_selector", "connect"), op_index)
@@ -530,8 +622,12 @@ def _disconnect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
 
 
 def _resolve_tab_id(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> str:
+    return _resolve_tab_id_for_field(nodes, operation, op_index, field="tab_selector", op_name="add_comment")
+
+
+def _resolve_tab_id_for_field(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int, *, field: str, op_name: str) -> str:
     tabs = get_tabs(nodes)
-    tab_selector = operation.get("tab_selector")
+    tab_selector = operation.get(field)
     if isinstance(tab_selector, dict):
         if isinstance(tab_selector.get("id"), str):
             tab_id = tab_selector["id"]
@@ -556,7 +652,7 @@ def _resolve_tab_id(nodes: list[dict[str, Any]], operation: dict[str, Any], op_i
 
     if len(tabs) == 1:
         return next(iter(tabs))
-    raise PatchEngineError("add_comment 需要 tab_selector。")
+    raise PatchEngineError(f"{op_name} 需要 {field}。")
 
 
 def _required_selector(operation: dict[str, Any], field: str, op_name: str) -> dict[str, Any]:
@@ -569,6 +665,12 @@ def _required_selector(operation: dict[str, Any], field: str, op_name: str) -> d
 def _resolve_port_index(value: Any, field: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise PatchEngineError(f"{field} 必须是非负整数。")
+    return value
+
+
+def _resolve_int(value: Any, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise PatchEngineError(f"{field} 必须是整数。")
     return value
 
 
@@ -681,8 +783,22 @@ def _wire_ref_port(value: Any) -> int:
     return 0
 
 
+def _remap_wire_ref(value: Any, new_source_id: str) -> Any:
+    if isinstance(value, str):
+        return new_source_id
+    if isinstance(value, dict):
+        next_value = copy.deepcopy(value)
+        next_value["id"] = new_source_id
+        return next_value
+    return {"id": new_source_id, "port": 0}
+
+
 def _new_node_id(nodes: list[dict[str, Any]]) -> str:
     existing = {node.get("id") for node in nodes}
+    return _new_node_id_with_reserved(existing)
+
+
+def _new_node_id_with_reserved(existing: set[Any]) -> str:
     while True:
         node_id = uuid.uuid4().hex[:7]
         if node_id not in existing:

@@ -218,6 +218,41 @@ def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.
     assert result["pending_patch"] == {"operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}]}
 
 
+def test_llm_planner_accepts_copy_block_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_copy_block", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        assert "copy_block" in messages[0]["content"]
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "复制旁通阀控制功能块。",
+            "risk_level": "high",
+            "risk_reasons": ["复制局部子图，需要人工确认入口出口。"],
+            "required_context": [{"type": "block", "query": "旁通阀控制", "reason": "定位源功能块"}],
+            "operations": [
+                {
+                    "op": "copy_block",
+                    "block_id": "block_3f996bfafceb",
+                    "target_tab_selector": {"label": "旁通阀控制"},
+                    "x_offset": 80,
+                    "y_offset": 80,
+                    "name_prefix": "复制-",
+                }
+            ],
+            "validation_expectations": ["重写节点 id", "只保留内部连线", "不自动接外部线"],
+            "questions": [],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm("复制旁通阀控制功能块", project_path=metadata["version_path"])
+
+    assert result["status"] == "planned"
+    assert result["risk_level"] == "high"
+    assert result["pending_patch"]["operations"][0]["op"] == "copy_block"
+    assert result["pending_patch"]["operations"][0]["target_tab_selector"] == {"label": "旁通阀控制"}
+
+
 def test_llm_planner_rejects_unknown_operations(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_bad", versions_dir=tmp_path)
 

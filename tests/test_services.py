@@ -319,6 +319,60 @@ def test_patch_engine_enables_pid_dynamic_input_option() -> None:
     assert updated["wires"][-1] == []
 
 
+def test_validator_rejects_dynamic_port_inconsistency() -> None:
+    nodes = [
+        {"id": "tab1", "type": "tab", "label": "控制"},
+        {"id": "source", "type": "constInput", "z": "tab1", "inputs": 0, "outputs": 1, "wires": []},
+        {
+            "id": "compare_bad",
+            "type": "compare",
+            "z": "tab1",
+            "inputs": 1,
+            "outputs": 1,
+            "inputAuxEnable": True,
+            "wires": [[]],
+        },
+        {
+            "id": "pid_bad",
+            "type": "pid",
+            "z": "tab1",
+            "inputs": 3,
+            "outputs": 1,
+            "inputsCount": 3,
+            "inputsOption": ["highPidOutLimit"],
+            "wires": [[], [], []],
+        },
+        {
+            "id": "fuzzy_bad",
+            "type": "fuzzypid",
+            "z": "tab1",
+            "inputs": 4,
+            "outputs": 1,
+            "inputsOption": ["badOption"],
+            "wires": [[], [], [], []],
+        },
+        {
+            "id": "linear_bad",
+            "type": "linear",
+            "z": "tab1",
+            "inputs": 3,
+            "outputs": 1,
+            "inputD": False,
+            "outputD": True,
+            "wires": [[], [], []],
+        },
+    ]
+
+    report = validate_project(nodes)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert not report["valid"]
+    assert "dynamic_inputs_mismatch" in codes
+    assert "dynamic_inputs_count_mismatch" in codes
+    assert "dynamic_wires_inputs_mismatch" in codes
+    assert "invalid_inputs_option" in codes
+
+
 def test_patch_engine_dry_run_returns_diff_without_mutating_source() -> None:
     nodes = load_project(PLANT_TEMPLATE)
     original_name = find_nodes(nodes, {"id": "3a4c97e"})[0].get("name")
@@ -407,6 +461,50 @@ def test_patch_engine_adds_schema_node_and_updates_explicit_wires() -> None:
     assert validate_project(disconnected["nodes"])["valid"]
 
 
+def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+    block = search_blocks("排风机联动", template_id="ahu_5e351de94700", limit=1)[0]
+    original_ids = set(block["node_ids"])
+
+    result = dry_run_patch(
+        nodes,
+        {
+            "op": "copy_block",
+            "block_id": block["block_id"],
+            "target_tab_selector": {"label": "控制"},
+            "x_offset": 50,
+            "y_offset": 70,
+            "name_prefix": "复制-",
+        },
+    )
+
+    assert result["valid"] is True
+    assert result["changed"] is True
+    change = result["changes"][0]
+    assert change["op"] == "copy_block"
+    assert change["copied_node_count"] == len(original_ids)
+    assert set(change["id_mapping"]) == original_ids
+    assert not (set(change["id_mapping"].values()) & {node["id"] for node in nodes if isinstance(node.get("id"), str)})
+    assert change["external_connections"] == "dropped"
+
+    copied_ids = set(change["id_mapping"].values())
+    copied_nodes = [node for node in result["nodes"] if node.get("id") in copied_ids]
+    assert len(copied_nodes) == len(copied_ids)
+    assert {node.get("z") for node in copied_nodes} == {"6d209af"}
+    assert any(str(node.get("name", "")).startswith("复制-") for node in copied_nodes)
+    for node in copied_nodes:
+        for input_sources in node.get("wires", []):
+            for source in input_sources:
+                source_id = source.get("id") if isinstance(source, dict) else source
+                assert source_id in copied_ids
+    assert result["diff"]["summary"] == {
+        "added_count": len(copied_ids),
+        "removed_count": 0,
+        "modified_count": 0,
+        "affected_node_count": len(copied_ids),
+    }
+
+
 def test_patch_engine_generates_schema_node_with_array_defaults() -> None:
     nodes = load_project(AHU_TEMPLATE)
     result = apply_patch(
@@ -472,6 +570,9 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
                 "target_input": 99,
             },
         )
+
+    with pytest.raises(PatchEngineError, match="功能块不存在"):
+        apply_patch(nodes, {"op": "copy_block", "block_id": "missing-block", "target_tab_selector": {"label": "水泵控制"}})
 
 
 def test_index_files_are_parseable() -> None:

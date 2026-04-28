@@ -29,11 +29,12 @@
 - 新增 LLM Gateway，默认接入 DeepSeek API，并预留 OpenAI、Azure OpenAI、Anthropic 配置入口。
 - 支持使用 LLM 做结构化需求抽取，返回项目类型、设备、控制功能、通讯、保护逻辑、缺失字段和澄清问题。
 - 支持显式开启 LLM 结构化补丁规划，并立即进入 dry-run；LLM 只输出受 schema 约束的补丁意图，实际修改仍由 patch engine 执行。
-- 新增 LLM planner 评测样例，覆盖低/中风险补丁和目标不唯一追问。
+- 新增 LLM planner 评测样例，覆盖低/中风险补丁、组合补丁和目标不唯一追问。
 - LLM planner 支持失败反馈重试：schema 校验失败、dry-run 执行失败或校验失败时可把错误反馈给模型重新规划。
 - LangGraph 自然语言补丁规划节点可显式开启 LLM planner，并复用同一套重试、dry-run、校验和错误反馈机制；只有 low 风险计划自动应用，中高风险计划会先停在确认状态，确认后才创建新版本。
 - 手动结构化补丁中的 `add_node_from_schema`、`connect`、`disconnect`、疑似 IO/通讯字段修改等中高风险操作会先 dry-run 并等待确认，不会直接落盘。
 - `enable_dynamic_input` 会被识别为中风险结构变更，确认前只 dry-run，不创建新版本。
+- `copy_block` 第一版会被识别为高风险结构变更，只复制功能块内部节点和内部连线，重写节点 id，丢弃外部入口/出口连线，确认前只 dry-run。
 - 支持自然语言规划低风险修改：
   - 节点改名。
   - 替换常量、软件输入设定值或静态阈值。
@@ -47,6 +48,7 @@
   - `rename_node`
   - `add_comment`
   - `add_node_from_schema`
+  - `copy_block`
   - `connect`
   - `disconnect`
 - 支持 schema 驱动新增节点。
@@ -58,6 +60,7 @@
   - tab/subflow 引用。
   - wires 上游源引用。
   - inputs 与 wires 基础一致性。
+  - 动态端口一致性，包括 `inputAuxEnable`、`inputsOption`、`inputD`、`outputD`、`inputsCount` 和 `wires`。
   - 导出阻塞原因。
 - 提供 FastAPI API。
 - 提供 FastAPI 托管的前端工作台。
@@ -69,7 +72,6 @@
 
 以下能力仍在后续计划中：
 
-- `copy_block`
 - planner 自动组合“新增节点 + 连线”的多步补丁。
 - 全工程 schema 参数校验。
 - 局部流程图展示。
@@ -298,6 +300,21 @@ PID 等带选项的动态输入需要指定选项：
 }
 ```
 
+复制功能块：
+
+```json
+{
+  "op": "copy_block",
+  "block_id": "block_3f996bfafceb",
+  "target_tab_selector": {"label": "旁通阀控制"},
+  "x_offset": 80,
+  "y_offset": 80,
+  "name_prefix": "复制-"
+}
+```
+
+注意：`copy_block` 当前只复制功能块内部节点和内部连线，会重写所有复制节点 id，并丢弃所有外部入口/出口连线；复制后如需接入现有逻辑，必须用后续显式 `connect` 补丁表达。
+
 显式连线：
 
 ```json
@@ -333,7 +350,7 @@ pytest -q
 当前验收结果：
 
 ```text
-67 passed
+71 passed
 ```
 
 真实 LLM 验收需要本地 `.env` 配置 `DEEPSEEK_API_KEY`，并显式开启：
@@ -382,5 +399,5 @@ pytest -q
 优先用当前工作台跑真实样例，记录交互问题，再决定下一步：
 
 1. 增强前端工作台：补丁摘要、校验问题列表、JSON diff、模板确认体验。
-2. 增强后端局部子图能力：`copy_block`、`set_io_point`。
-3. 扩充 LLM planner 真实评测样例，并继续推进 `copy_block`、`set_io_point` 等阶段 5 补丁能力。
+2. 增强后端局部子图能力：`set_io_point` 和更完整的 `copy_block` 外部入口/出口接线辅助。
+3. 继续推进阶段 6 schema 参数校验、IO/通讯冲突和保护逻辑规则库。

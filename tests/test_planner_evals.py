@@ -17,9 +17,10 @@ EVALS_PATH = ROOT_DIR / "evals" / "patch_planning_cases.jsonl"
 
 def test_patch_planning_eval_cases_are_valid_and_dry_runnable() -> None:
     cases = load_eval_cases()
-    assert len(cases) >= 5
+    assert len(cases) >= 10
 
     case_ids: set[str] = set()
+    combo_case_count = 0
     for case in cases:
         case_id = require_str(case, "case_id")
         assert case_id not in case_ids
@@ -33,6 +34,8 @@ def test_patch_planning_eval_cases_are_valid_and_dry_runnable() -> None:
         assert plan.status == expected["status"], case_id
         assert plan.risk_level == expected["risk_level"], case_id
         assert [operation.op for operation in plan.operations] == expected["ops"], case_id
+        if expected["ops"] == ["add_node_from_schema", "enable_dynamic_input", "connect"]:
+            combo_case_count += 1
 
         if plan.status == "needs_clarification":
             assert plan.questions, case_id
@@ -45,6 +48,8 @@ def test_patch_planning_eval_cases_are_valid_and_dry_runnable() -> None:
         assert dry_run["valid"] is expected["dry_run_valid"], case_id
         for key, value in expected["diff_summary"].items():
             assert dry_run["diff"]["summary"][key] == value, case_id
+
+    assert combo_case_count >= 3
 
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_INTEGRATION") != "1", reason="需要显式开启真实 LLM 集成验收。")
@@ -82,7 +87,7 @@ def test_llm_planner_real_deepseek_returns_structured_dry_runnable_plan(tmp_path
         }
     )
     assert plan.operations
-    assert all(operation.op in {"update_param", "replace_constant", "enable_dynamic_input", "rename_node", "add_comment", "add_node_from_schema", "connect", "disconnect"} for operation in plan.operations)
+    assert all(operation.op in {"update_param", "replace_constant", "enable_dynamic_input", "rename_node", "add_comment", "add_node_from_schema", "copy_block", "connect", "disconnect"} for operation in plan.operations)
 
     dry_run = dry_run_patch_to_project(str(template_path), result["pending_patch"])
     assert dry_run["valid"]

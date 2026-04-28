@@ -21,6 +21,7 @@ PatchOp = Literal[
     "rename_node",
     "add_comment",
     "add_node_from_schema",
+    "copy_block",
     "connect",
     "disconnect",
 ]
@@ -54,6 +55,13 @@ class PlannedOperation(BaseModel):
     info: str | None = None
     schema_selector: dict[str, Any] | None = None
     module_type: str | None = None
+    block_id: str | None = None
+    source_block_id: str | None = None
+    target_tab_selector: dict[str, Any] | None = None
+    x_offset: int | None = None
+    y_offset: int | None = None
+    offset: dict[str, int] | None = None
+    name_prefix: str | None = None
     source_node_selector: dict[str, Any] | None = None
     target_node_selector: dict[str, Any] | None = None
     source_output: int | None = None
@@ -92,6 +100,23 @@ class PlannedOperation(BaseModel):
             if not isinstance(self.schema_selector, dict) and not _non_empty_string(self.module_type):
                 raise ValueError("add_node_from_schema 需要 schema_selector 或 module_type。")
             _require_dict(self.tab_selector, "add_node_from_schema.tab_selector")
+        elif self.op == "copy_block":
+            if not _non_empty_string(self.block_id) and not _non_empty_string(self.source_block_id):
+                raise ValueError("copy_block 需要 block_id。")
+            _require_dict(self.target_tab_selector, "copy_block.target_tab_selector")
+            if self.x_offset is not None:
+                _require_int(self.x_offset, "copy_block.x_offset")
+            if self.y_offset is not None:
+                _require_int(self.y_offset, "copy_block.y_offset")
+            if self.offset is not None:
+                if not isinstance(self.offset, dict):
+                    raise ValueError("copy_block.offset 必须是对象。")
+                if "x" in self.offset:
+                    _require_int(self.offset.get("x"), "copy_block.offset.x")
+                if "y" in self.offset:
+                    _require_int(self.offset.get("y"), "copy_block.offset.y")
+            if self.name_prefix is not None and not isinstance(self.name_prefix, str):
+                raise ValueError("copy_block.name_prefix 必须是字符串。")
         elif self.op == "connect":
             _require_dict(self.source_node_selector, "connect.source_node_selector")
             _require_dict(self.target_node_selector, "connect.target_node_selector")
@@ -159,8 +184,9 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 4. rename_node：需要 node_selector 和 new_name。
 5. add_comment：需要 tab_selector 和 text。
 6. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
-7. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
-8. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
+7. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix。只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
+8. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
+9. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
 
 选择器规则：
 1. 已知节点优先使用 {"id": "..."}。
@@ -168,10 +194,17 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 3. 禁止只用 {"type": "compare"} 这类明显不唯一的选择器。
 4. 无法唯一定位节点、页面、端口或参数时，status 必须是 needs_clarification，并提出具体追问。
 
+组合计划规则：
+1. 如果要把新增常量、设定值或传感器信号接入 compare/limit 的动态阈值端口，必须先 add_node_from_schema，再 enable_dynamic_input，最后 connect 到 target_input=1。
+2. 如果要把新增设定值接入 PID 参数动态端口，必须先 add_node_from_schema，再 enable_dynamic_input 并指定 input_option，最后 connect 到新增动态端口。
+3. 不要用 connect 隐式创建端口；端口数量变化必须显式表达为 enable_dynamic_input。
+4. copy_block 只能表达“复制局部功能块并暂不接外部线”；如果用户要求复制后自动接入现有 IO、保护、设备或通讯链路，必须先追问入口/出口和确认方式。
+
 风险规则：
 1. rename_node、update_param、replace_constant、add_comment 通常是 low。
 2. enable_dynamic_input、add_node_from_schema、connect、disconnect 至少是 medium。
-3. 删除、断线、修改 IO/通讯地址、修改设备数量、影响保护逻辑必须是 high；当前没有 delete/copy/set_io op，遇到这类需求应追问或说明需要人工确认。
+3. copy_block 至少是 high。
+4. 删除、断线、修改 IO/通讯地址、修改设备数量、影响保护逻辑必须是 high；当前没有 delete/set_io op，遇到这类需求应追问或说明需要人工确认。
 """
 
 
@@ -318,6 +351,11 @@ def _require_dict(value: Any, field: str) -> None:
 def _require_non_negative_int(value: Any, field: str) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"{field} 必须是非负整数。")
+
+
+def _require_int(value: Any, field: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field} 必须是整数。")
 
 
 def _truncate(value: str, limit: int = 500) -> str:
