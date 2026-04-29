@@ -429,6 +429,32 @@
   border-top: 1px solid rgba(216, 224, 228, 0.75);
 }
 
+.traceArtifacts {
+  margin: 12px 16px 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(216, 224, 228, 0.75);
+}
+
+.traceArtifactItem {
+  padding: 8px 0 !important;
+}
+
+.traceArtifactRows {
+  margin-top: 6px;
+}
+
+.traceArtifactRows :global(.ant-list-item) {
+  display: grid !important;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 0 !important;
+  border-bottom: 0 !important;
+}
+
+.traceArtifactRows :global(.ant-typography) {
+  overflow-wrap: anywhere;
+}
+
 .traceFeedbackItem {
   padding: 8px 0 !important;
 }
@@ -525,6 +551,22 @@
   padding: 7px 0 !important;
 }
 
+.metricsChartGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 16px;
+  padding-top: 2px;
+}
+
+.metricsChart {
+  height: 220px;
+  min-width: 0;
+  margin-top: 8px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
 @media (max-width: 680px) {
   .impactMetrics {
     grid-template-columns: 1fr;
@@ -553,6 +595,7 @@
 
   .metricsGrid,
   .metricsColumns,
+  .metricsChartGrid,
   .feedbackPanel {
     grid-template-columns: 1fr;
   }

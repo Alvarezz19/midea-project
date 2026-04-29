@@ -1,6 +1,12 @@
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Alert, Button, Drawer, Form, Input, List, Rate, Select, Skeleton, Space, Statistic, Tabs, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { BarChart, PieChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent } from 'echarts/components';
+import * as echarts from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import type { EChartsOption } from 'echarts';
 import { formatApiError, getMetricsSummary, listProjectFeedback, submitFeedback } from '../../api/client';
 import type { FeedbackResponse, ObservabilityMetrics } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
@@ -8,6 +14,8 @@ import panelStyles from '../../styles/panel.module.css';
 import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
 
 const { Text } = Typography;
+
+echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 export function BottomObservabilityDrawer() {
   const open = useWorkbenchStore((store) => store.bottomDrawerOpen);
@@ -255,8 +263,83 @@ function MetricsSummary({ metrics }: { metrics: ObservabilityMetrics }) {
           />
         </div>
       </div>
+      <MetricsCharts metrics={metrics} topTypes={topTypes} />
     </div>
   );
+}
+
+function MetricsCharts({ metrics, topTypes }: { metrics: ObservabilityMetrics; topTypes: Array<[string, number]> }) {
+  const statusRef = useRef<HTMLDivElement>(null);
+  const typeRef = useRef<HTMLDivElement>(null);
+  const statusOptions = useMemo<EChartsOption>(
+    () => ({
+      tooltip: { trigger: 'item' },
+      color: ['#20704A', '#A53232', '#A55C00', '#0098D1', '#66737C'],
+      series: [
+        {
+          type: 'pie',
+          radius: ['48%', '72%'],
+          avoidLabelOverlap: true,
+          label: { formatter: '{b}: {c}' },
+          data: Object.entries(metrics.eventsByStatus).map(([name, value]) => ({ name, value }))
+        }
+      ]
+    }),
+    [metrics.eventsByStatus]
+  );
+  const typeOptions = useMemo<EChartsOption>(
+    () => ({
+      grid: { top: 8, right: 16, bottom: 28, left: 130 },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      color: ['#0098D1'],
+      xAxis: { type: 'value', minInterval: 1 },
+      yAxis: {
+        type: 'category',
+        data: [...topTypes].reverse().map(([type]) => type),
+        axisLabel: { width: 118, overflow: 'truncate' }
+      },
+      series: [
+        {
+          type: 'bar',
+          data: [...topTypes].reverse().map(([, value]) => value),
+          barMaxWidth: 18
+        }
+      ]
+    }),
+    [topTypes]
+  );
+
+  useEChart(statusRef, statusOptions);
+  useEChart(typeRef, typeOptions);
+
+  return (
+    <div className={panelStyles.metricsChartGrid}>
+      <div>
+        <Text strong>事件状态图</Text>
+        <div ref={statusRef} className={panelStyles.metricsChart} role="img" aria-label="事件状态分布图" />
+      </div>
+      <div>
+        <Text strong>高频事件图</Text>
+        <div ref={typeRef} className={panelStyles.metricsChart} role="img" aria-label="高频事件柱状图" />
+      </div>
+    </div>
+  );
+}
+
+function useEChart(ref: RefObject<HTMLDivElement | null>, option: EChartsOption): void {
+  useEffect(() => {
+    if (!ref.current) {
+      return;
+    }
+    const chart = echarts.init(ref.current);
+    chart.setOption(option);
+    const resize = () => chart.resize();
+    window.addEventListener('resize', resize);
+    return () => {
+      window.removeEventListener('resize', resize);
+      chart.dispose();
+    };
+  }, [option, ref]);
 }
 
 function formatMetricDuration(value: number): string {

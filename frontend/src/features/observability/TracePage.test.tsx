@@ -69,12 +69,45 @@ describe('TracePage', () => {
                 thread_id: 'thread_1',
                 project_id: 'project_1',
                 version_id: 'v_1',
+                event_type: 'workflow.dry_run.completed',
+                step: 'dry_run',
+                status: 'completed',
+                message: '补丁 dry-run 已完成',
+                payload: {
+                  dry_run: {
+                    valid: true,
+                    change_count: 1,
+                    diff_summary: { added_count: 0, removed_count: 0, modified_count: 1, affected_node_count: 1 },
+                    validation_summary: { valid: true, exportable: true, error_count: 0, warning_count: 0 }
+                  }
+                },
+                created_at: '2026-04-29T08:00:02Z'
+              },
+              {
+                event_id: 'evt_3',
+                trace_id: 'trace_1',
+                thread_id: 'thread_1',
+                project_id: 'project_1',
+                version_id: 'v_1',
                 event_type: 'workflow.validation.completed',
                 step: 'validation',
                 status: 'completed',
                 message: '工程校验已完成',
                 payload: { validation_summary: { valid: true, exportable: true, error_count: 0 } },
                 created_at: '2026-04-29T08:00:03Z'
+              },
+              {
+                event_id: 'evt_4',
+                trace_id: 'trace_1',
+                thread_id: 'thread_1',
+                project_id: 'project_1',
+                version_id: 'v_1',
+                event_type: 'api.export.completed',
+                step: 'export',
+                status: 'completed',
+                message: '工程导出已通过校验',
+                payload: { validation_summary: { valid: true, exportable: true, error_count: 0, warning_count: 0 } },
+                created_at: '2026-04-29T08:00:04Z'
               }
             ]
           }),
@@ -99,7 +132,11 @@ describe('TracePage', () => {
     expect(screen.getByText('把 AHU 送风温度设定值改成 24 度')).toBeInTheDocument();
     expect(screen.getByText('结构化需求分析已完成')).toBeInTheDocument();
     expect(screen.getByText('workflow.validation.completed')).toBeInTheDocument();
-    expect(screen.getByText('validation_summary')).toBeInTheDocument();
+    expect(screen.getAllByText('validation_summary').length).toBeGreaterThan(0);
+    expect(screen.getByText('关键产物')).toBeInTheDocument();
+    expect(screen.getByText('计划 / dry-run')).toBeInTheDocument();
+    expect(screen.getByText('导出')).toBeInTheDocument();
+    expect(screen.getByText(/新增 0 \/ 删除 0 \/ 修改 1 \/ 影响 1/)).toBeInTheDocument();
     expect(screen.getByText('llm_planner')).toBeInTheDocument();
     expect(screen.getByText(/deepseek\/deepseek-chat/)).toBeInTheDocument();
     expect(screen.getByText('120 in')).toBeInTheDocument();

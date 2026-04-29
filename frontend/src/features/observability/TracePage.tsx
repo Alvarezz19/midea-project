@@ -85,6 +85,7 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
           <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>{trace.root_input || '无输入记录'}</Paragraph>
         </div>
         {llmCalls.length ? <LlmCallList calls={llmCalls} /> : null}
+        <TraceArtifactSummary events={events} />
         {feedback.length ? <FeedbackList feedback={feedback} /> : null}
       </section>
 
@@ -97,6 +98,44 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
         </div>
         {events.length ? <TraceTimeline events={events} /> : <Empty className={panelStyles.traceEmpty} description="暂无事件" />}
       </section>
+    </div>
+  );
+}
+
+function TraceArtifactSummary({ events }: { events: WorkflowEvent[] }) {
+  const artifacts = traceArtifacts(events);
+  if (!artifacts.length) {
+    return null;
+  }
+  return (
+    <div className={panelStyles.traceArtifacts}>
+      <Text strong>关键产物</Text>
+      <List
+        size="small"
+        dataSource={artifacts}
+        renderItem={(artifact) => (
+          <List.Item className={panelStyles.traceArtifactItem}>
+            <div>
+              <Space size={6} wrap>
+                <Tag color={artifact.color}>{artifact.label}</Tag>
+                <Tag color={artifact.status === 'failed' || artifact.status === 'error' ? 'error' : 'default'}>{artifact.status}</Tag>
+                <Text type="secondary">{formatDateTime(artifact.createdAt)}</Text>
+              </Space>
+              <List
+                size="small"
+                className={panelStyles.traceArtifactRows}
+                dataSource={artifact.rows}
+                renderItem={(row) => (
+                  <List.Item>
+                    <Text type="secondary">{row.label}</Text>
+                    <Text>{row.value}</Text>
+                  </List.Item>
+                )}
+              />
+            </div>
+          </List.Item>
+        )}
+      />
     </div>
   );
 }
@@ -209,6 +248,129 @@ function TraceSkeleton() {
       </section>
     </div>
   );
+}
+
+interface TraceArtifact {
+  key: string;
+  label: string;
+  color: string;
+  status: string;
+  createdAt?: string | null;
+  rows: Array<{ label: string; value: string }>;
+}
+
+function traceArtifacts(events: WorkflowEvent[]): TraceArtifact[] {
+  const artifacts: TraceArtifact[] = [];
+  for (const event of events) {
+    const rows = artifactRows(event);
+    if (!rows.length) {
+      continue;
+    }
+    const label = artifactLabel(event.event_type);
+    if (!label) {
+      continue;
+    }
+    artifacts.push({
+      key: event.event_id,
+      label,
+      color: artifactColor(event.event_type),
+      status: event.status ?? 'unknown',
+      createdAt: event.created_at,
+      rows
+    });
+  }
+  return artifacts.slice(-8).reverse();
+}
+
+function artifactLabel(eventType: string): string | null {
+  if (eventType.includes('planner') || eventType.includes('dry_run')) return '计划 / dry-run';
+  if (eventType.includes('patch') || eventType.includes('version.created')) return '补丁 / 版本';
+  if (eventType.includes('validation')) return '校验';
+  if (eventType.includes('export')) return '导出';
+  return null;
+}
+
+function artifactColor(eventType: string): string {
+  if (eventType.includes('export')) return 'cyan';
+  if (eventType.includes('validation')) return 'green';
+  if (eventType.includes('patch') || eventType.includes('version')) return 'orange';
+  return 'blue';
+}
+
+function artifactRows(event: WorkflowEvent): Array<{ label: string; value: string }> {
+  const payload = event.payload ?? {};
+  const rows: Array<{ label: string; value: string }> = [];
+  const plannerResult = asRecord(payload.planner_result) ?? asRecord(payload.planner);
+  const dryRun = asRecord(payload.dry_run);
+  const patchResult = asRecord(payload.patch_result);
+  const validation = asRecord(payload.validation_summary) ?? asRecord(dryRun?.validation_summary);
+  const project = asRecord(payload.project);
+
+  if (plannerResult) {
+    pushRow(rows, '规划器', compactJoin([plannerResult.planner, plannerResult.status, plannerResult.risk_level]));
+    pushRow(rows, '操作数', plannerResult.operation_count);
+  }
+  pushRow(rows, '操作数', payload.operation_count);
+  if (dryRun) {
+    pushRow(rows, 'dry-run', dryRun.valid === false ? '未通过' : dryRun.valid === true ? '通过' : undefined);
+    pushRow(rows, '变更数', dryRun.change_count);
+    pushRow(rows, 'diff', formatDiffSummary(asRecord(dryRun.diff_summary)));
+  }
+  if (patchResult) {
+    pushRow(rows, '补丁变更', patchResult.change_count);
+    pushRow(rows, 'diff', formatDiffSummary(asRecord(patchResult.diff_summary)));
+  }
+  if (validation) {
+    pushRow(rows, '校验', formatValidationSummary(validation));
+    pushRow(rows, '导出阻塞', formatBlockedReasons(validation.blocked_export_reasons));
+  }
+  pushRow(rows, '项目', compactJoin([project?.project_id ?? payload.project_id ?? event.project_id, project?.version_id ?? payload.version_id ?? event.version_id]));
+  return rows.slice(0, 7);
+}
+
+function pushRow(rows: Array<{ label: string; value: string }>, label: string, value: unknown): void {
+  if (value === undefined || value === null || value === '') {
+    return;
+  }
+  const text = typeof value === 'string' ? value : String(value);
+  if (!text) {
+    return;
+  }
+  rows.push({ label, value: text });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function compactJoin(values: unknown[]): string {
+  return values.filter((value) => value !== undefined && value !== null && value !== '').map(String).join(' / ');
+}
+
+function formatDiffSummary(summary: Record<string, unknown> | null): string | undefined {
+  if (!summary) {
+    return undefined;
+  }
+  return compactJoin([
+    `新增 ${numberText(summary.added_count)}`,
+    `删除 ${numberText(summary.removed_count)}`,
+    `修改 ${numberText(summary.modified_count)}`,
+    `影响 ${numberText(summary.affected_node_count)}`
+  ]);
+}
+
+function formatValidationSummary(summary: Record<string, unknown>): string {
+  const status = summary.valid === false ? '未通过' : '通过';
+  const exportable = summary.exportable === false ? '不可导出' : '可导出';
+  return `${status}，${exportable}，error ${numberText(summary.error_count)}，warning ${numberText(summary.warning_count)}`;
+}
+
+function formatBlockedReasons(value: unknown): string | undefined {
+  return Array.isArray(value) && value.length ? value.map(String).join('；') : undefined;
+}
+
+function numberText(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '0';
 }
 
 function payloadRows(payload?: Record<string, unknown> | null): Array<{ label: string; value: string }> {

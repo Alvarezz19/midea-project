@@ -1561,7 +1561,11 @@ def _operation_count(patch: Any) -> int:
     if not isinstance(patch, dict):
         return 0
     operations = patch.get("operations")
-    return len(operations) if isinstance(operations, list) else 0
+    if isinstance(operations, list):
+        return len(operations)
+    if patch.get("op"):
+        return 1
+    return 0
 
 
 _WORKFLOW_STEP_NAMES = {
