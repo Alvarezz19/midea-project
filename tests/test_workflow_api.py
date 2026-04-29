@@ -584,6 +584,7 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert "midea_workflow_events_total" in metrics.text
     assert "midea_trace_duration_ms_p95" in metrics.text
     assert 'midea_workflow_events_by_status_total{status="completed"}' in metrics.text
+    assert "midea_llm_input_tokens_total" in metrics.text
 
     validate = client.post("/api/projects/validate", json={"path": state["current_project_path"]})
     assert validate.status_code == 200
@@ -616,6 +617,51 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     plan_trace = client.get(f"/api/traces/{plan.json()['trace_id']}")
     assert plan_trace.status_code == 200
     assert any(item["event_type"] == "api.planner.plan.completed" for item in plan_trace.json()["events"])
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "改名比较节点",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "rename_node",
+                    "node_selector": {"id": plan_node["node_id"]},
+                    "new_name": "API LLM规划-比较节点",
+                }
+            ],
+            "validation_expectations": ["dry-run 通过"],
+            "questions": [],
+            "_llm_meta": {
+                "provider": provider or "deepseek",
+                "model": "deepseek-chat",
+                "latency_ms": 123.4,
+                "usage": {"prompt_tokens": 120, "completion_tokens": 34, "total_tokens": 154},
+            },
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    llm_plan = client.post(
+        "/api/planner/plan",
+        json={
+            "message": f"把节点 {plan_node['node_id']} 改名为 API LLM规划-比较节点",
+            "project_path": state["current_project_path"],
+            "template_id": candidate["template_id"],
+            "project_type": state["project_type"],
+            "use_llm": True,
+            "provider": "deepseek",
+        },
+    )
+    assert llm_plan.status_code == 200
+    llm_trace = client.get(f"/api/traces/{llm_plan.json()['trace_id']}")
+    assert llm_trace.status_code == 200
+    llm_calls = llm_trace.json()["llm_calls"]
+    assert llm_calls[0]["provider"] == "deepseek"
+    assert llm_calls[0]["prompt_name"] == "llm_planner"
+    assert llm_calls[0]["input_tokens"] == 120
 
     dry_run = client.post(
         "/api/planner/dry-run",

@@ -277,6 +277,8 @@ def plan_patch_with_llm(
             raise LLMPlannerError(str(exc)) from exc
 
         meta = raw_result.pop("_llm_meta", None)
+        if isinstance(meta, dict):
+            meta.setdefault("prompt_name", "llm_planner")
         try:
             plan = StructuredPatchPlan.model_validate(raw_result)
             break

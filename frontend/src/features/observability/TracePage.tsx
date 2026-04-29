@@ -51,6 +51,7 @@ export function TracePage() {
 
 function TraceDetail({ trace }: { trace: AgentTrace }) {
   const events = trace.events ?? [];
+  const llmCalls = trace.llm_calls ?? [];
   const failedEvents = events.filter((event) => event.status === 'failed' || event.status === 'error');
   const llmEvents = events.filter((event) => event.event_type.startsWith('llm.'));
   const durationMs = elapsedMs(trace.started_at, trace.finished_at);
@@ -67,7 +68,7 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
         <div className={panelStyles.traceStats}>
           <Statistic title="事件数" value={events.length} prefix={<FieldTimeOutlined />} />
           <Statistic title="失败事件" value={failedEvents.length} prefix={failedEvents.length ? <CloseCircleOutlined /> : <CheckCircleOutlined />} />
-          <Statistic title="LLM 调用" value={llmEvents.length} prefix={<CodeOutlined />} />
+          <Statistic title="LLM 调用" value={llmCalls.length || llmEvents.length} prefix={<CodeOutlined />} />
           <Statistic title="耗时" value={durationMs === null ? '--' : formatDuration(durationMs)} prefix={<ClockCircleOutlined />} />
         </div>
         <Descriptions size="small" column={1} className={panelStyles.traceDescriptions}>
@@ -82,6 +83,7 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
           <Text type="secondary">用户输入</Text>
           <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>{trace.root_input || '无输入记录'}</Paragraph>
         </div>
+        {llmCalls.length ? <LlmCallList calls={llmCalls} /> : null}
       </section>
 
       <section className={`${panelStyles.panel} ${panelStyles.traceTimelinePanel}`}>
@@ -93,6 +95,36 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
         </div>
         {events.length ? <TraceTimeline events={events} /> : <Empty className={panelStyles.traceEmpty} description="暂无事件" />}
       </section>
+    </div>
+  );
+}
+
+function LlmCallList({ calls }: { calls: NonNullable<AgentTrace['llm_calls']> }) {
+  return (
+    <div className={panelStyles.traceLlmCalls}>
+      <Text strong>LLM 调用</Text>
+      <List
+        size="small"
+        dataSource={calls}
+        renderItem={(call) => (
+          <List.Item className={panelStyles.traceLlmCallItem}>
+            <div>
+              <Text>{call.prompt_name || 'unknown'}</Text>
+              <div>
+                <Text type="secondary">
+                  {call.provider}/{call.model} · attempt {call.attempt} · {formatDuration(call.latency_ms || 0)}
+                </Text>
+              </div>
+              {call.error ? <Text type="danger">{call.error}</Text> : null}
+            </div>
+            <Space size={4} wrap>
+              <Tag color={call.status === 'failed' ? 'error' : 'success'}>{call.status}</Tag>
+              <Tag>{call.input_tokens ?? 0} in</Tag>
+              <Tag>{call.output_tokens ?? 0} out</Tag>
+            </Space>
+          </List.Item>
+        )}
+      />
     </div>
   );
 }

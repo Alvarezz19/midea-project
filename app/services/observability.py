@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,7 @@ class FileObservabilityStore:
             "error": None,
             "metadata": metadata or {},
             "events": [],
+            "llm_calls": [],
         }
         self._write_trace(trace)
         return trace
@@ -171,6 +173,42 @@ class FileObservabilityStore:
         self._append_jsonl(self.feedback_path, item)
         return item
 
+    def record_llm_call(
+        self,
+        *,
+        trace_id: str,
+        provider: str,
+        model: str,
+        prompt_name: str,
+        attempt: int = 1,
+        latency_ms: int = 0,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        estimated_cost: float | None = None,
+        status: str = "completed",
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        item = _llm_call_item(
+            trace_id=trace_id,
+            provider=provider,
+            model=model,
+            prompt_name=prompt_name,
+            attempt=attempt,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost=estimated_cost,
+            status=status,
+            error=error,
+        )
+        trace = self.get_trace(trace_id)
+        if trace is not None:
+            calls = trace.setdefault("llm_calls", [])
+            if isinstance(calls, list):
+                calls.append(item)
+            self._write_trace(trace)
+        return item
+
     def metrics_text(self) -> str:
         traces: list[dict[str, Any]] = []
         if self.traces_dir.exists():
@@ -187,7 +225,12 @@ class FileObservabilityStore:
             for path in self.events_dir.glob("*.jsonl"):
                 events.extend(self._read_jsonl(path))
         feedback_count = len(self.feedback_path.read_text(encoding="utf-8").splitlines()) if self.feedback_path.exists() else 0
-        return _metrics_text_from_items(events, traces, feedback_count)
+        llm_calls: list[dict[str, Any]] = []
+        for trace in traces:
+            calls = trace.get("llm_calls")
+            if isinstance(calls, list):
+                llm_calls.extend(item for item in calls if isinstance(item, dict))
+        return _metrics_text_from_items(events, traces, feedback_count, llm_calls)
 
     def _events_path(self, thread_id: str) -> Path:
         _validate_public_id(thread_id, "thread_id")
@@ -360,10 +403,15 @@ class PostgresObservabilityStore:
                 "SELECT * FROM workflow_events WHERE trace_id = %s ORDER BY created_at, event_id",
                 (trace_id,),
             ).fetchall()
+            llm_calls = conn.execute(
+                "SELECT * FROM llm_call_records WHERE trace_id = %s ORDER BY created_at, attempt, id",
+                (trace_id,),
+            ).fetchall()
         if trace is None:
             return None
         item = _row_to_public_dict(trace)
         item["events"] = [_row_to_public_dict(row) for row in events]
+        item["llm_calls"] = [_row_to_public_dict(row) for row in llm_calls]
         return item
 
     def list_project_traces(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -416,6 +464,62 @@ class PostgresObservabilityStore:
             "created_at": utc_now_iso(),
         }
 
+    def record_llm_call(
+        self,
+        *,
+        trace_id: str,
+        provider: str,
+        model: str,
+        prompt_name: str,
+        attempt: int = 1,
+        latency_ms: int = 0,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        estimated_cost: float | None = None,
+        status: str = "completed",
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        from app.services.postgres_runtime import _connect
+
+        item = _llm_call_item(
+            trace_id=trace_id,
+            provider=provider,
+            model=model,
+            prompt_name=prompt_name,
+            attempt=attempt,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost=estimated_cost,
+            status=status,
+            error=error,
+        )
+        with _connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO llm_call_records (
+                    trace_id, provider, model, prompt_name, attempt, latency_ms,
+                    input_tokens, output_tokens, estimated_cost, status, error
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    trace_id,
+                    item["provider"],
+                    item["model"],
+                    item["prompt_name"],
+                    item["attempt"],
+                    item["latency_ms"],
+                    item["input_tokens"],
+                    item["output_tokens"],
+                    item["estimated_cost"],
+                    item["status"],
+                    item["error"],
+                ),
+            ).fetchone()
+        return _row_to_public_dict(row)
+
     def metrics_text(self) -> str:
         from app.services.postgres_runtime import _connect
 
@@ -423,10 +527,12 @@ class PostgresObservabilityStore:
             feedback_count = conn.execute("SELECT count(*) AS count FROM user_feedback").fetchone()["count"]
             event_rows = conn.execute("SELECT * FROM workflow_events").fetchall()
             trace_rows = conn.execute("SELECT * FROM agent_traces").fetchall()
+            llm_rows = conn.execute("SELECT * FROM llm_call_records").fetchall()
         return _metrics_text_from_items(
             [_row_to_public_dict(row) for row in event_rows],
             [_row_to_public_dict(row) for row in trace_rows],
             int(feedback_count),
+            [_row_to_public_dict(row) for row in llm_rows],
         )
 
 
@@ -438,15 +544,57 @@ def _validate_public_id(value: str, name: str) -> None:
 def _row_to_public_dict(row: dict[str, Any]) -> dict[str, Any]:
     item: dict[str, Any] = {}
     for key, value in row.items():
-        item[key] = value.isoformat() if hasattr(value, "isoformat") else value
+        if hasattr(value, "isoformat"):
+            item[key] = value.isoformat()
+        elif isinstance(value, uuid.UUID):
+            item[key] = str(value)
+        elif isinstance(value, Decimal):
+            item[key] = float(value)
+        else:
+            item[key] = value
     return item
 
 
-def _metrics_text_from_items(events: list[dict[str, Any]], traces: list[dict[str, Any]], feedback_count: int) -> str:
+def _llm_call_item(
+    *,
+    trace_id: str,
+    provider: str,
+    model: str,
+    prompt_name: str,
+    attempt: int,
+    latency_ms: int,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    estimated_cost: float | None,
+    status: str,
+    error: str | None,
+) -> dict[str, Any]:
+    return {
+        "llm_call_id": f"llm_{uuid.uuid4().hex}",
+        "trace_id": trace_id,
+        "provider": provider or "unknown",
+        "model": model or "unknown",
+        "prompt_name": prompt_name or "unknown",
+        "attempt": max(1, int(attempt or 1)),
+        "latency_ms": max(0, int(latency_ms or 0)),
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+        "estimated_cost": float(estimated_cost or 0),
+        "status": status if status in {"completed", "failed"} else "failed",
+        "error": error,
+        "created_at": utc_now_iso(),
+    }
+
+
+def _metrics_text_from_items(
+    events: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    feedback_count: int,
+    llm_calls: list[dict[str, Any]],
+) -> str:
     event_status_counts = _count_by(events, "status")
     event_type_counts = _count_by(events, "event_type")
     failed_trace_count = sum(1 for item in traces if item.get("status") in {"failed", "error"})
-    llm_events = [item for item in events if str(item.get("event_type") or "").startswith("llm.")]
     export_events = [item for item in events if "export" in str(item.get("event_type") or "")]
     durations = [_trace_duration_ms(item) for item in traces]
     durations = [item for item in durations if item is not None]
@@ -469,10 +617,19 @@ def _metrics_text_from_items(events: list[dict[str, Any]], traces: list[dict[str
         f"midea_user_feedback_total {feedback_count}",
         "# HELP midea_llm_calls_total LLM 调用事件总数",
         "# TYPE midea_llm_calls_total counter",
-        f"midea_llm_calls_total {len(llm_events)}",
+        f"midea_llm_calls_total {len(llm_calls)}",
         "# HELP midea_llm_calls_failed_total LLM 调用失败事件总数",
         "# TYPE midea_llm_calls_failed_total counter",
-        f"midea_llm_calls_failed_total {sum(1 for item in llm_events if item.get('status') in {'failed', 'error'})}",
+        f"midea_llm_calls_failed_total {sum(1 for item in llm_calls if item.get('status') == 'failed')}",
+        "# HELP midea_llm_input_tokens_total LLM 输入 token 总数",
+        "# TYPE midea_llm_input_tokens_total counter",
+        f"midea_llm_input_tokens_total {sum(int(item.get('input_tokens') or 0) for item in llm_calls)}",
+        "# HELP midea_llm_output_tokens_total LLM 输出 token 总数",
+        "# TYPE midea_llm_output_tokens_total counter",
+        f"midea_llm_output_tokens_total {sum(int(item.get('output_tokens') or 0) for item in llm_calls)}",
+        "# HELP midea_llm_estimated_cost_total LLM 估算成本总额",
+        "# TYPE midea_llm_estimated_cost_total counter",
+        f"midea_llm_estimated_cost_total {sum(float(item.get('estimated_cost') or 0) for item in llm_calls):.6f}",
         "# HELP midea_project_exports_total 导出事件总数",
         "# TYPE midea_project_exports_total counter",
         f"midea_project_exports_total {len(export_events)}",

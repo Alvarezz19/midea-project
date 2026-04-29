@@ -155,6 +155,9 @@ describe('api client', () => {
         'midea_user_feedback_total 2',
         'midea_llm_calls_total 4',
         'midea_llm_calls_failed_total 1',
+        'midea_llm_input_tokens_total 240',
+        'midea_llm_output_tokens_total 120',
+        'midea_llm_estimated_cost_total 0.012000',
         'midea_project_exports_total 2',
         'midea_project_exports_failed_total 1',
         'midea_workflow_events_by_status_total{status="completed"} 6',
@@ -166,6 +169,8 @@ describe('api client', () => {
     expect(metrics.workflowEventsTotal).toBe(8);
     expect(metrics.failedTracesTotal).toBe(1);
     expect(metrics.traceDurationP95Ms).toBe(1530.5);
+    expect(metrics.llmInputTokensTotal).toBe(240);
+    expect(metrics.llmEstimatedCostTotal).toBe(0.012);
     expect(metrics.eventsByStatus.completed).toBe(6);
     expect(metrics.eventsByType['api.export.completed']).toBe(1);
   });

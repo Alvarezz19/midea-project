@@ -77,6 +77,8 @@ def extract_requirement_with_llm(message: str, *, provider: str | None = None) -
         raise RequirementExtractionError(str(exc)) from exc
 
     meta = result.pop("_llm_meta", None)
+    if isinstance(meta, dict):
+        meta.setdefault("prompt_name", "requirement_extractor")
     try:
         extracted = ExtractedRequirement.model_validate(result)
     except ValidationError as exc:

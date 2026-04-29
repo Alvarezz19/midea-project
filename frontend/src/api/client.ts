@@ -298,6 +298,9 @@ export function parsePrometheusMetrics(input: string): ObservabilityMetrics {
     userFeedbackTotal: 0,
     llmCallsTotal: 0,
     llmCallsFailedTotal: 0,
+    llmInputTokensTotal: 0,
+    llmOutputTokensTotal: 0,
+    llmEstimatedCostTotal: 0,
     projectExportsTotal: 0,
     projectExportsFailedTotal: 0,
     eventsByStatus: {},
@@ -323,6 +326,9 @@ export function parsePrometheusMetrics(input: string): ObservabilityMetrics {
     if (name === 'midea_user_feedback_total') summary.userFeedbackTotal = value;
     if (name === 'midea_llm_calls_total') summary.llmCallsTotal = value;
     if (name === 'midea_llm_calls_failed_total') summary.llmCallsFailedTotal = value;
+    if (name === 'midea_llm_input_tokens_total') summary.llmInputTokensTotal = value;
+    if (name === 'midea_llm_output_tokens_total') summary.llmOutputTokensTotal = value;
+    if (name === 'midea_llm_estimated_cost_total') summary.llmEstimatedCostTotal = value;
     if (name === 'midea_project_exports_total') summary.projectExportsTotal = value;
     if (name === 'midea_project_exports_failed_total') summary.projectExportsFailedTotal = value;
     const parsedLabels = labels ? parseMetricLabels(labels) : {};

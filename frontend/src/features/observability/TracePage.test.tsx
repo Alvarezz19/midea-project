@@ -21,6 +21,22 @@ describe('TracePage', () => {
             status: 'completed',
             started_at: '2026-04-29T08:00:00Z',
             finished_at: '2026-04-29T08:00:03Z',
+            llm_calls: [
+              {
+                llm_call_id: 'llm_1',
+                trace_id: 'trace_1',
+                provider: 'deepseek',
+                model: 'deepseek-chat',
+                prompt_name: 'llm_planner',
+                attempt: 1,
+                latency_ms: 1234,
+                input_tokens: 120,
+                output_tokens: 80,
+                estimated_cost: 0,
+                status: 'completed',
+                error: null
+              }
+            ],
             events: [
               {
                 event_id: 'evt_1',
@@ -72,5 +88,8 @@ describe('TracePage', () => {
     expect(screen.getByText('结构化需求分析已完成')).toBeInTheDocument();
     expect(screen.getByText('workflow.validation.completed')).toBeInTheDocument();
     expect(screen.getByText('validation_summary')).toBeInTheDocument();
+    expect(screen.getByText('llm_planner')).toBeInTheDocument();
+    expect(screen.getByText(/deepseek\/deepseek-chat/)).toBeInTheDocument();
+    expect(screen.getByText('120 in')).toBeInTheDocument();
   });
 });

@@ -59,6 +59,7 @@ def plan_patch_with_llm_dry_run_feedback(
                 "planner_status": planner_result.get("status"),
                 "risk_level": planner_result.get("risk_level"),
                 "operation_count": _operation_count(pending_patch),
+                "llm_meta": planner_result.get("llm_meta") if isinstance(planner_result.get("llm_meta"), dict) else None,
             }
         )
         if not pending_patch:

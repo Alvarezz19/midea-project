@@ -80,6 +80,7 @@ def chat_json(
     provider: str | None = None,
     settings: Settings | None = None,
     model: str | None = None,
+    prompt_name: str = "chat_json",
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
@@ -121,6 +122,7 @@ def chat_json(
     parsed["_llm_meta"] = {
         "provider": config.provider,
         "model": model or config.model,
+        "prompt_name": prompt_name,
         "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
         "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else None,
     }

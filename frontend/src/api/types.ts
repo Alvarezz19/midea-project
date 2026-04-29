@@ -252,6 +252,7 @@ export interface AgentTrace {
   error?: string | null;
   metadata?: Record<string, unknown> | null;
   events: WorkflowEvent[];
+  llm_calls?: LlmCallRecord[];
 }
 
 export interface ObservabilityMetrics {
@@ -262,8 +263,28 @@ export interface ObservabilityMetrics {
   userFeedbackTotal: number;
   llmCallsTotal: number;
   llmCallsFailedTotal: number;
+  llmInputTokensTotal: number;
+  llmOutputTokensTotal: number;
+  llmEstimatedCostTotal: number;
   projectExportsTotal: number;
   projectExportsFailedTotal: number;
   eventsByStatus: Record<string, number>;
   eventsByType: Record<string, number>;
+}
+
+export interface LlmCallRecord {
+  id?: string;
+  llm_call_id?: string;
+  trace_id: string;
+  provider: string;
+  model: string;
+  prompt_name: string;
+  attempt: number;
+  latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  status: string;
+  error?: string | null;
+  created_at?: string;
 }

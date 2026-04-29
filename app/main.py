@@ -570,6 +570,7 @@ def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
         state=state,
         payload=_planner_result_summary(result),
     )
+    _record_llm_call_from_result(trace["trace_id"], result, attempt=1)
     _finish_trace(trace["trace_id"], "completed")
     return {**result, "trace_id": trace["trace_id"]}
 
@@ -606,6 +607,7 @@ def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
                 state=state,
                 payload=_planner_dry_run_result_summary(result),
             )
+            _record_llm_calls_from_result(trace["trace_id"], result)
             _finish_trace(trace["trace_id"], "completed")
             return {**result, "trace_id": trace["trace_id"]}
 
@@ -667,6 +669,7 @@ def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
         state=state,
         payload=_planner_dry_run_result_summary(result),
     )
+    _record_llm_calls_from_result(trace["trace_id"], result)
     _finish_trace(trace["trace_id"], "completed")
     return {**result, "trace_id": trace["trace_id"]}
 
@@ -1160,6 +1163,7 @@ def _workflow_update_recorder(trace_id: str, thread_id: str):
                 state=state,
                 payload=derived["payload"],
             )
+        _record_llm_calls_from_update(trace_id, update)
 
     return record
 
@@ -1311,6 +1315,7 @@ def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
         if not isinstance(attempt, dict):
             continue
         error = attempt.get("error") or attempt.get("last_error")
+        meta = attempt.get("llm_meta") if isinstance(attempt.get("llm_meta"), dict) else {}
         events.append(
             {
                 "event_type": "llm.call.failed" if error else "llm.call.completed",
@@ -1319,8 +1324,11 @@ def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
                 "message": "LLM planner 调用失败" if error else "LLM planner 调用完成",
                 "payload": {
                     "attempt": attempt.get("attempt") or index,
-                    "provider": attempt.get("provider"),
-                    "model": attempt.get("model"),
+                    "provider": attempt.get("provider") or meta.get("provider"),
+                    "model": attempt.get("model") or meta.get("model"),
+                    "prompt_name": attempt.get("prompt_name") or meta.get("prompt_name"),
+                    "latency_ms": meta.get("latency_ms"),
+                    "usage": _llm_usage_summary(meta.get("usage")),
                     "status": attempt.get("status"),
                     "risk_level": attempt.get("risk_level"),
                     "operation_count": _operation_count(attempt.get("pending_patch")),
@@ -1329,6 +1337,95 @@ def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
             }
         )
     return events
+
+
+def _record_llm_calls_from_update(trace_id: str, update: Any) -> None:
+    if not isinstance(update, dict):
+        return
+    if isinstance(update.get("planner_attempts"), list):
+        for index, attempt in enumerate(update["planner_attempts"], start=1):
+            if not isinstance(attempt, dict):
+                continue
+            _record_llm_call_from_meta(
+                trace_id,
+                attempt.get("llm_meta") if isinstance(attempt.get("llm_meta"), dict) else None,
+                attempt=int(attempt.get("attempt") or index),
+                status="failed" if attempt.get("error") or attempt.get("last_error") else "completed",
+                error=str(attempt.get("error") or attempt.get("last_error")) if attempt.get("error") or attempt.get("last_error") else None,
+            )
+        return
+    if isinstance(update.get("planner_result"), dict):
+        _record_llm_call_from_result(trace_id, update["planner_result"], attempt=1)
+
+
+def _record_llm_calls_from_result(trace_id: str, result: dict[str, Any]) -> None:
+    attempts = result.get("planner_attempts")
+    if isinstance(attempts, list) and attempts:
+        for index, attempt in enumerate(attempts, start=1):
+            if not isinstance(attempt, dict):
+                continue
+            _record_llm_call_from_meta(
+                trace_id,
+                attempt.get("llm_meta") if isinstance(attempt.get("llm_meta"), dict) else None,
+                attempt=int(attempt.get("attempt") or index),
+                status="failed" if attempt.get("error") or attempt.get("last_error") else "completed",
+                error=str(attempt.get("error") or attempt.get("last_error")) if attempt.get("error") or attempt.get("last_error") else None,
+            )
+        return
+    planner_result = result.get("planner_result") if isinstance(result.get("planner_result"), dict) else result
+    if isinstance(planner_result, dict):
+        _record_llm_call_from_result(trace_id, planner_result, attempt=1)
+
+
+def _record_llm_call_from_result(trace_id: str, result: dict[str, Any], *, attempt: int) -> None:
+    _record_llm_call_from_meta(
+        trace_id,
+        result.get("llm_meta") if isinstance(result.get("llm_meta"), dict) else None,
+        attempt=attempt,
+        status="completed",
+        error=None,
+    )
+
+
+def _record_llm_call_from_meta(
+    trace_id: str,
+    meta: dict[str, Any] | None,
+    *,
+    attempt: int,
+    status: str,
+    error: str | None,
+) -> None:
+    if not meta and status == "completed":
+        return
+    usage = meta.get("usage") if isinstance(meta, dict) and isinstance(meta.get("usage"), dict) else {}
+    _observability_store().record_llm_call(
+        trace_id=trace_id,
+        provider=str(meta.get("provider") if isinstance(meta, dict) else "unknown"),
+        model=str(meta.get("model") if isinstance(meta, dict) else "unknown"),
+        prompt_name=str(meta.get("prompt_name") if isinstance(meta, dict) else "llm_planner"),
+        attempt=attempt,
+        latency_ms=int(round(float(meta.get("latency_ms") or 0))) if isinstance(meta, dict) else 0,
+        input_tokens=_usage_int(usage, "prompt_tokens"),
+        output_tokens=_usage_int(usage, "completion_tokens"),
+        estimated_cost=0,
+        status=status,
+        error=error,
+    )
+
+
+def _llm_usage_summary(value: Any) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "input_tokens": _usage_int(value, "prompt_tokens"),
+        "output_tokens": _usage_int(value, "completion_tokens"),
+        "total_tokens": _usage_int(value, "total_tokens"),
+    }
+
+
+def _usage_int(value: dict[str, Any], key: str) -> int:
+    raw = value.get(key)
+    return int(raw) if isinstance(raw, int | float) and raw >= 0 else 0
 
 
 def _record_api_failure(

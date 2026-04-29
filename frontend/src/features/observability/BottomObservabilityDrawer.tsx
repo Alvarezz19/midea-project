@@ -183,6 +183,8 @@ function MetricsSummary({ metrics }: { metrics: ObservabilityMetrics }) {
         <Statistic title="P95 耗时" value={formatMetricDuration(metrics.traceDurationP95Ms)} />
         <Statistic title="LLM 调用" value={metrics.llmCallsTotal} />
         <Statistic title="LLM 失败" value={metrics.llmCallsFailedTotal} valueStyle={metrics.llmCallsFailedTotal ? { color: '#A53232' } : undefined} />
+        <Statistic title="输入 Token" value={metrics.llmInputTokensTotal} />
+        <Statistic title="输出 Token" value={metrics.llmOutputTokensTotal} />
         <Statistic title="导出事件" value={metrics.projectExportsTotal} />
         <Statistic title="反馈数" value={metrics.userFeedbackTotal} />
       </div>
