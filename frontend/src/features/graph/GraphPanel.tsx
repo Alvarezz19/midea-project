@@ -1,6 +1,6 @@
 import { Background, Controls, MiniMap, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Empty, Tag, Typography } from 'antd';
+import { Empty, List, Tag, Typography } from 'antd';
 import { useMemo } from 'react';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
@@ -13,6 +13,9 @@ export function GraphPanel() {
     const dryRun = state?.planner_dry_run as { diff?: { affected_node_ids?: string[] } } | undefined;
     return dryRun?.diff?.affected_node_ids ?? [];
   }, [state?.planner_dry_run]);
+  const report = state?.validation_report as { issues?: Array<Record<string, unknown>>; blocked_export_reasons?: string[] } | null | undefined;
+  const issues = report?.issues ?? [];
+  const blockedReasons = state?.validation_summary?.blocked_export_reasons ?? report?.blocked_export_reasons ?? [];
 
   return (
     <section className={panelStyles.panel}>
@@ -46,7 +49,25 @@ export function GraphPanel() {
 
       <div className={panelStyles.section}>
         <Text strong>校验摘要</Text>
+        {blockedReasons.length ? (
+          <List
+            size="small"
+            dataSource={blockedReasons}
+            renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
+          />
+        ) : null}
         <pre className={panelStyles.jsonBlock}>{JSON.stringify(state?.validation_summary ?? {}, null, 2)}</pre>
+        {issues.length ? (
+          <List
+            size="small"
+            dataSource={issues.slice(0, 8)}
+            renderItem={(item) => (
+              <List.Item className={item.severity === 'error' ? panelStyles.errorIssue : panelStyles.warningIssue}>
+                <Text>{String(item.message ?? item.code ?? '校验问题')}</Text>
+              </List.Item>
+            )}
+          />
+        ) : null}
       </div>
     </section>
   );

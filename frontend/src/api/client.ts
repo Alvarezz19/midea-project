@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApiProblem, ProjectType, SessionResponse } from './types';
+import type { ApiProblem, FeedbackPayload, FeedbackResponse, PatchConfirmationResponse, ProjectType, SessionResponse } from './types';
 
 const apiProblemSchema = z.object({
   detail: z.unknown().optional()
@@ -32,23 +32,64 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   return (await response.json()) as T;
 }
 
-export function createSession(projectType?: ProjectType): Promise<SessionResponse> {
+export function createSession(projectType?: ProjectType, options: { useLlmPlanner?: boolean } = {}): Promise<SessionResponse> {
   return apiRequest<SessionResponse>('/api/sessions', {
     method: 'POST',
     body: JSON.stringify({
       project_type: projectType,
-      auto_confirm_template: false
+      auto_confirm_template: false,
+      use_llm_planner: options.useLlmPlanner
     })
   });
 }
 
-export function sendMessage(threadId: string, message: string, projectType?: ProjectType): Promise<SessionResponse> {
+export function sendMessage(
+  threadId: string,
+  message: string,
+  projectType?: ProjectType,
+  options: { useLlmPlanner?: boolean } = {}
+): Promise<SessionResponse> {
   return apiRequest<SessionResponse>(`/api/sessions/${threadId}/message`, {
     method: 'POST',
     body: JSON.stringify({
       message,
-      project_type: projectType
+      project_type: projectType,
+      use_llm_planner: options.useLlmPlanner
     })
+  });
+}
+
+export function confirmTemplate(threadId: string, templateId: string): Promise<SessionResponse> {
+  return apiRequest<SessionResponse>(`/api/sessions/${threadId}/message`, {
+    method: 'POST',
+    body: JSON.stringify({
+      message: `确认使用模板 ${templateId}`,
+      selected_template_id: templateId
+    })
+  });
+}
+
+export function confirmPatch(threadId: string, action: 'approve' | 'cancel'): Promise<PatchConfirmationResponse> {
+  return apiRequest<PatchConfirmationResponse>(`/api/sessions/${threadId}/patch-confirmation`, {
+    method: 'POST',
+    body: JSON.stringify({ action })
+  });
+}
+
+export function validateProject(projectId: string): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>(`/api/projects/${projectId}/validate`, {
+    method: 'POST'
+  });
+}
+
+export function projectExportUrl(projectId: string): string {
+  return `/api/projects/${projectId}/export`;
+}
+
+export function submitFeedback(payload: FeedbackPayload): Promise<FeedbackResponse> {
+  return apiRequest<FeedbackResponse>('/api/feedback', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   });
 }
 

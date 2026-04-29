@@ -4,7 +4,7 @@
   flex-direction: column;
   min-height: 0;
   border: 1px solid rgba(216, 224, 228, 0.95);
-  border-radius: 18px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 14px 34px rgba(23, 32, 38, 0.08);
 }
@@ -62,7 +62,7 @@
   max-width: 92%;
   margin-bottom: 12px;
   padding: 10px 12px;
-  border-radius: 13px;
+  border-radius: 8px;
 }
 
 .userBubble {
@@ -99,7 +99,68 @@
   resize: none;
 }
 
+.composerOptions {
+  padding: 0 14px 14px;
+}
+
+.inlineAlert {
+  margin: 12px 16px;
+}
+
 .templateItem {
+  padding-inline: 0 !important;
+  align-items: flex-start !important;
+}
+
+.templateMeta {
+  display: grid;
+  gap: 6px;
+}
+
+.tagLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.compactDescriptions {
+  margin-top: 10px;
+}
+
+.diffSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.impactBox,
+.impactBoxCompact {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(216, 224, 228, 0.9);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.impactBoxCompact {
+  margin-bottom: 12px;
+  background: #fffaf2;
+}
+
+.impactMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.operationItem {
+  display: grid !important;
+  grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start !important;
   padding-inline: 0 !important;
 }
 
@@ -109,7 +170,7 @@
   margin: 10px 0 0;
   padding: 12px;
   border: 1px solid rgba(216, 224, 228, 0.8);
-  border-radius: 12px;
+  border-radius: 8px;
   color: #19313d;
   background: #f8fbfc;
   font-size: 12px;
@@ -120,8 +181,34 @@
   margin: 14px;
   padding: 14px;
   border: 1px solid rgba(165, 92, 0, 0.34);
-  border-radius: 14px;
+  border-radius: 8px;
   background: #fff7eb;
+}
+
+.errorIssue {
+  border-left: 3px solid var(--danger);
+}
+
+.warningIssue {
+  border-left: 3px solid var(--warning);
+}
+
+.feedbackForm {
+  max-width: 720px;
+}
+
+.feedbackMeta {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 680px) {
+  .impactMetrics {
+    grid-template-columns: 1fr;
+  }
+
+  .operationItem {
+    grid-template-columns: 1fr;
+  }
 }
 
 .flowPreview {

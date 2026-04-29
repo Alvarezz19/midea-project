@@ -1,4 +1,4 @@
-import { ApiError, apiRequest, formatApiError } from './client';
+import { ApiError, apiRequest, confirmPatch, confirmTemplate, formatApiError, submitFeedback, validateProject } from './client';
 
 describe('api client', () => {
   afterEach(() => {
@@ -17,5 +17,65 @@ describe('api client', () => {
     } catch (error) {
       expect(formatApiError(error)).toBe('工程校验未通过，拒绝导出。');
     }
+  });
+
+  it('sends template, risk confirmation and validation requests through the frozen contract', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ thread_id: 't1', state: { messages: [] } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await confirmTemplate('t1', 'tpl_ahu');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/sessions/t1/message',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ message: '确认使用模板 tpl_ahu', selected_template_id: 'tpl_ahu' })
+      })
+    );
+
+    await confirmPatch('t1', 'approve');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/sessions/t1/patch-confirmation',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ action: 'approve' })
+      })
+    );
+
+    await validateProject('project_1');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/projects/project_1/validate',
+      expect.objectContaining({
+        method: 'POST'
+      })
+    );
+  });
+
+  it('submits user feedback with trace and version context', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ feedback_id: 'fb_1', trace_id: 'trace_1', rating: 5, category: 'export', comment: '' })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await submitFeedback({
+      trace_id: 'trace_1',
+      project_id: 'project_1',
+      version_id: 'v_1',
+      rating: 5,
+      category: 'export',
+      comment: '导出后复核通过'
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/feedback',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          trace_id: 'trace_1',
+          project_id: 'project_1',
+          version_id: 'v_1',
+          rating: 5,
+          category: 'export',
+          comment: '导出后复核通过'
+        })
+      })
+    );
   });
 });

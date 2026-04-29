@@ -1,8 +1,9 @@
-import { Button, Input, List, Space, Typography, message as antMessage } from 'antd';
-import { SendOutlined, PlusOutlined } from '@ant-design/icons';
+import { Alert, Button, Input, List, Space, Switch, Typography, message as antMessage } from 'antd';
+import { SendOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { createSession, formatApiError, sendMessage } from '../../api/client';
+import type { RequirementQuestion } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -13,17 +14,19 @@ export function SessionPanel() {
   const threadId = useWorkbenchStore((store) => store.threadId);
   const projectType = useWorkbenchStore((store) => store.projectType);
   const state = useWorkbenchStore((store) => store.state);
+  const useLlmPlanner = useWorkbenchStore((store) => store.useLlmPlanner);
+  const setUseLlmPlanner = useWorkbenchStore((store) => store.setUseLlmPlanner);
   const setSession = useWorkbenchStore((store) => store.setSession);
   const [messageApi, holder] = antMessage.useMessage();
 
   const createMutation = useMutation({
-    mutationFn: () => createSession(projectType),
+    mutationFn: () => createSession(projectType, { useLlmPlanner }),
     onSuccess: (data) => setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state }),
     onError: (error) => messageApi.error(formatApiError(error))
   });
 
   const sendMutation = useMutation({
-    mutationFn: () => sendMessage(threadId!, draft, projectType),
+    mutationFn: () => sendMessage(threadId!, draft, projectType, { useLlmPlanner }),
     onSuccess: (data) => {
       setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state });
       setDraft('');
@@ -32,6 +35,14 @@ export function SessionPanel() {
   });
 
   const messages = state?.messages ?? [];
+  const questions = (state?.open_questions ?? []).map(questionText);
+  const summaryItems = [
+    ...(state?.requirement_summary?.equipment ?? []),
+    ...(state?.requirement_summary?.control_targets ?? []),
+    ...(state?.requirement_summary?.communication ?? []),
+    ...(state?.requirement_summary?.protections ?? [])
+  ].map(String);
+  const requirements = state?.confirmed_requirements?.length ? state.confirmed_requirements : summaryItems;
 
   return (
     <section className={panelStyles.panel}>
@@ -39,24 +50,28 @@ export function SessionPanel() {
       <header className={panelStyles.header}>
         <div>
           <Title level={2}>会话与需求</Title>
-          <Text type="secondary">{threadId ? `thread ${threadId}` : '先创建会话，再输入自然语言需求'}</Text>
+          <Text type="secondary">{threadId ? `thread ${threadId}` : '选择项目类型后创建会话'}</Text>
         </div>
-        <Button icon={<PlusOutlined />} loading={createMutation.isPending} onClick={() => createMutation.mutate()}>
+        <Button icon={<PlusOutlined />} loading={createMutation.isPending} disabled={!projectType} onClick={() => createMutation.mutate()}>
           新建
         </Button>
       </header>
 
+      {!projectType ? (
+        <Alert className={panelStyles.inlineAlert} type="info" showIcon message="请先在顶部选择机房群控程序或 AHU 程序。" />
+      ) : null}
+
       <div className={panelStyles.section}>
         <Text strong>结构化需求</Text>
         <div className={panelStyles.chips}>
-          {(state?.confirmed_requirements?.length ? state.confirmed_requirements : ['等待需求分析']).map((item) => (
+          {(requirements.length ? requirements : ['等待需求分析']).map((item) => (
             <span key={item}>{item}</span>
           ))}
         </div>
-        {state?.open_questions?.length ? (
+        {questions.length ? (
           <List
             size="small"
-            dataSource={state.open_questions}
+            dataSource={questions}
             renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
           />
         ) : null}
@@ -92,6 +107,20 @@ export function SessionPanel() {
           发送
         </Button>
       </Space.Compact>
+      <div className={panelStyles.composerOptions}>
+        <Space>
+          <RobotOutlined />
+          <Text type="secondary">LLM 结构化规划</Text>
+          <Switch size="small" checked={useLlmPlanner} onChange={setUseLlmPlanner} />
+        </Space>
+      </div>
     </section>
   );
+}
+
+function questionText(item: string | RequirementQuestion): string {
+  if (typeof item === 'string') {
+    return item;
+  }
+  return item.question ?? item.field ?? '请补充需求信息。';
 }

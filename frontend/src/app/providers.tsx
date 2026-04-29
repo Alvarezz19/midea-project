@@ -37,7 +37,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
             borderRadius: 8
           },
           Card: {
-            borderRadiusLG: 14
+            borderRadiusLG: 8
           },
           Layout: {
             headerBg: '#006A94',
