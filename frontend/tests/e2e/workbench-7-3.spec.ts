@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 test('AHU 低风险修改：选择模板、自然语言改名、校验、导出检查', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: '美的工程智能体工作台' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '美控（KONG）智能体工作台' })).toBeVisible();
   await expect(page.getByText(/请先在顶部选择/)).toBeVisible();
 
   await page.locator('[title="AHU 程序"]').click();

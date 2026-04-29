@@ -32,7 +32,8 @@
 .identity h1 {
   margin: 0;
   color: var(--ink);
-  font-size: 22px;
+  font-size: 30px;
+  line-height: 1.12;
   letter-spacing: 0.02em;
 }
 
@@ -104,5 +105,9 @@
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .identity h1 {
+    font-size: 26px;
   }
 }

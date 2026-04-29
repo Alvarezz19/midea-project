@@ -33,7 +33,7 @@ describe('WorkbenchPage', () => {
       </AppProviders>
     );
 
-    expect(screen.getByText('美的工程智能体工作台')).toBeInTheDocument();
+    expect(screen.getByText('美控（KONG）智能体工作台')).toBeInTheDocument();
     expect(screen.getByText('会话与需求')).toBeInTheDocument();
     expect(screen.getByText('模板、计划与风险')).toBeInTheDocument();
     expect(screen.getByText('局部流程图与校验')).toBeInTheDocument();

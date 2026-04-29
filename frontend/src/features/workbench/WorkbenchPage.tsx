@@ -63,8 +63,7 @@ export function WorkbenchPage() {
         <div className={styles.identity}>
           <div className={styles.mark}>M</div>
           <div>
-            <Title level={1}>美的工程智能体工作台</Title>
-            <Text>阶段 7 工程工作台 · 自然语言驱动工程 JSON 改造</Text>
+            <Title level={1}>美控（KONG）智能体工作台</Title>
           </div>
         </div>
         <Space size={12} wrap>

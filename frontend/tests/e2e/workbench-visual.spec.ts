@@ -9,7 +9,7 @@ test('桌面端 1440px 工作台首屏截图验收', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 920 });
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: '美的工程智能体工作台' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '美控（KONG）智能体工作台' })).toBeVisible();
   await expect(page.getByText('会话与需求')).toBeVisible();
   await expect(page.getByText('模板、计划与风险')).toBeVisible();
   await expect(page.getByText('局部流程图与校验')).toBeVisible();
@@ -22,7 +22,7 @@ test('移动端 390px 工作台状态与确认入口截图验收', async ({ page
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: '美的工程智能体工作台' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '美控（KONG）智能体工作台' })).toBeVisible();
   await expect(page.getByText(/请先在顶部选择/)).toBeVisible();
   await expect(page.getByText('会话与需求')).toBeVisible();
   await expectNoHorizontalOverflow(page);
