@@ -6,6 +6,7 @@ import {
   formatApiError,
   getProjectDiff,
   listProjectVersions,
+  parseSseEvents,
   rollbackProject,
   submitFeedback,
   validateProject
@@ -113,5 +114,32 @@ describe('api client', () => {
         body: JSON.stringify({ target_version_id: 'v_1' })
       })
     );
+  });
+
+  it('parses SSE events with custom event names and skips duplicates upstream safely', () => {
+    const events = parseSseEvents(
+      [
+        'id: evt_1',
+        'event: workflow.run.completed',
+        'data: {"event_id":"evt_1","thread_id":"thread_1","trace_id":"trace_1","event_type":"workflow.run.completed","step":"invoke_workflow","status":"completed","message":"工作流完成","payload":{"state":{"next_action":"export"}}}',
+        '',
+        'id: evt_2',
+        'event: workflow.step.started',
+        'data: {"event_id":"evt_2","thread_id":"thread_1","event_type":"workflow.step.started","step":"plan_change","status":"running","message":"正在生成结构化修改计划"}',
+        ''
+      ].join('\n')
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      event_id: 'evt_1',
+      thread_id: 'thread_1',
+      trace_id: 'trace_1',
+      event_type: 'workflow.run.completed',
+      step: 'invoke_workflow',
+      status: 'completed'
+    });
+    expect(events[0].payload?.state).toEqual({ next_action: 'export' });
+    expect(events[1].message).toBe('正在生成结构化修改计划');
   });
 });

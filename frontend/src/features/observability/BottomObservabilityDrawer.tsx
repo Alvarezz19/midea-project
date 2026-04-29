@@ -1,4 +1,4 @@
-import { Button, Drawer, Form, Input, Rate, Select, Space, Tabs, Typography, message as antMessage } from 'antd';
+import { Button, Drawer, Form, Input, List, Rate, Select, Space, Tabs, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { formatApiError, submitFeedback } from '../../api/client';
@@ -14,6 +14,7 @@ export function BottomObservabilityDrawer() {
   const threadId = useWorkbenchStore((store) => store.threadId);
   const traceId = useWorkbenchStore((store) => store.traceId);
   const state = useWorkbenchStore((store) => store.state);
+  const workflowEvents = useWorkbenchStore((store) => store.workflowEvents);
   const [form] = Form.useForm<{ rating: number; category: string; comment: string }>();
   const [messageApi, holder] = antMessage.useMessage();
   const projectId = state?.project_id ?? state?.current_project_id;
@@ -73,6 +74,30 @@ export function BottomObservabilityDrawer() {
                     2
                   )}
                 </pre>
+              )
+            },
+            {
+              key: 'events',
+              label: '事件流',
+              children: (
+                <List
+                  size="small"
+                  dataSource={[...workflowEvents].reverse()}
+                  locale={{ emptyText: '暂无事件' }}
+                  renderItem={(event) => (
+                    <List.Item className={panelStyles.eventItem}>
+                      <div>
+                        <Text strong>{event.message ?? event.event_type}</Text>
+                        <div>
+                          <Text type="secondary">
+                            {event.step ?? 'unknown'} · {event.created_at ?? '无时间戳'} · {event.event_id}
+                          </Text>
+                        </div>
+                      </div>
+                      <Tag color={event.status === 'failed' || event.status === 'error' ? 'error' : 'processing'}>{event.status ?? 'unknown'}</Tag>
+                    </List.Item>
+                  )}
+                />
               )
             },
             {

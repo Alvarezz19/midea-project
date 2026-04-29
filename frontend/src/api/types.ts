@@ -223,3 +223,19 @@ export interface RollbackProjectResponse {
   state?: SessionState;
   validation_report?: Record<string, unknown>;
 }
+
+export type EventConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
+
+export interface WorkflowEvent {
+  event_id: string;
+  trace_id?: string | null;
+  thread_id: string;
+  project_id?: string | null;
+  version_id?: string | null;
+  event_type: string;
+  step?: string | null;
+  status?: string | null;
+  message?: string | null;
+  payload?: Record<string, unknown> | null;
+  created_at?: string | null;
+}

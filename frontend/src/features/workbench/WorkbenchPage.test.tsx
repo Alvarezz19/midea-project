@@ -13,6 +13,9 @@ describe('WorkbenchPage', () => {
       traceId: undefined,
       projectType: undefined,
       state: undefined,
+      workflowEvents: [],
+      lastWorkflowEventId: undefined,
+      eventConnectionStatus: 'idle',
       selectedNodeId: undefined,
       inspectedVersionId: undefined,
       inspectedFromVersionId: undefined,
@@ -93,7 +96,8 @@ describe('WorkbenchPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /确\s*认/ }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/sessions/thread_1/message', expect.any(Object)));
-    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body).toBe(
+    const confirmCall = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>).find((call) => call[0] === '/api/sessions/thread_1/message');
+    expect(confirmCall?.[1].body).toBe(
       JSON.stringify({ message: '确认使用模板 tpl_ahu', selected_template_id: 'tpl_ahu' })
     );
   });
@@ -143,7 +147,96 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /取消/ }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/sessions/thread_1/patch-confirmation', expect.any(Object)));
-    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body).toBe(JSON.stringify({ action: 'cancel' }));
+    const cancelCall = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>).find((call) => call[0] === '/api/sessions/thread_1/patch-confirmation');
+    expect(cancelCall?.[1].body).toBe(JSON.stringify({ action: 'cancel' }));
+  });
+
+  it('renders SSE connection state, workflow steps and deduplicated events', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => {
+          const encoder = new TextEncoder();
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    [
+                      'id: evt_3',
+                      'event: workflow.step.started',
+                      'data: {"event_id":"evt_3","thread_id":"thread_1","trace_id":"trace_1","event_type":"workflow.step.started","step":"plan_change","status":"running","message":"正在生成结构化修改计划"}',
+                      '',
+                      ''
+                    ].join('\n')
+                  )
+                );
+              }
+            }),
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+      )
+    );
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      traceId: 'trace_1',
+      projectType: 'ahu',
+      eventConnectionStatus: 'connected',
+      workflowEvents: [
+        {
+          event_id: 'evt_1',
+          thread_id: 'thread_1',
+          trace_id: 'trace_1',
+          event_type: 'workflow.message.received',
+          step: 'receive_message',
+          status: 'completed',
+          message: '已接收需求',
+          created_at: '2026-04-29T10:00:00+08:00'
+        },
+        {
+          event_id: 'evt_2',
+          thread_id: 'thread_1',
+          trace_id: 'trace_1',
+          event_type: 'workflow.run.completed',
+          step: 'invoke_workflow',
+          status: 'completed',
+          message: '工作流完成',
+          created_at: '2026-04-29T10:00:03+08:00'
+        }
+      ],
+      lastWorkflowEventId: 'evt_2',
+      bottomDrawerOpen: false,
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'project_version_ready',
+        next_action: 'export'
+      }
+    });
+
+    useWorkbenchStore.getState().mergeWorkflowEvent({
+      event_id: 'evt_2',
+      thread_id: 'thread_1',
+      event_type: 'workflow.run.completed',
+      status: 'completed',
+      message: '重复事件不应渲染'
+    });
+
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage />
+        </MemoryRouter>
+      </AppProviders>
+    );
+
+    await waitFor(() => expect(screen.getAllByText('已连接').length).toBeGreaterThan(0));
+    expect(screen.getByText('工作流步骤')).toBeInTheDocument();
+    expect(screen.getByText('需求分析')).toBeInTheDocument();
+    expect(screen.getByText('规划')).toBeInTheDocument();
+    expect(screen.getByText('已接收需求')).toBeInTheDocument();
+    expect(screen.queryByText('重复事件不应渲染')).not.toBeInTheDocument();
   });
 
   it('loads the budgeted flow and focuses a diff node from the graph panel', async () => {

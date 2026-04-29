@@ -8,16 +8,20 @@ import { SessionPanel } from '../session/SessionPanel';
 import { PlanningPanel } from '../planning/PlanningPanel';
 import { GraphPanel } from '../graph/GraphPanel';
 import { BottomObservabilityDrawer } from '../observability/BottomObservabilityDrawer';
+import { WorkflowProgress, connectionColor, connectionStatusLabel } from '../observability/WorkflowProgress';
+import { useSessionEvents } from '../observability/useSessionEvents';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import styles from './WorkbenchPage.module.css';
 
 const { Text, Title } = Typography;
 
 export function WorkbenchPage() {
+  useSessionEvents();
   const state = useWorkbenchStore((store) => store.state);
   const projectType = useWorkbenchStore((store) => store.projectType);
   const setProjectType = useWorkbenchStore((store) => store.setProjectType);
   const patchState = useWorkbenchStore((store) => store.patchState);
+  const connectionStatus = useWorkbenchStore((store) => store.eventConnectionStatus);
   const projectId = state?.project_id ?? state?.current_project_id;
   const versionId = state?.version_id ?? state?.current_project_version_id;
   const validation = state?.validation_summary;
@@ -84,10 +88,12 @@ export function WorkbenchPage() {
       </header>
 
       <section className={styles.statusRail}>
-        <StatusItem icon={<RadarChartOutlined />} label="事件流" value="待接入 SSE" tone="blue" />
+        <StatusItem icon={<RadarChartOutlined />} label="事件流" value={connectionStatusLabel(connectionStatus)} tone={connectionColor(connectionStatus) === 'success' ? 'blue' : undefined} />
         <StatusItem icon={<NodeIndexOutlined />} label="项目" value={projectId ?? '未绑定'} />
         <StatusItem icon={<HistoryOutlined />} label="下一步" value={state?.next_action ?? 'send_message'} />
       </section>
+
+      <WorkflowProgress />
 
       {state?.error ? <Alert className={styles.alert} type="error" showIcon message={state.error} /> : null}
 
