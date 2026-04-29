@@ -104,6 +104,10 @@ def plan_patch_request(
         "related_nodes": related_nodes,
     }
 
+    tab_label_plan = _plan_update_tab_label(message, nodes)
+    if tab_label_plan:
+        return {**tab_label_plan, **context}
+
     comment_plan = _plan_add_comment(message, nodes)
     if comment_plan:
         return {**comment_plan, **context}
@@ -134,6 +138,43 @@ def plan_patch_request(
         "questions": ["请说明要修改的节点、页面、参数和值。例如：把节点 3a4c97e 改名为 水泵比较判断。"],
         "reason": "当前请求无法被确定性规划器识别为低风险补丁。",
         **context,
+    }
+
+
+def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    replacement = _extract_text_replacement(message)
+    mentions_tab_label = any(keyword in message for keyword in ["页面标签", "页面名称", "页面名", "tab标签", "tab label", "标签"])
+    if not replacement:
+        return None
+
+    old_text, new_text = replacement
+    matched_tabs = [(tab_id, label) for tab_id, label in get_tabs(nodes).items() if old_text in label]
+    if not matched_tabs:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": [f"没有找到包含“{old_text}”的页面标签，请确认目标页面。"],
+            "reason": "页面标签替换请求未匹配到目标 tab。",
+        } if mentions_tab_label else None
+    if len(matched_tabs) > 1:
+        labels = [label for _, label in matched_tabs]
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": [f"“{old_text}”出现在多个页面标签中：{labels}，请指定要修改哪一个页面。"],
+            "reason": "页面标签替换目标不唯一。",
+        }
+
+    tab_id, old_label = matched_tabs[0]
+    new_label = old_label.replace(old_text, new_text)
+    if new_label == old_label:
+        return None
+    return {
+        "status": "planned",
+        "pending_patch": {"op": "update_param", "node_selector": {"id": tab_id}, "params": {"label": new_label}},
+        "questions": [],
+        "reason": "识别为页面标签替换请求，已唯一确定目标 tab，并只修改 label 字段。",
+        "target_node": {"id": tab_id, "type": "tab", "label": old_label},
     }
 
 
@@ -452,6 +493,22 @@ def _extract_input_index(text: str) -> int | None:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             return int(match.group("index"))
+    return None
+
+
+def _extract_text_replacement(message: str) -> tuple[str, str] | None:
+    patterns = [
+        r"(?:把|将)?\s*(?:页面标签|页面名称|页面名|tab标签|tab label|标签)?\s*(?:中的|里的|内的|下的|中|里|内|下|的)?\s*(?:把|将)?\s*[\"“'‘]?(?P<old>[^\"“”'‘’，。]+)[\"”'’]?\s*(?:改成|改为|替换为)\s*[\"“'‘]?(?P<new>[^\"“”'‘’，。]+)[\"”'’]?",
+        r"(?:把|将)?\s*(?:页面标签|页面名称|页面名|tab标签|tab label|标签)?\s*(?:中的|里的|内的|下的|中|里|内|下|的)?\s*[\"“'‘]?(?P<old>[^\"“”'‘’，。]+)[\"”'’]?\s*改名为\s*[\"“'‘]?(?P<new>[^\"“”'‘’，。]+)[\"”'’]?",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if not match:
+            continue
+        old_text = _strip_wrapping_quotes(match.group("old").strip())
+        new_text = _strip_wrapping_quotes(match.group("new").strip())
+        if old_text and new_text:
+            return old_text, new_text
     return None
 
 

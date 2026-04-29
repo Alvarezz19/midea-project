@@ -90,12 +90,14 @@
   grid-template-columns: minmax(320px, 0.88fr) minmax(420px, 1.2fr) minmax(340px, 0.9fr);
   gap: 14px;
   align-items: stretch;
-  min-height: calc(100vh - 235px);
+  height: max(560px, calc(100vh - 235px));
+  min-height: 0;
 }
 
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .statusRail {

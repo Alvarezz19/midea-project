@@ -62,7 +62,7 @@
 .messageList {
   overflow: auto;
   flex: 1;
-  min-height: 220px;
+  min-height: 0;
   padding: 16px;
   background: linear-gradient(180deg, rgba(244, 247, 248, 0.6), rgba(255, 255, 255, 0));
 }
@@ -73,6 +73,7 @@
   margin-bottom: 12px;
   padding: 10px 12px;
   border-radius: 8px;
+  overflow-wrap: anywhere;
 }
 
 .userBubble {
@@ -90,6 +91,7 @@
 .agentBubble p {
   margin: 6px 0 0;
   line-height: 1.62;
+  overflow-wrap: anywhere;
 }
 
 .empty {
@@ -298,9 +300,25 @@
 
 .workflowProgress :global(.ant-steps-item-description) {
   max-width: 150px !important;
+  overflow: hidden;
   color: var(--muted) !important;
+  display: -webkit-box;
   font-size: 11px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workflowProgress :global(.ant-steps-item-content) {
+  min-width: 0;
+}
+
+.workflowProgress :global(.ant-steps-item-title) {
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .eventList {

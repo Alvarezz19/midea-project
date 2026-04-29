@@ -1431,6 +1431,27 @@ def test_planner_creates_update_and_comment_patches(tmp_path: Path) -> None:
     assert comment["pending_patch"]["text"] == "planner 测试备注"
 
 
+def test_planner_replaces_unique_tab_label_text(tmp_path: Path) -> None:
+    metadata = create_project_version(AHU_TEMPLATE, project_id="planner_project", version_id="v_tab_label", versions_dir=tmp_path)
+
+    result = plan_patch_request(
+        "把页面标签的把“安宁中医院”改成“琼海市中医院”",
+        project_path=metadata["version_path"],
+    )
+
+    assert result["status"] == "planned"
+    assert result["pending_patch"] == {
+        "op": "update_param",
+        "node_selector": {"id": "ab3fc9e"},
+        "params": {"label": "IO/通讯(琼海市中医院）"},
+    }
+    dry_run = dry_run_patch(load_project(metadata["version_path"]), result["pending_patch"])
+    assert dry_run["valid"]
+    tab = find_nodes(dry_run["nodes"], {"id": "ab3fc9e"})[0]
+    assert tab["label"] == "IO/通讯(琼海市中医院）"
+    assert "name" not in tab
+
+
 def test_planner_creates_replace_constant_patch_by_node_id(tmp_path: Path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="planner_project", version_id="v_replace_constant", versions_dir=tmp_path)
 

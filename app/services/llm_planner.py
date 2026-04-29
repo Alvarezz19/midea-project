@@ -220,6 +220,7 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 2. 新增节点后要连线时，connect 可用新增节点的稳定名称和 type 作为 source_node_selector，例如 {"type": "constInput", "name": "CO2设定值"}。
 3. 禁止只用 {"type": "compare"} 这类明显不唯一的选择器。
 4. 无法唯一定位节点、页面、端口或参数时，status 必须是 needs_clarification，并提出具体追问。
+5. 页面标签是 type="tab" 节点的 label 字段；用户要求把页面标签中的 A 改成 B 时，应先在 tabs 上唯一定位包含 A 的页面，再输出 update_param，node_selector 使用该 tab id，params 只修改 {"label": "替换后的完整页面标签"}。不要把页面标签写入 name 字段，也不要新增备注或新增节点。
 
 组合计划规则：
 1. 如果要把新增常量、设定值或传感器信号接入 compare/limit 的动态阈值端口，必须先 add_node_from_schema，再 enable_dynamic_input，最后 connect 到 target_input=1。
