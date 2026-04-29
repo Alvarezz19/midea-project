@@ -443,4 +443,62 @@ describe('WorkbenchPage', () => {
       })
     );
   }, 60000);
+
+  it('renders observability cost aggregation in the metrics drawer', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/metrics') {
+        return new Response(
+          [
+            'midea_workflow_events_total 4',
+            'midea_agent_traces_total 2',
+            'midea_agent_traces_failed_total 0',
+            'midea_trace_duration_ms_p95 1200',
+            'midea_user_feedback_total 1',
+            'midea_llm_calls_total 2',
+            'midea_llm_calls_failed_total 0',
+            'midea_llm_input_tokens_total 300',
+            'midea_llm_output_tokens_total 90',
+            'midea_llm_estimated_cost_total 0.004',
+            'midea_project_exports_total 1',
+            'midea_project_exports_failed_total 0',
+            'midea_workflow_events_by_status_total{status="completed"} 4',
+            'midea_workflow_events_by_type_total{event_type="api.export.completed"} 1'
+          ].join('\n'),
+          { status: 200, headers: { 'Content-Type': 'text/plain' } }
+        );
+      }
+      if (url === '/api/observability/costs?limit=50') {
+        return new Response(
+          JSON.stringify({
+            project_id: null,
+            total: { calls: 2, failed_calls: 0, input_tokens: 300, output_tokens: 90, estimated_cost: 0.004, average_latency_ms: 600 },
+            by_project: [{ project_id: 'project_1', calls: 2, failed_calls: 0, input_tokens: 300, output_tokens: 90, estimated_cost: 0.004, average_latency_ms: 600 }],
+            by_provider_model: [{ provider: 'deepseek', model: 'deepseek-chat', calls: 2, failed_calls: 0, input_tokens: 300, output_tokens: 90, estimated_cost: 0.004, average_latency_ms: 600 }],
+            by_prompt: [{ prompt_name: 'llm_planner', calls: 2, failed_calls: 0, input_tokens: 300, output_tokens: 90, estimated_cost: 0.004, average_latency_ms: 600 }],
+            by_date: [{ date: '2026-04-29', calls: 2, failed_calls: 0, input_tokens: 300, output_tokens: 90, estimated_cost: 0.004, average_latency_ms: 600 }]
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage />
+        </MemoryRouter>
+      </AppProviders>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '版本 / Trace / 反馈' }));
+    fireEvent.click(screen.getByRole('tab', { name: '指标' }));
+
+    expect(await screen.findByText('LLM 成本聚合')).toBeInTheDocument();
+    expect(screen.getByText('deepseek / deepseek-chat')).toBeInTheDocument();
+    expect(screen.getByText('llm_planner')).toBeInTheDocument();
+    expect(screen.getByText('project_1')).toBeInTheDocument();
+  }, 60000);
 });

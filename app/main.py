@@ -907,6 +907,14 @@ def get_project_feedback(project_id: str, limit: int = Query(default=50, ge=1, l
     return {"project_id": project_id, "feedback": _observability_store().list_feedback(project_id=project_id, limit=limit)}
 
 
+@app.get("/api/observability/costs")
+def get_observability_costs(
+    project_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    return _observability_store().cost_summary(project_id=project_id, limit=limit)
+
+
 @app.post("/api/feedback")
 def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
     if _observability_store().get_trace(request.trace_id) is None:

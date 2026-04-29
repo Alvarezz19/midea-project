@@ -5,17 +5,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart, PieChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
-import { CanvasRenderer } from 'echarts/renderers';
+import { SVGRenderer } from 'echarts/renderers';
 import type { EChartsOption } from 'echarts';
-import { formatApiError, getMetricsSummary, listProjectFeedback, submitFeedback } from '../../api/client';
-import type { FeedbackResponse, ObservabilityMetrics } from '../../api/types';
+import { formatApiError, getCostSummary, getMetricsSummary, listProjectFeedback, submitFeedback } from '../../api/client';
+import type { CostSummaryResponse, FeedbackResponse, ObservabilityMetrics } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
 
 const { Text } = Typography;
 
-echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, SVGRenderer]);
 
 export function BottomObservabilityDrawer() {
   const open = useWorkbenchStore((store) => store.bottomDrawerOpen);
@@ -205,6 +205,11 @@ function MetricsPanel() {
     queryFn: getMetricsSummary,
     refetchInterval: 15000
   });
+  const costQuery = useQuery({
+    queryKey: ['observability-costs'],
+    queryFn: () => getCostSummary(),
+    refetchInterval: 30000
+  });
 
   if (query.isLoading) {
     return <Skeleton active paragraph={{ rows: 4 }} />;
@@ -215,7 +220,12 @@ function MetricsPanel() {
   if (!query.data) {
     return <Text type="secondary">暂无指标</Text>;
   }
-  return <MetricsSummary metrics={query.data} />;
+  return (
+    <>
+      <MetricsSummary metrics={query.data} />
+      <CostSummaryPanel cost={costQuery.data} loading={costQuery.isLoading} error={costQuery.error} />
+    </>
+  );
 }
 
 function MetricsSummary({ metrics }: { metrics: ObservabilityMetrics }) {
@@ -264,6 +274,96 @@ function MetricsSummary({ metrics }: { metrics: ObservabilityMetrics }) {
         </div>
       </div>
       <MetricsCharts metrics={metrics} topTypes={topTypes} />
+    </div>
+  );
+}
+
+function CostSummaryPanel({ cost, loading, error }: { cost?: CostSummaryResponse; loading: boolean; error: unknown }) {
+  if (loading) {
+    return <Skeleton active paragraph={{ rows: 3 }} />;
+  }
+  if (error) {
+    return <Alert type="error" showIcon message="成本聚合加载失败" description={formatApiError(error)} />;
+  }
+  if (!cost) {
+    return <Text type="secondary">暂无成本数据</Text>;
+  }
+  return (
+    <div className={panelStyles.costPanel}>
+      <div className={panelStyles.sectionHeading}>
+        <Text strong>LLM 成本聚合</Text>
+        <Text type="secondary">按项目、供应商、模型、prompt 和日期聚合</Text>
+      </div>
+      <div className={panelStyles.costStats}>
+        <Statistic title="估算成本" value={formatCost(cost.total.estimated_cost)} />
+        <Statistic title="调用次数" value={cost.total.calls} />
+        <Statistic title="失败调用" value={cost.total.failed_calls} valueStyle={cost.total.failed_calls ? { color: '#A53232' } : undefined} />
+        <Statistic title="Token 合计" value={formatTokenCount(cost.total.input_tokens + cost.total.output_tokens)} />
+      </div>
+      <CostDateChart buckets={cost.by_date} />
+      <div className={panelStyles.costColumns}>
+        <CostList
+          title="供应商 / 模型"
+          items={cost.by_provider_model.slice(0, 6)}
+          label={(item) => `${item.provider ?? 'unknown'} / ${item.model ?? 'unknown'}`}
+        />
+        <CostList title="Prompt" items={cost.by_prompt.slice(0, 6)} label={(item) => item.prompt_name ?? 'unknown'} />
+        <CostList title="项目" items={cost.by_project.slice(0, 6)} label={(item) => item.project_id ?? 'unknown'} />
+      </div>
+    </div>
+  );
+}
+
+function CostList({ title, items, label }: { title: string; items: CostSummaryResponse['by_project']; label: (item: CostSummaryResponse['total']) => string }) {
+  return (
+    <div>
+      <Text strong>{title}</Text>
+      <List
+        size="small"
+        dataSource={items}
+        locale={{ emptyText: '暂无调用' }}
+        renderItem={(item) => (
+          <List.Item className={panelStyles.costItem}>
+            <div>
+              <Text ellipsis>{label(item)}</Text>
+              <div>
+                <Text type="secondary">
+                  {item.calls} 次 · {formatTokenCount(item.input_tokens + item.output_tokens)} token · {formatMetricDuration(item.average_latency_ms)}
+                </Text>
+              </div>
+            </div>
+            <Tag>{formatCost(item.estimated_cost)}</Tag>
+          </List.Item>
+        )}
+      />
+    </div>
+  );
+}
+
+function CostDateChart({ buckets }: { buckets: CostSummaryResponse['by_date'] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const option = useMemo<EChartsOption>(
+    () => ({
+      grid: { top: 10, right: 20, bottom: 32, left: 58 },
+      tooltip: { trigger: 'axis' },
+      color: ['#C97A34'],
+      xAxis: { type: 'category', data: buckets.map((item) => item.date ?? 'unknown') },
+      yAxis: { type: 'value' },
+      series: [
+        {
+          type: 'bar',
+          data: buckets.map((item) => item.estimated_cost),
+          barMaxWidth: 22
+        }
+      ]
+    }),
+    [buckets]
+  );
+  useEChart(ref, option);
+  return (
+    <div>
+      <Text strong>日期成本</Text>
+      <div ref={ref} className={panelStyles.costChart} role="img" aria-label="日期成本柱状图" />
     </div>
   );
 }
@@ -331,6 +431,9 @@ function useEChart(ref: RefObject<HTMLDivElement | null>, option: EChartsOption)
     if (!ref.current) {
       return;
     }
+    if (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('jsdom')) {
+      return;
+    }
     const chart = echarts.init(ref.current);
     chart.setOption(option);
     const resize = () => chart.resize();
@@ -347,6 +450,23 @@ function formatMetricDuration(value: number): string {
     return '0ms';
   }
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+function formatCost(value: number): string {
+  return `$${Number.isFinite(value) ? value.toFixed(4) : '0.0000'}`;
+}
+
+function formatTokenCount(value: number): string {
+  if (!Number.isFinite(value)) {
+    return '0';
+  }
+  if (value >= 1000000) {
+    return `${(value / 1000000).toFixed(1)}M`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}K`;
+  }
+  return String(value);
 }
 
 function feedbackCategory(status?: string | null): string {

@@ -254,6 +254,24 @@ class FileObservabilityStore:
                 llm_calls.extend(item for item in calls if isinstance(item, dict))
         return _metrics_text_from_items(events, traces, feedback_count, llm_calls)
 
+    def cost_summary(self, *, project_id: str | None = None, limit: int = 200) -> dict[str, Any]:
+        traces: list[dict[str, Any]] = []
+        if self.traces_dir.exists():
+            for path in self.traces_dir.glob("trace_*.json"):
+                try:
+                    with path.open("r", encoding="utf-8") as file:
+                        item = json.load(file)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if isinstance(item, dict):
+                    traces.append(item)
+        llm_calls: list[dict[str, Any]] = []
+        for trace in traces:
+            calls = trace.get("llm_calls")
+            if isinstance(calls, list):
+                llm_calls.extend(item for item in calls if isinstance(item, dict))
+        return _cost_summary_from_items(llm_calls, traces, project_id=project_id, limit=limit)
+
     def _events_path(self, thread_id: str) -> Path:
         _validate_public_id(thread_id, "thread_id")
         return self.events_dir / f"{thread_id}.jsonl"
@@ -594,6 +612,19 @@ class PostgresObservabilityStore:
             [_row_to_public_dict(row) for row in llm_rows],
         )
 
+    def cost_summary(self, *, project_id: str | None = None, limit: int = 200) -> dict[str, Any]:
+        from app.services.postgres_runtime import _connect
+
+        with _connect() as conn:
+            trace_rows = conn.execute("SELECT * FROM agent_traces").fetchall()
+            llm_rows = conn.execute("SELECT * FROM llm_call_records").fetchall()
+        return _cost_summary_from_items(
+            [_row_to_public_dict(row) for row in llm_rows],
+            [_row_to_public_dict(row) for row in trace_rows],
+            project_id=project_id,
+            limit=limit,
+        )
+
 
 def _validate_public_id(value: str, name: str) -> None:
     if not value or any(char in value for char in "\\/:*?\"<>|"):
@@ -700,6 +731,102 @@ def _metrics_text_from_items(
     lines.extend(_labelled_metric_lines("midea_workflow_events_by_type_total", "event_type", event_type_counts))
     lines.append("")
     return "\n".join(lines)
+
+
+def _cost_summary_from_items(
+    llm_calls: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    *,
+    project_id: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    trace_by_id = {str(item.get("trace_id")): item for item in traces if item.get("trace_id")}
+    total = _empty_cost_bucket()
+    by_project: dict[str, dict[str, Any]] = {}
+    by_provider_model: dict[tuple[str, str], dict[str, Any]] = {}
+    by_prompt: dict[str, dict[str, Any]] = {}
+    by_date: dict[str, dict[str, Any]] = {}
+
+    for raw_call in llm_calls:
+        trace = trace_by_id.get(str(raw_call.get("trace_id") or ""), {})
+        call_project_id = str(raw_call.get("project_id") or trace.get("project_id") or "unknown")
+        if project_id and call_project_id != project_id:
+            continue
+        provider = str(raw_call.get("provider") or "unknown")
+        model = str(raw_call.get("model") or "unknown")
+        prompt_name = str(raw_call.get("prompt_name") or "unknown")
+        date = _date_bucket(raw_call.get("created_at") or trace.get("started_at"))
+        item = {
+            "project_id": call_project_id,
+            "provider": provider,
+            "model": model,
+            "prompt_name": prompt_name,
+            "date": date,
+            "status": raw_call.get("status"),
+            "latency_ms": int(raw_call.get("latency_ms") or 0),
+            "input_tokens": int(raw_call.get("input_tokens") or 0),
+            "output_tokens": int(raw_call.get("output_tokens") or 0),
+            "estimated_cost": float(raw_call.get("estimated_cost") or 0),
+        }
+        _add_cost_item(total, item)
+        _add_cost_item(by_project.setdefault(call_project_id, _empty_cost_bucket(project_id=call_project_id)), item)
+        _add_cost_item(
+            by_provider_model.setdefault((provider, model), _empty_cost_bucket(provider=provider, model=model)),
+            item,
+        )
+        _add_cost_item(by_prompt.setdefault(prompt_name, _empty_cost_bucket(prompt_name=prompt_name)), item)
+        _add_cost_item(by_date.setdefault(date, _empty_cost_bucket(date=date)), item)
+
+    return {
+        "project_id": project_id,
+        "total": _finalize_cost_bucket(total),
+        "by_project": _top_cost_buckets(by_project.values(), limit),
+        "by_provider_model": _top_cost_buckets(by_provider_model.values(), limit),
+        "by_prompt": _top_cost_buckets(by_prompt.values(), limit),
+        "by_date": [_finalize_cost_bucket(item) for _, item in sorted(by_date.items())][-limit:],
+    }
+
+
+def _empty_cost_bucket(**labels: Any) -> dict[str, Any]:
+    return {
+        **labels,
+        "calls": 0,
+        "failed_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "estimated_cost": 0.0,
+        "latency_ms_total": 0,
+    }
+
+
+def _add_cost_item(bucket: dict[str, Any], item: dict[str, Any]) -> None:
+    bucket["calls"] += 1
+    if item.get("status") == "failed":
+        bucket["failed_calls"] += 1
+    bucket["input_tokens"] += int(item.get("input_tokens") or 0)
+    bucket["output_tokens"] += int(item.get("output_tokens") or 0)
+    bucket["estimated_cost"] += float(item.get("estimated_cost") or 0)
+    bucket["latency_ms_total"] += int(item.get("latency_ms") or 0)
+
+
+def _finalize_cost_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
+    item = dict(bucket)
+    calls = int(item.get("calls") or 0)
+    item["estimated_cost"] = round(float(item.get("estimated_cost") or 0), 6)
+    item["average_latency_ms"] = round(float(item.get("latency_ms_total") or 0) / calls, 3) if calls else 0
+    item.pop("latency_ms_total", None)
+    return item
+
+
+def _top_cost_buckets(items: Any, limit: int) -> list[dict[str, Any]]:
+    finalized = [_finalize_cost_bucket(item) for item in items]
+    finalized.sort(key=lambda item: (float(item.get("estimated_cost") or 0), int(item.get("calls") or 0)), reverse=True)
+    return finalized[:limit]
+
+
+def _date_bucket(value: Any) -> str:
+    parsed = _parse_datetime(value)
+    return parsed.date().isoformat() if parsed is not None else "unknown"
 
 
 def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:

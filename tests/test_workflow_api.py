@@ -671,6 +671,17 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert llm_calls[0]["provider"] == "deepseek"
     assert llm_calls[0]["prompt_name"] == "llm_planner"
     assert llm_calls[0]["input_tokens"] == 120
+    costs = client.get("/api/observability/costs")
+    assert costs.status_code == 200
+    cost_data = costs.json()
+    assert cost_data["total"]["calls"] >= 1
+    assert cost_data["total"]["input_tokens"] >= 120
+    assert any(item["provider"] == "deepseek" and item["model"] == "deepseek-chat" for item in cost_data["by_provider_model"])
+    assert any(item["prompt_name"] == "llm_planner" for item in cost_data["by_prompt"])
+    project_costs = client.get("/api/observability/costs", params={"project_id": state["current_project_id"]})
+    assert project_costs.status_code == 200
+    assert project_costs.json()["project_id"] == state["current_project_id"]
+    assert project_costs.json()["total"]["calls"] >= 1
 
     dry_run = client.post(
         "/api/planner/dry-run",

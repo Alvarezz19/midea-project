@@ -279,6 +279,29 @@ export interface ObservabilityMetrics {
   eventsByType: Record<string, number>;
 }
 
+export interface CostBucket {
+  project_id?: string | null;
+  provider?: string;
+  model?: string;
+  prompt_name?: string;
+  date?: string;
+  calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  average_latency_ms: number;
+}
+
+export interface CostSummaryResponse {
+  project_id?: string | null;
+  total: CostBucket;
+  by_project: CostBucket[];
+  by_provider_model: CostBucket[];
+  by_prompt: CostBucket[];
+  by_date: CostBucket[];
+}
+
 export interface LlmCallRecord {
   id?: string;
   llm_call_id?: string;

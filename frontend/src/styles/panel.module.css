@@ -567,6 +567,57 @@
   background: #fbfdfe;
 }
 
+.costPanel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(216, 224, 228, 0.82);
+}
+
+.costStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.costStats :global(.ant-statistic) {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.costStats :global(.ant-statistic-content) {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  text-overflow: ellipsis;
+}
+
+.costChart {
+  height: 180px;
+  min-width: 0;
+  margin-top: 8px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.costColumns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.costItem {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 7px 0 !important;
+}
+
 @media (max-width: 680px) {
   .impactMetrics {
     grid-template-columns: 1fr;
@@ -596,6 +647,8 @@
   .metricsGrid,
   .metricsColumns,
   .metricsChartGrid,
+  .costStats,
+  .costColumns,
   .feedbackPanel {
     grid-template-columns: 1fr;
   }

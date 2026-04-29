@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type {
   AgentTrace,
   ApiProblem,
+  CostSummaryResponse,
   FeedbackPayload,
   FeedbackListResponse,
   FeedbackResponse,
@@ -153,6 +154,14 @@ export function listProjectFeedback(projectId: string): Promise<FeedbackListResp
 
 export function getTrace(traceId: string): Promise<AgentTrace> {
   return apiRequest<AgentTrace>(`/api/traces/${encodeURIComponent(traceId)}`);
+}
+
+export function getCostSummary(projectId?: string | null): Promise<CostSummaryResponse> {
+  const params = new URLSearchParams({ limit: '50' });
+  if (projectId) {
+    params.set('project_id', projectId);
+  }
+  return apiRequest<CostSummaryResponse>(`/api/observability/costs?${params.toString()}`);
 }
 
 export async function getMetricsSummary(): Promise<ObservabilityMetrics> {
