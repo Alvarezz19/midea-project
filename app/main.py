@@ -523,9 +523,25 @@ def extract_requirement_api(request: RequirementExtractRequest) -> dict[str, Any
 @app.post("/api/planner/plan")
 def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
     path = _resolve_allowed_project_file(request.project_path)
-    if request.use_llm:
-        try:
-            return plan_patch_with_llm(
+    trace, thread_id, state = _api_trace_context(
+        "planner_plan",
+        project_path=path,
+        project_type=request.project_type,
+        template_id=request.template_id,
+    )
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.planner.plan.started",
+        step="plan_change",
+        status="running",
+        message="独立 planner 规划已开始",
+        state=state,
+        payload={"use_llm": request.use_llm, "template_id": request.template_id},
+    )
+    try:
+        if request.use_llm:
+            result = plan_patch_with_llm(
                 request.message,
                 project_path=str(path),
                 template_id=request.template_id,
@@ -533,53 +549,126 @@ def plan_patch_api(request: PlanPatchRequest) -> dict[str, Any]:
                 provider=request.provider,
                 max_attempts=request.llm_max_attempts,
             )
-        except LLMPlannerError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return plan_patch_request(
-        request.message,
-        project_path=str(path),
-        template_id=request.template_id,
-        project_type=request.project_type,
+        else:
+            result = plan_patch_request(
+                request.message,
+                project_path=str(path),
+                template_id=request.template_id,
+                project_type=request.project_type,
+            )
+    except LLMPlannerError as exc:
+        _record_api_failure(trace["trace_id"], thread_id, state, "api.planner.plan.failed", "plan_change", "独立 planner 规划失败", exc)
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.planner.plan.completed",
+        step="plan_change",
+        status=str(result.get("status") or "completed"),
+        message="独立 planner 规划已完成",
+        state=state,
+        payload=_planner_result_summary(result),
     )
+    _finish_trace(trace["trace_id"], "completed")
+    return {**result, "trace_id": trace["trace_id"]}
 
 
 @app.post("/api/planner/dry-run")
 def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
     path = _resolve_allowed_project_file(request.project_path)
-    if request.use_llm and request.pending_patch is None:
-        return _planner_llm_dry_run_with_feedback(request, str(path))
-
-    planner_result: dict[str, Any] | None = None
-    pending_patch = request.pending_patch
-    if pending_patch is None:
-        if not request.message:
-            raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
-        planner_result = plan_patch_request(
-            request.message,
-            project_path=str(path),
-            template_id=request.template_id,
-            project_type=request.project_type,
-        )
-        pending_patch = planner_result.get("pending_patch")
-    if not pending_patch:
-        return {
-            "status": "needs_clarification",
-            "planner_result": planner_result,
-            "pending_patch": None,
-            "dry_run": None,
-        }
-
+    trace, thread_id, state = _api_trace_context(
+        "planner_dry_run",
+        project_path=path,
+        project_type=request.project_type,
+        template_id=request.template_id,
+    )
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.planner.dry_run.started",
+        step="dry_run",
+        status="running",
+        message="独立 planner dry-run 已开始",
+        state=state,
+        payload={"use_llm": request.use_llm, "has_pending_patch": request.pending_patch is not None},
+    )
     try:
+        if request.use_llm and request.pending_patch is None:
+            result = _planner_llm_dry_run_with_feedback(request, str(path))
+            _record_event(
+                trace["trace_id"],
+                thread_id,
+                event_type="api.planner.dry_run.completed",
+                step="dry_run",
+                status=str(result.get("status") or "completed"),
+                message="独立 LLM planner dry-run 已完成",
+                state=state,
+                payload=_planner_dry_run_result_summary(result),
+            )
+            _finish_trace(trace["trace_id"], "completed")
+            return {**result, "trace_id": trace["trace_id"]}
+
+        planner_result: dict[str, Any] | None = None
+        pending_patch = request.pending_patch
+        if pending_patch is None:
+            if not request.message:
+                raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
+            planner_result = plan_patch_request(
+                request.message,
+                project_path=str(path),
+                template_id=request.template_id,
+                project_type=request.project_type,
+            )
+            pending_patch = planner_result.get("pending_patch")
+        if not pending_patch:
+            result = {
+                "status": "needs_clarification",
+                "planner_result": planner_result,
+                "pending_patch": None,
+                "dry_run": None,
+            }
+            _record_event(
+                trace["trace_id"],
+                thread_id,
+                event_type="api.planner.dry_run.completed",
+                step="dry_run",
+                status="needs_clarification",
+                message="独立 planner dry-run 需要澄清",
+                state=state,
+                payload=_planner_dry_run_result_summary(result),
+            )
+            _finish_trace(trace["trace_id"], "completed")
+            return {**result, "trace_id": trace["trace_id"]}
+
         dry_run = dry_run_patch_to_project(str(path), pending_patch)
-    except PatchEngineError as exc:
+    except (LLMPlannerError, PlannerDryRunFeedbackError, PatchEngineError, HTTPException) as exc:
+        _record_api_failure(trace["trace_id"], thread_id, state, "api.planner.dry_run.failed", "dry_run", "独立 planner dry-run 失败", exc)
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
+        if isinstance(exc, HTTPException):
+            raise exc
+        if isinstance(exc, PlannerDryRunFeedbackError):
+            raise HTTPException(status_code=400, detail=exc.payload) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     dry_run.pop("nodes", None)
-    return {
+    result = {
         "status": "dry_run_valid" if dry_run["valid"] else "dry_run_invalid",
         "planner_result": planner_result,
         "pending_patch": pending_patch,
         "dry_run": dry_run,
     }
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.planner.dry_run.completed",
+        step="dry_run",
+        status=str(result["status"]),
+        message="独立 planner dry-run 已完成",
+        state=state,
+        payload=_planner_dry_run_result_summary(result),
+    )
+    _finish_trace(trace["trace_id"], "completed")
+    return {**result, "trace_id": trace["trace_id"]}
 
 
 def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_path: str) -> dict[str, Any]:
@@ -670,9 +759,36 @@ def get_project_version_flow(
 @app.post("/api/projects/{project_id}/validate")
 def validate_project_by_id(project_id: str) -> dict[str, Any]:
     path = _get_current_project_path(project_id)
-    report = validate_project(load_project(path))
-    _record_validation_if_needed(project_id, _get_current_project_version_id(project_id), report)
-    return report
+    version_id = _get_current_project_version_id(project_id)
+    trace, thread_id, state = _api_trace_context("project_validate", project_id=project_id, version_id=version_id, project_path=path)
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.validation.started",
+        step="validation",
+        status="running",
+        message="独立工程校验已开始",
+        state=state,
+    )
+    try:
+        report = validate_project(load_project(path))
+    except Exception as exc:
+        _record_api_failure(trace["trace_id"], thread_id, state, "api.validation.failed", "validation", "独立工程校验失败", exc)
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
+        raise
+    _record_validation_if_needed(project_id, version_id, report)
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.validation.completed",
+        step="validation",
+        status="completed" if report.get("valid") else "failed",
+        message="独立工程校验已完成",
+        state=state,
+        payload=_validation_summary_payload(report),
+    )
+    _finish_trace(trace["trace_id"], "completed" if report.get("valid") else "failed")
+    return {**report, "trace_id": trace["trace_id"]}
 
 
 @app.post("/api/projects/{project_id}/rollback")
@@ -718,19 +834,49 @@ def rollback_project(project_id: str, request: RollbackProjectRequest) -> dict[s
 @app.post("/api/projects/validate")
 def validate_project_api(request: ValidateProjectRequest) -> dict[str, Any]:
     path = _resolve_allowed_project_file(request.path)
-    return validate_project(load_project(path))
+    trace, thread_id, state = _api_trace_context("project_validate_by_path", project_path=path)
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.validation.started",
+        step="validation",
+        status="running",
+        message="独立工程校验已开始",
+        state=state,
+    )
+    try:
+        report = validate_project(load_project(path))
+    except Exception as exc:
+        _record_api_failure(trace["trace_id"], thread_id, state, "api.validation.failed", "validation", "独立工程校验失败", exc)
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
+        raise
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="api.validation.completed",
+        step="validation",
+        status="completed" if report.get("valid") else "failed",
+        message="独立工程校验已完成",
+        state=state,
+        payload=_validation_summary_payload(report),
+    )
+    _finish_trace(trace["trace_id"], "completed" if report.get("valid") else "failed")
+    return {**report, "trace_id": trace["trace_id"]}
 
 
 @app.get("/api/projects/{project_id}/export")
 def export_project_by_id(project_id: str) -> FileResponse:
     target = _get_current_project_path(project_id)
-    return _export_valid_project_file(target)
+    version_id = _get_current_project_version_id(project_id)
+    trace, thread_id, state = _api_trace_context("project_export", project_id=project_id, version_id=version_id, project_path=target)
+    return _export_valid_project_file(target, trace_id=trace["trace_id"], thread_id=thread_id, state=state)
 
 
 @app.get("/api/projects/export")
 def export_project(path: str) -> FileResponse:
     target = _resolve_allowed_project_file(path)
-    return _export_valid_project_file(target)
+    trace, thread_id, state = _api_trace_context("project_export_by_path", project_path=target)
+    return _export_valid_project_file(target, trace_id=trace["trace_id"], thread_id=thread_id, state=state)
 
 
 @app.get("/api/traces/{trace_id}")
@@ -765,21 +911,69 @@ def metrics() -> PlainTextResponse:
     return PlainTextResponse(_observability_store().metrics_text(), media_type="text/plain; version=0.0.4")
 
 
-def _export_valid_project_file(target: Path) -> FileResponse:
-    report = validate_project(load_project(target))
+def _export_valid_project_file(target: Path, *, trace_id: str, thread_id: str, state: dict[str, Any]) -> FileResponse:
+    _record_event(
+        trace_id,
+        thread_id,
+        event_type="api.export.started",
+        step="export",
+        status="running",
+        message="工程导出检查已开始",
+        state=state,
+    )
+    try:
+        report = validate_project(load_project(target))
+    except Exception as exc:
+        _record_api_failure(trace_id, thread_id, state, "api.export.failed", "export", "工程导出检查失败", exc)
+        _finish_trace(trace_id, "failed", error=str(exc))
+        raise
+    _record_event(
+        trace_id,
+        thread_id,
+        event_type="api.validation.completed",
+        step="validation",
+        status="completed" if report.get("valid") else "failed",
+        message="导出前校验已完成",
+        state=state,
+        payload=_validation_summary_payload(report),
+    )
     if not report["exportable"]:
+        _record_event(
+            trace_id,
+            thread_id,
+            event_type="api.export.failed",
+            step="export",
+            status="failed",
+            message="工程校验未通过，拒绝导出",
+            state=state,
+            payload=_validation_summary_payload(report),
+        )
+        _finish_trace(trace_id, "failed", error="工程校验未通过，拒绝导出。")
         raise HTTPException(
             status_code=400,
             detail={
                 "message": "工程校验未通过，拒绝导出。",
                 "validation_report": report,
+                "trace_id": trace_id,
             },
         )
     _record_export_if_needed(str(target), report)
+    _record_event(
+        trace_id,
+        thread_id,
+        event_type="api.export.completed",
+        step="export",
+        status="completed",
+        message="工程导出已通过校验",
+        state=state,
+        payload=_validation_summary_payload(report),
+    )
+    _finish_trace(trace_id, "completed")
     return FileResponse(
         target,
         media_type="application/json",
         filename=target.name,
+        headers={"X-Trace-Id": trace_id},
     )
 
 
@@ -886,6 +1080,54 @@ def _start_trace(
         project_id=str(project_id) if project_id else None,
         version_id=str(version_id) if version_id else None,
     )
+
+
+def _api_trace_context(
+    root_input: str,
+    *,
+    project_id: str | None = None,
+    version_id: str | None = None,
+    project_path: str | Path | None = None,
+    project_type: str | None = None,
+    template_id: str | None = None,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    thread_id, state = _find_session_context(project_id=project_id, project_path=project_path)
+    state = dict(state or {})
+    if project_id and not state.get("current_project_id"):
+        state["current_project_id"] = project_id
+    if version_id and not state.get("current_project_version_id"):
+        state["current_project_version_id"] = version_id
+    if project_path and not state.get("current_project_path"):
+        state["current_project_path"] = str(project_path)
+    if project_type and not state.get("project_type"):
+        state["project_type"] = project_type
+    if template_id and not state.get("selected_template_id"):
+        state["selected_template_id"] = template_id
+    trace = _start_trace(
+        thread_id,
+        root_input,
+        project_id=state.get("current_project_id"),
+        version_id=state.get("current_project_version_id"),
+    )
+    return trace, thread_id, state
+
+
+def _find_session_context(
+    *,
+    project_id: str | None = None,
+    project_path: str | Path | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    if project_id:
+        items = _session_store().find_items_by_project_id(project_id)
+        if items:
+            return items[0]
+    if project_path is not None:
+        target = resolve_project_path(project_path)
+        for thread_id, state in _session_store().list_items():
+            current_path = state.get("current_project_path")
+            if current_path and resolve_project_path(str(current_path)) == target:
+                return thread_id, state
+    return f"api_{uuid.uuid4().hex}", None
 
 
 def _finish_trace(trace_id: str, status: str, *, error: str | None = None) -> None:
@@ -1087,6 +1329,58 @@ def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
             }
         )
     return events
+
+
+def _record_api_failure(
+    trace_id: str,
+    thread_id: str,
+    state: dict[str, Any],
+    event_type: str,
+    step: str,
+    message: str,
+    exc: Exception,
+) -> None:
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    _record_event(
+        trace_id,
+        thread_id,
+        event_type=event_type,
+        step=step,
+        status="failed",
+        message=message,
+        state=state,
+        payload={"error": _error_payload(detail)},
+    )
+
+
+def _error_payload(detail: Any) -> Any:
+    if isinstance(detail, dict):
+        return {key: detail.get(key) for key in ("message", "trace_id") if key in detail} or "结构化错误"
+    return str(detail)
+
+
+def _planner_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": result.get("status"),
+        "planner": result.get("planner"),
+        "risk_level": result.get("risk_level"),
+        "requires_confirmation": result.get("requires_confirmation"),
+        "operation_count": _operation_count(result.get("pending_patch")),
+        "planner_attempt_count": result.get("planner_attempt_count"),
+    }
+
+
+def _planner_dry_run_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "status": result.get("status"),
+        "planner_result": _planner_result_summary(result["planner_result"]) if isinstance(result.get("planner_result"), dict) else None,
+        "operation_count": _operation_count(result.get("pending_patch")),
+    }
+    if isinstance(result.get("dry_run"), dict):
+        payload["dry_run"] = _dry_run_summary(result["dry_run"])
+    if isinstance(result.get("planner_attempts"), list):
+        payload["planner_attempt_count"] = len(result["planner_attempts"])
+    return payload
 
 
 def _interrupt_kind(value: Any) -> str | None:

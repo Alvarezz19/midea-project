@@ -172,26 +172,22 @@ class FileObservabilityStore:
         return item
 
     def metrics_text(self) -> str:
-        trace_count = len(list(self.traces_dir.glob("trace_*.json"))) if self.traces_dir.exists() else 0
-        event_count = 0
+        traces: list[dict[str, Any]] = []
+        if self.traces_dir.exists():
+            for path in self.traces_dir.glob("trace_*.json"):
+                try:
+                    with path.open("r", encoding="utf-8") as file:
+                        item = json.load(file)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if isinstance(item, dict):
+                    traces.append(item)
+        events: list[dict[str, Any]] = []
         if self.events_dir.exists():
             for path in self.events_dir.glob("*.jsonl"):
-                event_count += len(path.read_text(encoding="utf-8").splitlines())
+                events.extend(self._read_jsonl(path))
         feedback_count = len(self.feedback_path.read_text(encoding="utf-8").splitlines()) if self.feedback_path.exists() else 0
-        return "\n".join(
-            [
-                "# HELP midea_workflow_events_total 工作流事件总数",
-                "# TYPE midea_workflow_events_total counter",
-                f"midea_workflow_events_total {event_count}",
-                "# HELP midea_agent_traces_total agent trace 总数",
-                "# TYPE midea_agent_traces_total counter",
-                f"midea_agent_traces_total {trace_count}",
-                "# HELP midea_user_feedback_total 用户反馈总数",
-                "# TYPE midea_user_feedback_total counter",
-                f"midea_user_feedback_total {feedback_count}",
-                "",
-            ]
-        )
+        return _metrics_text_from_items(events, traces, feedback_count)
 
     def _events_path(self, thread_id: str) -> Path:
         _validate_public_id(thread_id, "thread_id")
@@ -424,22 +420,13 @@ class PostgresObservabilityStore:
         from app.services.postgres_runtime import _connect
 
         with _connect() as conn:
-            event_count = conn.execute("SELECT count(*) AS count FROM workflow_events").fetchone()["count"]
-            trace_count = conn.execute("SELECT count(*) AS count FROM agent_traces").fetchone()["count"]
             feedback_count = conn.execute("SELECT count(*) AS count FROM user_feedback").fetchone()["count"]
-        return "\n".join(
-            [
-                "# HELP midea_workflow_events_total 工作流事件总数",
-                "# TYPE midea_workflow_events_total counter",
-                f"midea_workflow_events_total {int(event_count)}",
-                "# HELP midea_agent_traces_total agent trace 总数",
-                "# TYPE midea_agent_traces_total counter",
-                f"midea_agent_traces_total {int(trace_count)}",
-                "# HELP midea_user_feedback_total 用户反馈总数",
-                "# TYPE midea_user_feedback_total counter",
-                f"midea_user_feedback_total {int(feedback_count)}",
-                "",
-            ]
+            event_rows = conn.execute("SELECT * FROM workflow_events").fetchall()
+            trace_rows = conn.execute("SELECT * FROM agent_traces").fetchall()
+        return _metrics_text_from_items(
+            [_row_to_public_dict(row) for row in event_rows],
+            [_row_to_public_dict(row) for row in trace_rows],
+            int(feedback_count),
         )
 
 
@@ -453,3 +440,89 @@ def _row_to_public_dict(row: dict[str, Any]) -> dict[str, Any]:
     for key, value in row.items():
         item[key] = value.isoformat() if hasattr(value, "isoformat") else value
     return item
+
+
+def _metrics_text_from_items(events: list[dict[str, Any]], traces: list[dict[str, Any]], feedback_count: int) -> str:
+    event_status_counts = _count_by(events, "status")
+    event_type_counts = _count_by(events, "event_type")
+    failed_trace_count = sum(1 for item in traces if item.get("status") in {"failed", "error"})
+    llm_events = [item for item in events if str(item.get("event_type") or "").startswith("llm.")]
+    export_events = [item for item in events if "export" in str(item.get("event_type") or "")]
+    durations = [_trace_duration_ms(item) for item in traces]
+    durations = [item for item in durations if item is not None]
+    p95_duration = _percentile(durations, 0.95)
+    lines = [
+        "# HELP midea_workflow_events_total 工作流事件总数",
+        "# TYPE midea_workflow_events_total counter",
+        f"midea_workflow_events_total {len(events)}",
+        "# HELP midea_agent_traces_total agent trace 总数",
+        "# TYPE midea_agent_traces_total counter",
+        f"midea_agent_traces_total {len(traces)}",
+        "# HELP midea_agent_traces_failed_total 失败 trace 总数",
+        "# TYPE midea_agent_traces_failed_total counter",
+        f"midea_agent_traces_failed_total {failed_trace_count}",
+        "# HELP midea_trace_duration_ms_p95 trace 耗时 P95 毫秒",
+        "# TYPE midea_trace_duration_ms_p95 gauge",
+        f"midea_trace_duration_ms_p95 {p95_duration:.3f}",
+        "# HELP midea_user_feedback_total 用户反馈总数",
+        "# TYPE midea_user_feedback_total counter",
+        f"midea_user_feedback_total {feedback_count}",
+        "# HELP midea_llm_calls_total LLM 调用事件总数",
+        "# TYPE midea_llm_calls_total counter",
+        f"midea_llm_calls_total {len(llm_events)}",
+        "# HELP midea_llm_calls_failed_total LLM 调用失败事件总数",
+        "# TYPE midea_llm_calls_failed_total counter",
+        f"midea_llm_calls_failed_total {sum(1 for item in llm_events if item.get('status') in {'failed', 'error'})}",
+        "# HELP midea_project_exports_total 导出事件总数",
+        "# TYPE midea_project_exports_total counter",
+        f"midea_project_exports_total {len(export_events)}",
+        "# HELP midea_project_exports_failed_total 导出失败事件总数",
+        "# TYPE midea_project_exports_failed_total counter",
+        f"midea_project_exports_failed_total {sum(1 for item in export_events if item.get('status') in {'failed', 'error'})}",
+    ]
+    lines.extend(_labelled_metric_lines("midea_workflow_events_by_status_total", "status", event_status_counts))
+    lines.extend(_labelled_metric_lines("midea_workflow_events_by_type_total", "event_type", event_type_counts))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _labelled_metric_lines(metric: str, label: str, counts: dict[str, int]) -> list[str]:
+    return [f'{metric}{{{label}="{_escape_prometheus_label(key)}"}} {value}' for key, value in sorted(counts.items())]
+
+
+def _escape_prometheus_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _trace_duration_ms(trace: dict[str, Any]) -> float | None:
+    started = _parse_datetime(trace.get("started_at"))
+    finished = _parse_datetime(trace.get("finished_at"))
+    if started is None or finished is None:
+        return None
+    duration = (finished - started).total_seconds() * 1000
+    return duration if duration >= 0 else None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _percentile(values: list[float], ratio: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * ratio))))
+    return ordered[index]

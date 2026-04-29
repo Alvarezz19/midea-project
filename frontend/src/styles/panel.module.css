@@ -427,6 +427,50 @@
   padding: 80px 16px;
 }
 
+.metricsPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.metricsGrid :global(.ant-statistic) {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.metricsGrid :global(.ant-statistic-content) {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  text-overflow: ellipsis;
+}
+
+.metricsColumns {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr);
+  gap: 16px;
+}
+
+.metricsTags {
+  display: flex;
+  margin-top: 10px;
+}
+
+.metricTypeItem {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 7px 0 !important;
+}
+
 @media (max-width: 680px) {
   .impactMetrics {
     grid-template-columns: 1fr;
@@ -450,6 +494,11 @@
   }
 
   .traceStats {
+    grid-template-columns: 1fr;
+  }
+
+  .metricsGrid,
+  .metricsColumns {
     grid-template-columns: 1fr;
   }
 

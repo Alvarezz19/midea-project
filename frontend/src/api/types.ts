@@ -253,3 +253,17 @@ export interface AgentTrace {
   metadata?: Record<string, unknown> | null;
   events: WorkflowEvent[];
 }
+
+export interface ObservabilityMetrics {
+  workflowEventsTotal: number;
+  tracesTotal: number;
+  failedTracesTotal: number;
+  traceDurationP95Ms: number;
+  userFeedbackTotal: number;
+  llmCallsTotal: number;
+  llmCallsFailedTotal: number;
+  projectExportsTotal: number;
+  projectExportsFailedTotal: number;
+  eventsByStatus: Record<string, number>;
+  eventsByType: Record<string, number>;
+}

@@ -1,7 +1,8 @@
-import { Button, Drawer, Form, Input, List, Rate, Select, Space, Tabs, Tag, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Drawer, Form, Input, List, Rate, Select, Skeleton, Space, Statistic, Tabs, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
-import { useMutation } from '@tanstack/react-query';
-import { formatApiError, submitFeedback } from '../../api/client';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { formatApiError, getMetricsSummary, submitFeedback } from '../../api/client';
+import type { ObservabilityMetrics } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
@@ -102,8 +103,8 @@ export function BottomObservabilityDrawer() {
             },
             {
               key: 'cost',
-              label: '成本',
-              children: <Text type="secondary">7.7 接入 LLM 调用、token、成本和失败率聚合。</Text>
+              label: '指标',
+              children: <MetricsPanel />
             },
             {
               key: 'feedback',
@@ -147,6 +148,79 @@ export function BottomObservabilityDrawer() {
       </Drawer>
     </>
   );
+}
+
+function MetricsPanel() {
+  const query = useQuery({
+    queryKey: ['observability-metrics'],
+    queryFn: getMetricsSummary,
+    refetchInterval: 15000
+  });
+
+  if (query.isLoading) {
+    return <Skeleton active paragraph={{ rows: 4 }} />;
+  }
+  if (query.isError) {
+    return <Alert type="error" showIcon message="指标加载失败" description={formatApiError(query.error)} />;
+  }
+  if (!query.data) {
+    return <Text type="secondary">暂无指标</Text>;
+  }
+  return <MetricsSummary metrics={query.data} />;
+}
+
+function MetricsSummary({ metrics }: { metrics: ObservabilityMetrics }) {
+  const topTypes = Object.entries(metrics.eventsByType)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 6);
+
+  return (
+    <div className={panelStyles.metricsPanel}>
+      <div className={panelStyles.metricsGrid}>
+        <Statistic title="事件总数" value={metrics.workflowEventsTotal} />
+        <Statistic title="Trace 总数" value={metrics.tracesTotal} />
+        <Statistic title="失败 Trace" value={metrics.failedTracesTotal} valueStyle={metrics.failedTracesTotal ? { color: '#A53232' } : undefined} />
+        <Statistic title="P95 耗时" value={formatMetricDuration(metrics.traceDurationP95Ms)} />
+        <Statistic title="LLM 调用" value={metrics.llmCallsTotal} />
+        <Statistic title="LLM 失败" value={metrics.llmCallsFailedTotal} valueStyle={metrics.llmCallsFailedTotal ? { color: '#A53232' } : undefined} />
+        <Statistic title="导出事件" value={metrics.projectExportsTotal} />
+        <Statistic title="反馈数" value={metrics.userFeedbackTotal} />
+      </div>
+      <div className={panelStyles.metricsColumns}>
+        <div>
+          <Text strong>状态分布</Text>
+          <Space wrap className={panelStyles.metricsTags}>
+            {Object.entries(metrics.eventsByStatus).map(([status, value]) => (
+              <Tag key={status} color={status === 'failed' || status === 'error' ? 'error' : status === 'completed' ? 'success' : 'processing'}>
+                {status}: {value}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+        <div>
+          <Text strong>高频事件</Text>
+          <List
+            size="small"
+            dataSource={topTypes}
+            locale={{ emptyText: '暂无事件' }}
+            renderItem={([type, value]) => (
+              <List.Item className={panelStyles.metricTypeItem}>
+                <Text ellipsis>{type}</Text>
+                <Tag>{value}</Tag>
+              </List.Item>
+            )}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatMetricDuration(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0ms';
+  }
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
 }
 
 function feedbackCategory(status?: string | null): string {

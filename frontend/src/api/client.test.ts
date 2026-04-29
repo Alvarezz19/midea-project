@@ -6,6 +6,7 @@ import {
   formatApiError,
   getProjectDiff,
   listProjectVersions,
+  parsePrometheusMetrics,
   parseSseEvents,
   rollbackProject,
   submitFeedback,
@@ -141,5 +142,31 @@ describe('api client', () => {
     });
     expect(events[0].payload?.state).toEqual({ next_action: 'export' });
     expect(events[1].message).toBe('正在生成结构化修改计划');
+  });
+
+  it('parses Prometheus observability metrics into drawer summary data', () => {
+    const metrics = parsePrometheusMetrics(
+      [
+        '# HELP midea_workflow_events_total 工作流事件总数',
+        'midea_workflow_events_total 8',
+        'midea_agent_traces_total 3',
+        'midea_agent_traces_failed_total 1',
+        'midea_trace_duration_ms_p95 1530.5',
+        'midea_user_feedback_total 2',
+        'midea_llm_calls_total 4',
+        'midea_llm_calls_failed_total 1',
+        'midea_project_exports_total 2',
+        'midea_project_exports_failed_total 1',
+        'midea_workflow_events_by_status_total{status="completed"} 6',
+        'midea_workflow_events_by_status_total{status="failed"} 2',
+        'midea_workflow_events_by_type_total{event_type="api.export.completed"} 1'
+      ].join('\n')
+    );
+
+    expect(metrics.workflowEventsTotal).toBe(8);
+    expect(metrics.failedTracesTotal).toBe(1);
+    expect(metrics.traceDurationP95Ms).toBe(1530.5);
+    expect(metrics.eventsByStatus.completed).toBe(6);
+    expect(metrics.eventsByType['api.export.completed']).toBe(1);
   });
 });

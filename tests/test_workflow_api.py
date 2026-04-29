@@ -582,14 +582,22 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "midea_workflow_events_total" in metrics.text
+    assert "midea_trace_duration_ms_p95" in metrics.text
+    assert 'midea_workflow_events_by_status_total{status="completed"}' in metrics.text
 
     validate = client.post("/api/projects/validate", json={"path": state["current_project_path"]})
     assert validate.status_code == 200
     assert validate.json()["valid"]
+    path_validate_trace = validate.json()["trace_id"]
+    path_validate_trace_data = client.get(f"/api/traces/{path_validate_trace}").json()
+    assert path_validate_trace_data["events"][-1]["event_type"] == "api.validation.completed"
 
     validate_by_id = client.post(f"/api/projects/{state['current_project_id']}/validate")
     assert validate_by_id.status_code == 200
     assert validate_by_id.json()["valid"]
+    validate_trace = client.get(f"/api/traces/{validate_by_id.json()['trace_id']}")
+    assert validate_trace.status_code == 200
+    assert validate_trace.json()["project_id"] == state["current_project_id"]
 
     candidate = state["template_candidates"][0]
     plan_node = search_nodes("比较判断", template_id=candidate["template_id"], node_type="compare", limit=1)[0]
@@ -605,6 +613,9 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert plan.status_code == 200
     assert plan.json()["status"] == "planned"
     assert plan.json()["pending_patch"]["op"] == "rename_node"
+    plan_trace = client.get(f"/api/traces/{plan.json()['trace_id']}")
+    assert plan_trace.status_code == 200
+    assert any(item["event_type"] == "api.planner.plan.completed" for item in plan_trace.json()["events"])
 
     dry_run = client.post(
         "/api/planner/dry-run",
@@ -622,16 +633,24 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert dry_run_data["dry_run"]["diff"]["summary"]["modified_count"] == 1
     assert dry_run_data["dry_run"]["diff"]["affected_node_ids"] == [plan_node["node_id"]]
     assert "nodes" not in dry_run_data["dry_run"]
+    dry_run_trace = client.get(f"/api/traces/{dry_run_data['trace_id']}")
+    assert dry_run_trace.status_code == 200
+    assert any(item["event_type"] == "api.planner.dry_run.completed" for item in dry_run_trace.json()["events"])
 
     export = client.get("/api/projects/export", params={"path": state["current_project_path"]})
     assert export.status_code == 200
     assert export.headers["content-type"].startswith("application/json")
+    assert export.headers["x-trace-id"].startswith("trace_")
     assert len(export.content) > 1000
 
     export_by_id = client.get(f"/api/projects/{state['current_project_id']}/export")
     assert export_by_id.status_code == 200
     assert export_by_id.headers["content-type"].startswith("application/json")
+    assert export_by_id.headers["x-trace-id"].startswith("trace_")
     assert export_by_id.content == export.content
+    export_trace = client.get(f"/api/traces/{export_by_id.headers['x-trace-id']}")
+    assert export_trace.status_code == 200
+    assert any(item["event_type"] == "api.export.completed" for item in export_trace.json()["events"])
 
     node = search_nodes("比较判断", template_id=candidate["template_id"], node_type="compare", limit=1)[0]
     patch = {"op": "rename_node", "node_selector": {"id": node["node_id"]}, "new_name": "API测试-比较节点"}
@@ -775,6 +794,10 @@ def test_export_rejects_invalid_project_json(tmp_path: Path, monkeypatch: pytest
     assert path_detail["validation_report"]["exportable"] is False
     assert path_detail["validation_report"]["blocked_export_reasons"] == ["存在 error 级校验问题。"]
     assert path_detail["validation_report"]["issues"][0]["code"] == "missing_wire_source"
+    assert path_detail["trace_id"].startswith("trace_")
+    path_trace = client.get(f"/api/traces/{path_detail['trace_id']}")
+    assert path_trace.status_code == 200
+    assert any(item["event_type"] == "api.export.failed" for item in path_trace.json()["events"])
 
     session_store.save(
         "invalid-export-thread",
@@ -801,4 +824,8 @@ def test_export_rejects_invalid_project_json(tmp_path: Path, monkeypatch: pytest
     )
     export_by_project = client.get("/api/projects/invalid_export_project/export")
     assert export_by_project.status_code == 400
-    assert export_by_project.json()["detail"]["validation_report"]["issues"][0]["code"] == "missing_wire_source"
+    project_detail = export_by_project.json()["detail"]
+    assert project_detail["validation_report"]["issues"][0]["code"] == "missing_wire_source"
+    project_trace = client.get(f"/api/traces/{project_detail['trace_id']}")
+    assert project_trace.status_code == 200
+    assert project_trace.json()["project_id"] == "invalid_export_project"

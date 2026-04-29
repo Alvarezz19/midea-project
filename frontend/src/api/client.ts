@@ -4,6 +4,7 @@ import type {
   ApiProblem,
   FeedbackPayload,
   FeedbackResponse,
+  ObservabilityMetrics,
   PatchConfirmationResponse,
   ProjectDiffResponse,
   ProjectFlowResponse,
@@ -145,6 +146,18 @@ export function getTrace(traceId: string): Promise<AgentTrace> {
   return apiRequest<AgentTrace>(`/api/traces/${encodeURIComponent(traceId)}`);
 }
 
+export async function getMetricsSummary(): Promise<ObservabilityMetrics> {
+  const response = await fetch('/metrics', {
+    headers: {
+      Accept: 'text/plain'
+    }
+  });
+  if (!response.ok) {
+    throw new ApiError(await toProblem(response));
+  }
+  return parsePrometheusMetrics(await response.text());
+}
+
 export interface SessionEventStreamHandlers {
   lastEventId?: string;
   onOpen?: () => void;
@@ -274,6 +287,64 @@ export function parseSseEvents(input: string): WorkflowEvent[] {
     .split(/\r?\n\r?\n/)
     .map((block) => parseSseBlock(block))
     .filter((event): event is WorkflowEvent => Boolean(event));
+}
+
+export function parsePrometheusMetrics(input: string): ObservabilityMetrics {
+  const summary: ObservabilityMetrics = {
+    workflowEventsTotal: 0,
+    tracesTotal: 0,
+    failedTracesTotal: 0,
+    traceDurationP95Ms: 0,
+    userFeedbackTotal: 0,
+    llmCallsTotal: 0,
+    llmCallsFailedTotal: 0,
+    projectExportsTotal: 0,
+    projectExportsFailedTotal: 0,
+    eventsByStatus: {},
+    eventsByType: {}
+  };
+  for (const line of input.split(/\r?\n/)) {
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+(-?\d+(?:\.\d+)?)/);
+    if (!match) {
+      continue;
+    }
+    const [, name, labels, rawValue] = match;
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    if (name === 'midea_workflow_events_total') summary.workflowEventsTotal = value;
+    if (name === 'midea_agent_traces_total') summary.tracesTotal = value;
+    if (name === 'midea_agent_traces_failed_total') summary.failedTracesTotal = value;
+    if (name === 'midea_trace_duration_ms_p95') summary.traceDurationP95Ms = value;
+    if (name === 'midea_user_feedback_total') summary.userFeedbackTotal = value;
+    if (name === 'midea_llm_calls_total') summary.llmCallsTotal = value;
+    if (name === 'midea_llm_calls_failed_total') summary.llmCallsFailedTotal = value;
+    if (name === 'midea_project_exports_total') summary.projectExportsTotal = value;
+    if (name === 'midea_project_exports_failed_total') summary.projectExportsFailedTotal = value;
+    const parsedLabels = labels ? parseMetricLabels(labels) : {};
+    if (name === 'midea_workflow_events_by_status_total' && parsedLabels.status) {
+      summary.eventsByStatus[parsedLabels.status] = value;
+    }
+    if (name === 'midea_workflow_events_by_type_total' && parsedLabels.event_type) {
+      summary.eventsByType[parsedLabels.event_type] = value;
+    }
+  }
+  return summary;
+}
+
+function parseMetricLabels(input: string): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const part of input.match(/[a-zA-Z_][a-zA-Z0-9_]*="(?:\\.|[^"])*"/g) ?? []) {
+    const separator = part.indexOf('=');
+    const key = part.slice(0, separator);
+    const value = part.slice(separator + 2, -1).replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+    labels[key] = value;
+  }
+  return labels;
 }
 
 function parseSseBlock(block: string): WorkflowEvent | null {
