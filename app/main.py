@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -15,9 +16,11 @@ from app.core.config import settings
 from app.core.logging import configure_logging
 from app.graph.state import AgentState
 from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
+from app.services.flow_graph import FlowGraphError, build_react_flow
 from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
 from app.services.knowledge import search_knowledge
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
+from app.services.observability import WorkflowEventInput, create_observability_store
 from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
 from app.services.planner import plan_patch_request
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
@@ -34,7 +37,10 @@ configure_logging()
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.state.workflow = get_workflow()
 app.state.session_store = create_session_store(settings.project_sessions_dir)
+app.state.observability_store = create_observability_store(Path(settings.project_sessions_dir).parent)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+WORKBENCH_DIR = STATIC_DIR / "workbench"
+LEGACY_STATIC_DIR = STATIC_DIR / "legacy"
 
 
 class CreateSessionRequest(BaseModel):
@@ -125,9 +131,21 @@ class PatchConfirmationRequest(BaseModel):
     action: Literal["approve", "cancel"]
 
 
+class FeedbackRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+    project_id: str | None = None
+    version_id: str | None = None
+    rating: int = Field(ge=1, le=5)
+    category: str = Field(min_length=1, max_length=60)
+    comment: str = Field(default="", max_length=2000)
+
+
 @app.get("/", include_in_schema=False)
 def frontend() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    workbench_index = WORKBENCH_DIR / "index.html"
+    if not workbench_index.exists():
+        raise HTTPException(status_code=503, detail="React 工作台尚未构建，请先在 frontend 执行 npm run build。")
+    return FileResponse(workbench_index)
 
 
 @app.get("/api/health")
@@ -135,10 +153,43 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/sessions/{thread_id}/events")
+def stream_session_events(
+    thread_id: str,
+    last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    last_event_id_query: Annotated[str | None, Query(alias="last_event_id")] = None,
+    timeout_seconds: Annotated[float, Query(ge=0, le=30)] = 0,
+) -> StreamingResponse:
+    if _session_store().get(thread_id) is None and not _observability_store().list_events(thread_id, limit=1):
+        raise HTTPException(status_code=404, detail="会话不存在。")
+
+    last_event_id = last_event_id_header or last_event_id_query
+
+    def event_stream():
+        sent: set[str] = set()
+        cursor = last_event_id
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            events = _observability_store().list_events(thread_id, after_event_id=cursor, limit=1000)
+            for event in events:
+                event_id = str(event.get("event_id") or "")
+                if event_id in sent:
+                    continue
+                sent.add(event_id)
+                cursor = event_id
+                yield _sse_encode(event)
+            if timeout_seconds <= 0 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.post("/api/sessions")
 def create_session(request: CreateSessionRequest | None = None) -> dict[str, Any]:
     request = request or CreateSessionRequest()
     thread_id = uuid.uuid4().hex
+    trace = _start_trace(thread_id, "create_session")
     state = _empty_state(
         project_type=request.project_type,
         auto_confirm_template=request.auto_confirm_template,
@@ -148,7 +199,17 @@ def create_session(request: CreateSessionRequest | None = None) -> dict[str, Any
         llm_max_attempts=request.llm_max_attempts,
     )
     _session_store().save(thread_id, state)
-    return {"thread_id": thread_id, "state": _public_state(state)}
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="workflow.session.created",
+        step="create_session",
+        status="completed",
+        message="会话已创建",
+        state=state,
+    )
+    _finish_trace(trace["trace_id"], "completed")
+    return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(state)}
 
 
 @app.post("/api/sessions/{thread_id}/message")
@@ -156,6 +217,22 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     state = _session_store().get(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail="会话不存在。")
+    trace = _start_trace(
+        thread_id,
+        request.message,
+        project_id=state.get("current_project_id"),
+        version_id=state.get("current_project_version_id"),
+    )
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="workflow.message.received",
+        step="receive_message",
+        status="completed",
+        message="已接收用户输入",
+        state=state,
+        payload={"has_pending_patch": request.pending_patch is not None},
+    )
 
     if (
         request.selected_template_id is not None
@@ -170,9 +247,30 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
                 workflow=app.state.workflow,
             )
         except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+            _record_event(
+                trace["trace_id"],
+                thread_id,
+                event_type="workflow.resume.failed",
+                step="template_confirmation",
+                status="failed",
+                message="模板确认恢复失败",
+                state=state,
+                payload={"error": str(exc)},
+            )
+            _finish_trace(trace["trace_id"], "failed", error=str(exc))
             raise HTTPException(status_code=500, detail=f"工作流恢复失败: {exc}") from exc
         _session_store().save(thread_id, _storable_state(next_state))
-        return {"thread_id": thread_id, "state": _public_state(next_state)}
+        _record_event(
+            trace["trace_id"],
+            thread_id,
+            event_type="workflow.resume.completed",
+            step="template_confirmation",
+            status=str(next_state.get("status") or "completed"),
+            message="模板确认已处理",
+            state=next_state,
+        )
+        _finish_trace(trace["trace_id"], "completed")
+        return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(next_state)}
 
     state["messages"] = list(state.get("messages") or []) + [{"role": "user", "content": request.message}]
     if request.project_type is not None:
@@ -193,10 +291,32 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     try:
         next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+        _record_event(
+            trace["trace_id"],
+            thread_id,
+            event_type="workflow.run.failed",
+            step="invoke_workflow",
+            status="failed",
+            message="工作流执行失败",
+            state=state,
+            payload={"error": str(exc)},
+        )
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
         raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
 
     _session_store().save(thread_id, _storable_state(next_state))
-    return {"thread_id": thread_id, "state": _public_state(next_state)}
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="workflow.run.completed",
+        step="invoke_workflow",
+        status=str(next_state.get("status") or "completed"),
+        message="工作流执行完成",
+        state=next_state,
+        payload={"next_action": next_state.get("next_action")},
+    )
+    _finish_trace(trace["trace_id"], "completed")
+    return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(next_state)}
 
 
 @app.post("/api/sessions/{thread_id}/patch-confirmation")
@@ -210,6 +330,22 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
     pending_patch = state.get("pending_confirmation_patch")
     if not isinstance(pending_patch, dict):
         raise HTTPException(status_code=400, detail="待确认补丁不存在或格式无效。")
+    trace = _start_trace(
+        thread_id,
+        f"patch_confirmation:{request.action}",
+        project_id=state.get("current_project_id"),
+        version_id=state.get("current_project_version_id"),
+    )
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="workflow.patch_confirmation.received",
+        step="risk_confirmation",
+        status="completed",
+        message="已接收风险确认动作",
+        state=state,
+        payload={"action": request.action},
+    )
 
     if _pending_interrupt_kind(thread_id) == "patch_confirmation":
         try:
@@ -219,9 +355,30 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
                 workflow=app.state.workflow,
             )
         except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+            _record_event(
+                trace["trace_id"],
+                thread_id,
+                event_type="workflow.resume.failed",
+                step="risk_confirmation",
+                status="failed",
+                message="补丁确认恢复失败",
+                state=state,
+                payload={"error": str(exc)},
+            )
+            _finish_trace(trace["trace_id"], "failed", error=str(exc))
             raise HTTPException(status_code=500, detail=f"工作流恢复失败: {exc}") from exc
         _session_store().save(thread_id, _storable_state(next_state))
-        return {"thread_id": thread_id, "state": _public_state(next_state)}
+        _record_event(
+            trace["trace_id"],
+            thread_id,
+            event_type="workflow.patch_confirmation.completed",
+            step="risk_confirmation",
+            status=str(next_state.get("status") or "completed"),
+            message="补丁确认已处理",
+            state=next_state,
+        )
+        _finish_trace(trace["trace_id"], "completed")
+        return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(next_state)}
 
     if request.action == "cancel":
         state["pending_patch"] = None
@@ -236,7 +393,17 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
         state["error"] = None
         state["messages"] = list(state.get("messages") or []) + [{"role": "assistant", "content": "已取消待确认补丁，当前工程版本未变化。"}]
         _session_store().save(thread_id, _storable_state(state))
-        return {"thread_id": thread_id, "state": _public_state(state)}
+        _record_event(
+            trace["trace_id"],
+            thread_id,
+            event_type="workflow.patch_confirmation.cancelled",
+            step="risk_confirmation",
+            status="cancelled",
+            message="用户取消高风险补丁",
+            state=state,
+        )
+        _finish_trace(trace["trace_id"], "cancelled")
+        return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(state)}
 
     state["pending_patch"] = pending_patch
     state["patch_confirmation"] = {
@@ -249,10 +416,31 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
     try:
         next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
+        _record_event(
+            trace["trace_id"],
+            thread_id,
+            event_type="workflow.run.failed",
+            step="apply_confirmed_patch",
+            status="failed",
+            message="确认补丁应用失败",
+            state=state,
+            payload={"error": str(exc)},
+        )
+        _finish_trace(trace["trace_id"], "failed", error=str(exc))
         raise HTTPException(status_code=500, detail=f"工作流执行失败: {exc}") from exc
 
     _session_store().save(thread_id, _storable_state(next_state))
-    return {"thread_id": thread_id, "state": _public_state(next_state)}
+    _record_event(
+        trace["trace_id"],
+        thread_id,
+        event_type="workflow.patch_confirmation.approved",
+        step="apply_confirmed_patch",
+        status=str(next_state.get("status") or "completed"),
+        message="已应用确认补丁",
+        state=next_state,
+    )
+    _finish_trace(trace["trace_id"], "completed")
+    return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(next_state)}
 
 
 @app.post("/api/templates/search")
@@ -430,6 +618,37 @@ def get_project_diff(project_id: str, from_version_id: str | None = None, to_ver
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/projects/{project_id}/versions/{version_id}/flow")
+def get_project_version_flow(
+    project_id: str,
+    version_id: str,
+    center_node_id: str | None = None,
+    max_nodes: int = Query(default=80, ge=1, le=300),
+    max_edges: int = Query(default=160, ge=0, le=800),
+    max_chars: int = Query(default=120000, ge=1000, le=500000),
+) -> dict[str, Any]:
+    versions_dir = _get_versions_dir(project_id)
+    if versions_dir is None:
+        raise HTTPException(status_code=404, detail="项目不存在或当前进程中没有该项目会话。")
+    try:
+        metadata = get_project_version(project_id, version_id, versions_dir=versions_dir)
+        path = _resolve_allowed_project_file(str(metadata["version_path"]))
+        flow = build_react_flow(
+            load_project(path),
+            center_node_id=center_node_id,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            max_chars=max_chars,
+        )
+    except (ValueError, FlowGraphError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "project_id": project_id,
+        "version_id": version_id,
+        "flow": flow,
+    }
+
+
 @app.post("/api/projects/{project_id}/validate")
 def validate_project_by_id(project_id: str) -> dict[str, Any]:
     path = _get_current_project_path(project_id)
@@ -494,6 +713,38 @@ def export_project_by_id(project_id: str) -> FileResponse:
 def export_project(path: str) -> FileResponse:
     target = _resolve_allowed_project_file(path)
     return _export_valid_project_file(target)
+
+
+@app.get("/api/traces/{trace_id}")
+def get_trace(trace_id: str) -> dict[str, Any]:
+    trace = _observability_store().get_trace(trace_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="trace 不存在。")
+    return trace
+
+
+@app.get("/api/projects/{project_id}/traces")
+def get_project_traces(project_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    return {"project_id": project_id, "traces": _observability_store().list_project_traces(project_id, limit=limit)}
+
+
+@app.post("/api/feedback")
+def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
+    if _observability_store().get_trace(request.trace_id) is None:
+        raise HTTPException(status_code=404, detail="trace 不存在，无法提交反馈。")
+    return _observability_store().record_feedback(
+        trace_id=request.trace_id,
+        project_id=request.project_id,
+        version_id=request.version_id,
+        rating=request.rating,
+        category=request.category,
+        comment=request.comment,
+    )
+
+
+@app.get("/metrics")
+def metrics() -> PlainTextResponse:
+    return PlainTextResponse(_observability_store().metrics_text(), media_type="text/plain; version=0.0.4")
 
 
 def _export_valid_project_file(target: Path) -> FileResponse:
@@ -594,6 +845,85 @@ def _session_store():
     return app.state.session_store
 
 
+def _observability_store():
+    session_store = _session_store()
+    desired_root = Path(getattr(session_store, "root_dir", Path(settings.project_sessions_dir))).parent
+    store = getattr(app.state, "observability_store", None)
+    if not postgres_runtime_enabled() and (store is None or Path(getattr(store, "root_dir", desired_root)) != desired_root):
+        store = create_observability_store(desired_root)
+        app.state.observability_store = store
+    return store
+
+
+def _start_trace(
+    thread_id: str,
+    root_input: str,
+    *,
+    project_id: Any | None = None,
+    version_id: Any | None = None,
+) -> dict[str, Any]:
+    return _observability_store().create_trace(
+        thread_id=thread_id,
+        root_input=root_input,
+        project_id=str(project_id) if project_id else None,
+        version_id=str(version_id) if version_id else None,
+    )
+
+
+def _finish_trace(trace_id: str, status: str, *, error: str | None = None) -> None:
+    _observability_store().finish_trace(trace_id, status=status, error=error)
+
+
+def _record_event(
+    trace_id: str,
+    thread_id: str,
+    *,
+    event_type: str,
+    step: str,
+    status: str,
+    message: str,
+    state: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _observability_store().record_event(
+        WorkflowEventInput(
+            trace_id=trace_id,
+            thread_id=thread_id,
+            project_id=str(state.get("current_project_id")) if state.get("current_project_id") else None,
+            version_id=str(state.get("current_project_version_id")) if state.get("current_project_version_id") else None,
+            event_type=event_type,
+            step=step,
+            status=status,
+            message=message,
+            payload=payload or {},
+        )
+    )
+
+
+def _sse_encode(event: dict[str, Any]) -> str:
+    event_id = str(event.get("event_id") or "")
+    event_type = str(event.get("event_type") or "message")
+    data = json_dumps(event)
+    return f"id: {event_id}\nevent: {event_type}\ndata: {data}\n\n"
+
+
+def json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _validation_summary(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "valid": report.get("valid"),
+        "exportable": report.get("exportable"),
+        "error_count": report.get("error_count"),
+        "warning_count": report.get("warning_count"),
+        "risk_count": (report.get("summary") or {}).get("risk_count") if isinstance(report.get("summary"), dict) else None,
+        "blocked_export_reasons": report.get("blocked_export_reasons", []),
+    }
+
+
 def _record_validation_if_needed(project_id: str, version_id: str | None, report: dict[str, Any]) -> None:
     if not postgres_runtime_enabled():
         return
@@ -616,6 +946,7 @@ def _record_export_if_needed(project_path: str, report: dict[str, Any]) -> None:
 
 
 def _public_state(state: AgentState) -> dict[str, Any]:
+    validation_report = state.get("validation_report")
     return {
         "messages": state.get("messages", []),
         "project_type": state.get("project_type"),
@@ -624,6 +955,8 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "confirmed_requirements": state.get("confirmed_requirements", []),
         "template_candidates": state.get("template_candidates", []),
         "selected_template_id": state.get("selected_template_id"),
+        "project_id": state.get("current_project_id"),
+        "version_id": state.get("current_project_version_id"),
         "current_project_id": state.get("current_project_id"),
         "current_project_version_id": state.get("current_project_version_id"),
         "current_project_path": state.get("current_project_path"),
@@ -635,6 +968,7 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "risk_assessment": state.get("risk_assessment"),
         "patch_confirmation": state.get("patch_confirmation"),
         "validation_report": state.get("validation_report"),
+        "validation_summary": _validation_summary(validation_report) if isinstance(validation_report, dict) else None,
         "status": state.get("status"),
         "next_action": state.get("next_action"),
         "error": state.get("error"),
@@ -690,6 +1024,7 @@ def _resolve_allowed_project_file(path: str) -> Path:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/legacy", StaticFiles(directory=LEGACY_STATIC_DIR, html=True), name="legacy")
 
 
 def _utc_now_iso() -> str:

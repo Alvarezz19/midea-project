@@ -1,0 +1,148 @@
+.panel {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(216, 224, 228, 0.95);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 34px rgba(23, 32, 38, 0.08);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.header h2 {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.section {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(216, 224, 228, 0.7);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chips span {
+  padding: 4px 9px;
+  border: 1px solid rgba(0, 152, 209, 0.24);
+  border-radius: 999px;
+  color: var(--midea-blue-dark);
+  background: var(--midea-blue-soft);
+  font-size: 12px;
+}
+
+.question {
+  color: var(--warning);
+}
+
+.messageList {
+  overflow: auto;
+  flex: 1;
+  min-height: 220px;
+  padding: 16px;
+  background: linear-gradient(180deg, rgba(244, 247, 248, 0.6), rgba(255, 255, 255, 0));
+}
+
+.userBubble,
+.agentBubble {
+  max-width: 92%;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 13px;
+}
+
+.userBubble {
+  margin-left: auto;
+  border: 1px solid rgba(0, 152, 209, 0.28);
+  background: var(--midea-blue-soft);
+}
+
+.agentBubble {
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.userBubble p,
+.agentBubble p {
+  margin: 6px 0 0;
+  line-height: 1.62;
+}
+
+.empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.composer {
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.composer textarea {
+  resize: none;
+}
+
+.templateItem {
+  padding-inline: 0 !important;
+}
+
+.jsonBlock {
+  overflow: auto;
+  max-height: 210px;
+  margin: 10px 0 0;
+  padding: 12px;
+  border: 1px solid rgba(216, 224, 228, 0.8);
+  border-radius: 12px;
+  color: #19313d;
+  background: #f8fbfc;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.riskBox {
+  margin: 14px;
+  padding: 14px;
+  border: 1px solid rgba(165, 92, 0, 0.34);
+  border-radius: 14px;
+  background: #fff7eb;
+}
+
+.flowPreview {
+  position: relative;
+  height: 320px;
+  border-bottom: 1px solid var(--line);
+  background: #eef4f6;
+}
+
+.flowEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  pointer-events: none;
+  place-items: center;
+}
+
+.drawerToggle {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 20;
+  box-shadow: 0 12px 28px rgba(23, 32, 38, 0.16);
+}

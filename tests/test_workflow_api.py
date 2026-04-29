@@ -463,11 +463,15 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "工程 JSON 智能体工作台" in page.text
+    assert "美的工程智能体工作台" in page.text
 
-    script = client.get("/static/app.js")
-    assert script.status_code == 200
-    assert "createSession" in script.text
+    legacy_page = client.get("/legacy/")
+    assert legacy_page.status_code == 200
+    assert "工程 JSON 智能体工作台" in legacy_page.text
+
+    legacy_script = client.get("/legacy/app.js")
+    assert legacy_script.status_code == 200
+    assert "createSession" in legacy_script.text
 
     health = client.get("/api/health")
     assert health.status_code == 200
@@ -507,15 +511,67 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     created = client.post("/api/sessions", json={"auto_confirm_template": True, "versions_dir": str(tmp_path)})
     assert created.status_code == 200
     thread_id = created.json()["thread_id"]
+    assert created.json()["trace_id"].startswith("trace_")
+
+    initial_events = client.get(f"/api/sessions/{thread_id}/events")
+    assert initial_events.status_code == 200
+    assert "event: workflow.session.created" in initial_events.text
+    first_event_id = initial_events.text.split("id: ", 1)[1].splitlines()[0]
 
     message = client.post(
         f"/api/sessions/{thread_id}/message",
         json={"message": "我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯"},
     )
     assert message.status_code == 200
+    message_trace_id = message.json()["trace_id"]
     state = message.json()["state"]
     assert state["status"] == "project_version_ready"
+    assert state["project_id"] == state["current_project_id"]
+    assert state["version_id"] == state["current_project_version_id"]
     assert Path(state["current_project_path"]).exists()
+
+    resumed_events = client.get(f"/api/sessions/{thread_id}/events", headers={"Last-Event-ID": first_event_id})
+    assert resumed_events.status_code == 200
+    assert "workflow.run.completed" in resumed_events.text
+    assert first_event_id not in resumed_events.text
+
+    flow = client.get(
+        f"/api/projects/{state['current_project_id']}/versions/{state['current_project_version_id']}/flow",
+        params={"max_nodes": 8, "max_edges": 20, "max_chars": 30000},
+    )
+    assert flow.status_code == 200
+    flow_data = flow.json()["flow"]
+    assert 1 <= len(flow_data["nodes"]) <= 8
+    assert flow_data["budget"]["node_count"] == len(flow_data["nodes"])
+    assert "wires" not in flow.text
+
+    trace = client.get(f"/api/traces/{message_trace_id}")
+    assert trace.status_code == 200
+    assert trace.json()["trace_id"] == message_trace_id
+    assert trace.json()["thread_id"] == thread_id
+    assert trace.json()["events"]
+
+    traces = client.get(f"/api/projects/{state['current_project_id']}/traces")
+    assert traces.status_code == 200
+    assert any(item["trace_id"] == message_trace_id for item in traces.json()["traces"])
+
+    feedback = client.post(
+        "/api/feedback",
+        json={
+            "trace_id": message_trace_id,
+            "project_id": state["current_project_id"],
+            "version_id": state["current_project_version_id"],
+            "rating": 4,
+            "category": "export",
+            "comment": "验收测试反馈",
+        },
+    )
+    assert feedback.status_code == 200
+    assert feedback.json()["feedback_id"].startswith("fb_")
+
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert "midea_workflow_events_total" in metrics.text
 
     validate = client.post("/api/projects/validate", json={"path": state["current_project_path"]})
     assert validate.status_code == 200

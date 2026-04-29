@@ -1,0 +1,27 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--ink);
+  font-family: "Alibaba PuHuiTi", "MiSans", "Microsoft YaHei UI", sans-serif;
+  background: var(--canvas);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus) 72%, transparent);
+  outline-offset: 2px;
+}

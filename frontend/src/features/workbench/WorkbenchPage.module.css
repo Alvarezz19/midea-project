@@ -1,0 +1,109 @@
+.shell {
+  min-height: 100vh;
+  padding: 18px;
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, rgba(0, 106, 148, 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(0, 106, 148, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at 12% 0%, rgba(0, 152, 209, 0.14), transparent 28%),
+    var(--canvas);
+  background-size: 28px 28px, 28px 28px, auto, auto;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 74px;
+  padding: 14px 18px;
+  border: 1px solid rgba(216, 224, 228, 0.95);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 45px rgba(23, 32, 38, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.identity h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+
+.mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 14px 14px 6px;
+  color: #fff;
+  font-family: "DIN Alternate", "Alibaba PuHuiTi", sans-serif;
+  font-size: 25px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--midea-blue-dark), var(--midea-blue));
+}
+
+.statusRail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.statusItem {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 10px;
+  align-items: center;
+  min-height: 46px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.statusItem strong {
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusBlue {
+  border-color: rgba(0, 152, 209, 0.34);
+  background: var(--midea-blue-soft);
+}
+
+.alert {
+  margin-bottom: 14px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.88fr) minmax(420px, 1.2fr) minmax(340px, 0.9fr);
+  gap: 14px;
+  align-items: stretch;
+  min-height: calc(100vh - 235px);
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .statusRail {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
