@@ -578,6 +578,15 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     )
     assert feedback.status_code == 200
     assert feedback.json()["feedback_id"].startswith("fb_")
+    trace_feedback = client.get(f"/api/traces/{message_trace_id}/feedback")
+    assert trace_feedback.status_code == 200
+    assert trace_feedback.json()["feedback"][0]["comment"] == "验收测试反馈"
+    project_feedback = client.get(f"/api/projects/{state['current_project_id']}/feedback")
+    assert project_feedback.status_code == 200
+    assert project_feedback.json()["feedback"][0]["trace_id"] == message_trace_id
+    trace_with_feedback = client.get(f"/api/traces/{message_trace_id}")
+    assert trace_with_feedback.status_code == 200
+    assert trace_with_feedback.json()["feedback"][0]["category"] == "export"
 
     metrics = client.get("/metrics")
     assert metrics.status_code == 200

@@ -890,9 +890,21 @@ def get_trace(trace_id: str) -> dict[str, Any]:
     return trace
 
 
+@app.get("/api/traces/{trace_id}/feedback")
+def get_trace_feedback(trace_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    if _observability_store().get_trace(trace_id) is None:
+        raise HTTPException(status_code=404, detail="trace 不存在。")
+    return {"trace_id": trace_id, "feedback": _observability_store().list_feedback(trace_id=trace_id, limit=limit)}
+
+
 @app.get("/api/projects/{project_id}/traces")
 def get_project_traces(project_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     return {"project_id": project_id, "traces": _observability_store().list_project_traces(project_id, limit=limit)}
+
+
+@app.get("/api/projects/{project_id}/feedback")
+def get_project_feedback(project_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    return {"project_id": project_id, "feedback": _observability_store().list_feedback(project_id=project_id, limit=limit)}
 
 
 @app.post("/api/feedback")

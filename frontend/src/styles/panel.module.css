@@ -211,8 +211,33 @@
   max-width: 720px;
 }
 
+.feedbackPanel {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 18px;
+  align-items: start;
+}
+
 .feedbackMeta {
   margin-bottom: 12px;
+}
+
+.feedbackHistory {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.feedbackHistoryItem {
+  padding: 9px 0 !important;
+  border-bottom: 1px solid rgba(216, 224, 228, 0.72);
+}
+
+.feedbackHistoryComment {
+  margin-top: 6px;
+  color: var(--ink);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .versionPanel {
@@ -398,6 +423,21 @@
   padding: 8px 0 !important;
 }
 
+.traceFeedback {
+  margin: 12px 16px 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(216, 224, 228, 0.75);
+}
+
+.traceFeedbackItem {
+  padding: 8px 0 !important;
+}
+
+.feedbackComment {
+  margin: 6px 0 0 !important;
+  color: var(--ink);
+}
+
 .traceTimelinePanel {
   min-height: 520px;
 }
@@ -512,7 +552,8 @@
   }
 
   .metricsGrid,
-  .metricsColumns {
+  .metricsColumns,
+  .feedbackPanel {
     grid-template-columns: 1fr;
   }
 

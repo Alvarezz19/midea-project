@@ -3,6 +3,7 @@ import type {
   AgentTrace,
   ApiProblem,
   FeedbackPayload,
+  FeedbackListResponse,
   FeedbackResponse,
   ObservabilityMetrics,
   PatchConfirmationResponse,
@@ -140,6 +141,14 @@ export function submitFeedback(payload: FeedbackPayload): Promise<FeedbackRespon
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export function listTraceFeedback(traceId: string): Promise<FeedbackListResponse> {
+  return apiRequest<FeedbackListResponse>(`/api/traces/${encodeURIComponent(traceId)}/feedback`);
+}
+
+export function listProjectFeedback(projectId: string): Promise<FeedbackListResponse> {
+  return apiRequest<FeedbackListResponse>(`/api/projects/${encodeURIComponent(projectId)}/feedback`);
 }
 
 export function getTrace(traceId: string): Promise<AgentTrace> {

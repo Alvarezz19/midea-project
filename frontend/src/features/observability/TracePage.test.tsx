@@ -37,6 +37,18 @@ describe('TracePage', () => {
                 error: null
               }
             ],
+            feedback: [
+              {
+                feedback_id: 'fb_1',
+                trace_id: 'trace_1',
+                project_id: 'project_1',
+                version_id: 'v_1',
+                rating: 5,
+                category: 'export',
+                comment: '导出后复核通过',
+                created_at: '2026-04-29T08:00:04Z'
+              }
+            ],
             events: [
               {
                 event_id: 'evt_1',
@@ -91,5 +103,7 @@ describe('TracePage', () => {
     expect(screen.getByText('llm_planner')).toBeInTheDocument();
     expect(screen.getByText(/deepseek\/deepseek-chat/)).toBeInTheDocument();
     expect(screen.getByText('120 in')).toBeInTheDocument();
+    expect(screen.getByText('用户反馈')).toBeInTheDocument();
+    expect(screen.getByText('导出后复核通过')).toBeInTheDocument();
   });
 });

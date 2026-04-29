@@ -119,6 +119,12 @@ export interface FeedbackResponse {
   created_at?: string;
 }
 
+export interface FeedbackListResponse {
+  trace_id?: string;
+  project_id?: string;
+  feedback: FeedbackResponse[];
+}
+
 export interface FlowNodeData {
   [key: string]: unknown;
   node_id?: string;
@@ -253,6 +259,7 @@ export interface AgentTrace {
   metadata?: Record<string, unknown> | null;
   events: WorkflowEvent[];
   llm_calls?: LlmCallRecord[];
+  feedback?: FeedbackResponse[];
 }
 
 export interface ObservabilityMetrics {

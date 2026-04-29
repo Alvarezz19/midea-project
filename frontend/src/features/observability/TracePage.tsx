@@ -52,6 +52,7 @@ export function TracePage() {
 function TraceDetail({ trace }: { trace: AgentTrace }) {
   const events = trace.events ?? [];
   const llmCalls = trace.llm_calls ?? [];
+  const feedback = trace.feedback ?? [];
   const failedEvents = events.filter((event) => event.status === 'failed' || event.status === 'error');
   const llmEvents = events.filter((event) => event.event_type.startsWith('llm.'));
   const durationMs = elapsedMs(trace.started_at, trace.finished_at);
@@ -84,6 +85,7 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
           <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>{trace.root_input || '无输入记录'}</Paragraph>
         </div>
         {llmCalls.length ? <LlmCallList calls={llmCalls} /> : null}
+        {feedback.length ? <FeedbackList feedback={feedback} /> : null}
       </section>
 
       <section className={`${panelStyles.panel} ${panelStyles.traceTimelinePanel}`}>
@@ -95,6 +97,32 @@ function TraceDetail({ trace }: { trace: AgentTrace }) {
         </div>
         {events.length ? <TraceTimeline events={events} /> : <Empty className={panelStyles.traceEmpty} description="暂无事件" />}
       </section>
+    </div>
+  );
+}
+
+function FeedbackList({ feedback }: { feedback: NonNullable<AgentTrace['feedback']> }) {
+  return (
+    <div className={panelStyles.traceFeedback}>
+      <Text strong>用户反馈</Text>
+      <List
+        size="small"
+        dataSource={feedback}
+        renderItem={(item) => (
+          <List.Item className={panelStyles.traceFeedbackItem}>
+            <div>
+              <Space size={6} wrap>
+                <Tag color={feedbackColor(item.category)}>{feedbackLabel(item.category)}</Tag>
+                <Tag>{item.rating}/5</Tag>
+                <Text type="secondary">{formatDateTime(item.created_at)}</Text>
+              </Space>
+              <Paragraph className={panelStyles.feedbackComment} ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>
+                {item.comment || '无备注'}
+              </Paragraph>
+            </div>
+          </List.Item>
+        )}
+      />
     </div>
   );
 }
@@ -253,4 +281,18 @@ function formatDateTime(value?: string | null): string {
     minute: '2-digit',
     second: '2-digit'
   }).format(new Date(value));
+}
+
+function feedbackLabel(category?: string | null): string {
+  if (category === 'risk_cancel') return '风险取消';
+  if (category === 'failure') return '失败阻塞';
+  if (category === 'suggestion') return '改进建议';
+  return '导出体验';
+}
+
+function feedbackColor(category?: string | null): string {
+  if (category === 'failure') return 'error';
+  if (category === 'risk_cancel') return 'warning';
+  if (category === 'suggestion') return 'processing';
+  return 'success';
 }

@@ -130,7 +130,10 @@ class FileObservabilityStore:
                 data = json.load(file)
         except (json.JSONDecodeError, OSError) as exc:
             raise ObservabilityStoreError(f"读取 trace 失败: {trace_id} ({exc})") from exc
-        return data if isinstance(data, dict) else None
+        if isinstance(data, dict):
+            data["feedback"] = self.list_feedback(trace_id=trace_id)
+            return data
+        return None
 
     def list_project_traces(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         if not self.traces_dir.exists():
@@ -172,6 +175,25 @@ class FileObservabilityStore:
         }
         self._append_jsonl(self.feedback_path, item)
         return item
+
+    def list_feedback(
+        self,
+        *,
+        trace_id: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        items = self._read_jsonl(self.feedback_path)
+        filtered: list[dict[str, Any]] = []
+        for item in reversed(items):
+            if trace_id and item.get("trace_id") != trace_id:
+                continue
+            if project_id and item.get("project_id") != project_id:
+                continue
+            filtered.append(item)
+            if len(filtered) >= limit:
+                break
+        return filtered
 
     def record_llm_call(
         self,
@@ -404,7 +426,11 @@ class PostgresObservabilityStore:
                 (trace_id,),
             ).fetchall()
             llm_calls = conn.execute(
-                "SELECT * FROM llm_call_records WHERE trace_id = %s ORDER BY created_at, attempt, id",
+            "SELECT * FROM llm_call_records WHERE trace_id = %s ORDER BY created_at, attempt, id",
+                (trace_id,),
+            ).fetchall()
+            feedback = conn.execute(
+                "SELECT * FROM user_feedback WHERE trace_id = %s ORDER BY created_at DESC, feedback_id DESC",
                 (trace_id,),
             ).fetchall()
         if trace is None:
@@ -412,6 +438,7 @@ class PostgresObservabilityStore:
         item = _row_to_public_dict(trace)
         item["events"] = [_row_to_public_dict(row) for row in events]
         item["llm_calls"] = [_row_to_public_dict(row) for row in llm_calls]
+        item["feedback"] = [_row_to_public_dict(row) for row in feedback]
         return item
 
     def list_project_traces(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -463,6 +490,38 @@ class PostgresObservabilityStore:
             "comment": comment,
             "created_at": utc_now_iso(),
         }
+
+    def list_feedback(
+        self,
+        *,
+        trace_id: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        from app.services.postgres_runtime import _connect
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        if trace_id:
+            clauses.append("trace_id = %s")
+            params.append(trace_id)
+        if project_id:
+            clauses.append("project_id = %s")
+            params.append(project_id)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with _connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM user_feedback
+                {where}
+                ORDER BY created_at DESC, feedback_id DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            ).fetchall()
+        return [_row_to_public_dict(row) for row in rows]
 
     def record_llm_call(
         self,

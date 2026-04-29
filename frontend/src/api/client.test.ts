@@ -5,7 +5,9 @@ import {
   confirmTemplate,
   formatApiError,
   getProjectDiff,
+  listProjectFeedback,
   listProjectVersions,
+  listTraceFeedback,
   parsePrometheusMetrics,
   parseSseEvents,
   rollbackProject,
@@ -90,6 +92,17 @@ describe('api client', () => {
         })
       })
     );
+  });
+
+  it('loads feedback by trace and project', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ feedback: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await listTraceFeedback('trace_1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/traces/trace_1/feedback', expect.any(Object));
+
+    await listProjectFeedback('project_1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/projects/project_1/feedback', expect.any(Object));
   });
 
   it('requests versions, explicit diff and rollback through project APIs', async () => {

@@ -1,8 +1,8 @@
 import { Alert, Button, Drawer, Form, Input, List, Rate, Select, Skeleton, Space, Statistic, Tabs, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { formatApiError, getMetricsSummary, submitFeedback } from '../../api/client';
-import type { ObservabilityMetrics } from '../../api/types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatApiError, getMetricsSummary, listProjectFeedback, submitFeedback } from '../../api/client';
+import type { FeedbackResponse, ObservabilityMetrics } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
@@ -18,9 +18,15 @@ export function BottomObservabilityDrawer() {
   const workflowEvents = useWorkbenchStore((store) => store.workflowEvents);
   const [form] = Form.useForm<{ rating: number; category: string; comment: string }>();
   const [messageApi, holder] = antMessage.useMessage();
+  const queryClient = useQueryClient();
   const projectId = state?.project_id ?? state?.current_project_id;
   const versionId = state?.version_id ?? state?.current_project_version_id;
   const defaultCategory = feedbackCategory(state?.status);
+  const feedbackQuery = useQuery({
+    queryKey: ['project-feedback', projectId],
+    queryFn: () => listProjectFeedback(projectId!),
+    enabled: open && Boolean(projectId)
+  });
   const feedbackMutation = useMutation({
     mutationFn: (values: { rating: number; category: string; comment: string }) =>
       submitFeedback({
@@ -33,6 +39,7 @@ export function BottomObservabilityDrawer() {
       }),
     onSuccess: () => {
       form.resetFields();
+      void queryClient.invalidateQueries({ queryKey: ['project-feedback', projectId] });
       messageApi.success('反馈已提交。');
     },
     onError: (error) => messageApi.error(formatApiError(error))
@@ -110,43 +117,77 @@ export function BottomObservabilityDrawer() {
               key: 'feedback',
               label: '反馈',
               children: (
-                <Form
-                  form={form}
-                  layout="vertical"
-                  className={panelStyles.feedbackForm}
-                  initialValues={{ rating: 4, category: defaultCategory, comment: '' }}
-                  onFinish={(values) => feedbackMutation.mutate(values)}
-                >
-                  <Space className={panelStyles.feedbackMeta} wrap>
-                    <Text type="secondary">trace：{traceId ?? '暂无'}</Text>
-                    <Text type="secondary">版本：{versionId ?? '未创建'}</Text>
-                  </Space>
-                  <Form.Item name="rating" label="评分" rules={[{ required: true, message: '请选择评分。' }]}>
-                    <Rate />
-                  </Form.Item>
-                  <Form.Item name="category" label="类型" rules={[{ required: true, message: '请选择类型。' }]}>
-                    <Select
-                      options={[
-                        { value: 'export', label: '导出体验' },
-                        { value: 'risk_cancel', label: '风险确认取消' },
-                        { value: 'failure', label: '失败或阻塞' },
-                        { value: 'suggestion', label: '改进建议' }
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item name="comment" label="备注">
-                    <Input.TextArea rows={3} maxLength={500} showCount placeholder="记录问题、期望结果或导出后的复核意见" />
-                  </Form.Item>
-                  <Button type="primary" htmlType="submit" icon={<SendOutlined />} disabled={!traceId} loading={feedbackMutation.isPending}>
-                    提交反馈
-                  </Button>
-                </Form>
+                <div className={panelStyles.feedbackPanel}>
+                  <Form
+                    form={form}
+                    layout="vertical"
+                    className={panelStyles.feedbackForm}
+                    initialValues={{ rating: 4, category: defaultCategory, comment: '' }}
+                    onFinish={(values) => feedbackMutation.mutate(values)}
+                  >
+                    <Space className={panelStyles.feedbackMeta} wrap>
+                      <Text type="secondary">trace：{traceId ?? '暂无'}</Text>
+                      <Text type="secondary">版本：{versionId ?? '未创建'}</Text>
+                    </Space>
+                    <Form.Item name="rating" label="评分" rules={[{ required: true, message: '请选择评分。' }]}>
+                      <Rate />
+                    </Form.Item>
+                    <Form.Item name="category" label="类型" rules={[{ required: true, message: '请选择类型。' }]}>
+                      <Select
+                        options={[
+                          { value: 'export', label: '导出体验' },
+                          { value: 'risk_cancel', label: '风险确认取消' },
+                          { value: 'failure', label: '失败或阻塞' },
+                          { value: 'suggestion', label: '改进建议' }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item name="comment" label="备注">
+                      <Input.TextArea rows={3} maxLength={500} showCount placeholder="记录问题、期望结果或导出后的复核意见" />
+                    </Form.Item>
+                    <Button type="primary" htmlType="submit" icon={<SendOutlined />} disabled={!traceId} loading={feedbackMutation.isPending}>
+                      提交反馈
+                    </Button>
+                  </Form>
+                  <ProjectFeedbackList loading={feedbackQuery.isLoading} error={feedbackQuery.error} feedback={feedbackQuery.data?.feedback ?? []} />
+                </div>
               )
             }
           ]}
         />
       </Drawer>
     </>
+  );
+}
+
+function ProjectFeedbackList({ feedback, loading, error }: { feedback: FeedbackResponse[]; loading: boolean; error: unknown }) {
+  if (loading) {
+    return <Skeleton active paragraph={{ rows: 4 }} />;
+  }
+  if (error) {
+    return <Alert type="error" showIcon message="反馈加载失败" description={formatApiError(error)} />;
+  }
+  return (
+    <div className={panelStyles.feedbackHistory}>
+      <Text strong>项目反馈记录</Text>
+      <List
+        size="small"
+        dataSource={feedback}
+        locale={{ emptyText: '暂无反馈' }}
+        renderItem={(item) => (
+          <List.Item className={panelStyles.feedbackHistoryItem}>
+            <div>
+              <Space size={6} wrap>
+                <Tag color={feedbackColor(item.category)}>{feedbackLabel(item.category)}</Tag>
+                <Tag>{item.rating}/5</Tag>
+                <Text type="secondary">{formatFeedbackTime(item.created_at)}</Text>
+              </Space>
+              <div className={panelStyles.feedbackHistoryComment}>{item.comment || '无备注'}</div>
+            </div>
+          </List.Item>
+        )}
+      />
+    </div>
   );
 }
 
@@ -233,4 +274,30 @@ function feedbackCategory(status?: string | null): string {
     return 'failure';
   }
   return 'export';
+}
+
+function feedbackLabel(category?: string | null): string {
+  if (category === 'risk_cancel') return '风险确认取消';
+  if (category === 'failure') return '失败或阻塞';
+  if (category === 'suggestion') return '改进建议';
+  return '导出体验';
+}
+
+function feedbackColor(category?: string | null): string {
+  if (category === 'failure') return 'error';
+  if (category === 'risk_cancel') return 'warning';
+  if (category === 'suggestion') return 'processing';
+  return 'success';
+}
+
+function formatFeedbackTime(value?: string): string {
+  if (!value) {
+    return '-';
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value));
 }
