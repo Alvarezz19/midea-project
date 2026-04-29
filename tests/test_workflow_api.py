@@ -175,6 +175,25 @@ def test_workflow_plans_and_applies_replace_constant_patch(tmp_path: Path) -> No
     assert next(item for item in nodes if item.get("id") == "67febfa")["fixedValue"] == "6"
 
 
+def test_workflow_plans_disconnect_patch_and_waits_for_confirmation(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "断开节点 3a4c97e 的输入 0"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["pending_confirmation_patch"] == {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}
+    assert result["planner_result"]["status"] == "planned"
+    assert result["risk_assessment"]["risk_level"] == "medium"
+    assert result["risk_assessment"]["requires_confirmation"] is True
+    assert result["current_project_version_id"] == created["current_project_version_id"]
+    assert result["planner_dry_run"]["saved"] is False
+
+
 def test_workflow_returns_clarification_when_planner_is_ambiguous(tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)

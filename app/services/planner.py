@@ -116,6 +116,10 @@ def plan_patch_request(
     if dynamic_input_plan:
         return {**dynamic_input_plan, **context}
 
+    disconnect_plan = _plan_disconnect(message, nodes)
+    if disconnect_plan:
+        return {**disconnect_plan, **context}
+
     replace_constant_plan = _plan_replace_constant(message, nodes)
     if replace_constant_plan:
         return {**replace_constant_plan, **context}
@@ -314,6 +318,46 @@ def _plan_enable_dynamic_input(message: str, nodes: list[dict[str, Any]]) -> dic
     }
 
 
+def _plan_disconnect(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not any(keyword in message for keyword in ["断开", "断掉", "取消连接", "移除连接"]):
+        return None
+
+    node_id = _extract_node_id(message)
+    if not node_id:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["请提供要断开输入的目标节点 id。"],
+            "reason": "断线请求缺少明确节点 id。",
+        }
+    matches = find_nodes(nodes, {"id": node_id})
+    if len(matches) != 1:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": [f"未找到节点 id：{node_id}，请确认节点 id 是否正确。"],
+            "reason": "指定节点 id 不存在。",
+        }
+
+    input_index = _extract_input_index(message)
+    if input_index is None:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["请说明要断开第几个输入端，例如：断开节点 2853d21 的输入 0。"],
+            "reason": "断线请求缺少目标输入端口。",
+            "target_node": _summarize_node(matches[0]),
+        }
+
+    return {
+        "status": "planned",
+        "pending_patch": {"op": "disconnect", "target_node_selector": {"id": node_id}, "target_input": input_index},
+        "questions": [],
+        "reason": "识别为断开输入连线请求，已明确目标节点和输入端口，需要确认后应用。",
+        "target_node": _summarize_node(matches[0]),
+    }
+
+
 def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
     node_id = _extract_node_id(message)
     if node_id:
@@ -397,6 +441,18 @@ def _resolve_tab_id_from_message(message: str, nodes: list[dict[str, Any]]) -> t
 def _extract_node_id(text: str) -> str | None:
     match = re.search(r"\b[a-fA-F0-9]{5,12}\b", text)
     return match.group(0) if match else None
+
+
+def _extract_input_index(text: str) -> int | None:
+    patterns = [
+        r"(?:输入端口|输入端|输入|target_input|input)\s*(?P<index>\d+)",
+        r"第\s*(?P<index>\d+)\s*(?:个)?\s*(?:输入端口|输入端|输入)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return int(match.group("index"))
+    return None
 
 
 def _extract_tab_label(message: str, nodes: list[dict[str, Any]]) -> str | None:

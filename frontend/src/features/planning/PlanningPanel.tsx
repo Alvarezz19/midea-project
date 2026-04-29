@@ -92,7 +92,7 @@ export function PlanningPanel() {
             <Text type="secondary">新增/删除/修改：{summaryText(dryRun.diff?.summary)}</Text>
           </div>
         ) : null}
-        {planner?.questions ? <Alert className={panelStyles.inlineAlert} type="warning" showIcon message={String((planner.questions as unknown[])[0])} /> : null}
+        {plannerQuestions(planner).length ? <Alert className={panelStyles.inlineAlert} type="warning" showIcon message={plannerQuestions(planner)[0]} /> : null}
         {visiblePatch ? <OperationPreview patch={visiblePatch} dryRun={dryRun} /> : null}
       </div>
 
@@ -226,6 +226,14 @@ function RiskReasons({ reasons }: { reasons: string[] }) {
     return <span>请检查 dry-run、影响节点和校验摘要后再确认。</span>;
   }
   return <span>{reasons.join('；')}</span>;
+}
+
+function plannerQuestions(planner: Record<string, unknown> | null | undefined): string[] {
+  const questions = planner?.questions;
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+  return questions.map(String).filter(Boolean);
 }
 
 function summaryText(summary?: Record<string, unknown>): string {
