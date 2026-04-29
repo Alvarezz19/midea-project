@@ -36,13 +36,23 @@
   margin-top: 10px;
 }
 
-.chips span {
+.chips span,
+.chips button {
   padding: 4px 9px;
   border: 1px solid rgba(0, 152, 209, 0.24);
   border-radius: 999px;
   color: var(--midea-blue-dark);
   background: var(--midea-blue-soft);
   font-size: 12px;
+}
+
+.chips button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.chips button:hover {
+  border-color: var(--midea-blue);
 }
 
 .question {
@@ -218,6 +228,16 @@
   background: #eef4f6;
 }
 
+.flowToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(216, 224, 228, 0.8);
+  background: #fbfdfe;
+}
+
 .flowEmpty {
   position: absolute;
   inset: 0;
@@ -226,10 +246,150 @@
   place-items: center;
 }
 
+.flowError {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.engineeringNode {
+  min-width: 142px;
+  max-width: 190px;
+  padding: 8px 10px;
+  border: 1px solid rgba(102, 115, 124, 0.38);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 18px rgba(23, 32, 38, 0.09);
+}
+
+.nodeSelected {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(201, 122, 52, 0.2), 0 10px 22px rgba(23, 32, 38, 0.12);
+}
+
+.nodeAffected {
+  background: #fffaf2;
+}
+
+.nodeLabel {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeMeta {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role_input {
+  border-left-color: var(--midea-blue);
+}
+
+.role_output {
+  border-left-color: var(--warning);
+}
+
+.role_communication {
+  border-left-color: var(--midea-blue-dark);
+}
+
+.role_compare {
+  border-left-color: #6c7a00;
+}
+
+.role_pid {
+  border-left-color: var(--success);
+}
+
+.role_logic {
+  border-left-color: var(--muted);
+}
+
+.role_protection {
+  border-left-color: var(--danger);
+}
+
+.role_note {
+  border-left-color: var(--focus);
+}
+
+.role_unknown {
+  border-left-color: #8aa0aa;
+}
+
+.diffItem {
+  padding-inline: 0 !important;
+  border-left: 3px solid transparent;
+}
+
+.diffItemActive {
+  padding-left: 8px !important;
+  border-left-color: var(--focus);
+  background: #fffaf2;
+}
+
+.nodeDetail {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(201, 122, 52, 0.28);
+  border-radius: 8px;
+  background: #fffaf2;
+}
+
+.boundaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.boundaryColumn {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(216, 224, 228, 0.85);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.boundaryItem {
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start !important;
+  padding-inline: 0 !important;
+}
+
 .drawerToggle {
   position: fixed;
   right: 20px;
   bottom: 20px;
   z-index: 20;
   box-shadow: 0 12px 28px rgba(23, 32, 38, 0.16);
+}
+
+@media (max-width: 680px) {
+  .boundaryGrid {
+    grid-template-columns: 1fr;
+  }
 }

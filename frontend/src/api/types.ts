@@ -118,3 +118,80 @@ export interface FeedbackResponse {
   comment: string;
   created_at?: string;
 }
+
+export interface FlowNodeData {
+  [key: string]: unknown;
+  node_id?: string;
+  label?: string;
+  module_type?: string;
+  role?: EngineeringNodeRole;
+  tab_id?: string;
+  tab_label?: string;
+  inputs?: number;
+  outputs?: number;
+}
+
+export type EngineeringNodeRole = 'input' | 'output' | 'communication' | 'compare' | 'pid' | 'logic' | 'protection' | 'note' | 'unknown';
+
+export interface FlowBudget {
+  max_nodes: number;
+  max_edges: number;
+  max_chars: number;
+  node_count: number;
+  edge_count: number;
+  truncated: boolean;
+}
+
+export interface ProjectFlowResponse {
+  project_id: string;
+  version_id: string;
+  flow: {
+    nodes: Array<{
+      id: string;
+      type?: string;
+      position: { x: number; y: number };
+      data: FlowNodeData;
+    }>;
+    edges: Array<{
+      id: string;
+      source: string;
+      target: string;
+      sourceHandle?: string;
+      targetHandle?: string;
+      data?: Record<string, unknown>;
+    }>;
+    budget: FlowBudget;
+  };
+}
+
+export interface DiffNode {
+  node_id?: string;
+  type?: string;
+  name?: string;
+  tab_id?: string;
+  field_changes?: Array<{
+    field?: string;
+    old_value?: unknown;
+    new_value?: unknown;
+  }>;
+}
+
+export interface NodeDiff {
+  summary?: {
+    added_count?: number;
+    removed_count?: number;
+    modified_count?: number;
+    affected_node_count?: number;
+  };
+  affected_node_ids?: string[];
+  added?: DiffNode[];
+  removed?: DiffNode[];
+  modified?: DiffNode[];
+}
+
+export interface ProjectDiffResponse {
+  project_id: string;
+  from_version_id: string;
+  to_version_id: string;
+  diff: NodeDiff;
+}

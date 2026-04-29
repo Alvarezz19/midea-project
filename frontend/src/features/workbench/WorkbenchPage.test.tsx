@@ -144,6 +144,148 @@ describe('WorkbenchPage', () => {
     expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body).toBe(JSON.stringify({ action: 'cancel' }));
   });
 
+  it('loads the budgeted flow and focuses a diff node from the graph panel', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/projects/project_1/versions/v_2/flow')) {
+        return new Response(
+          JSON.stringify({
+            project_id: 'project_1',
+            version_id: 'v_2',
+            flow: {
+              nodes: [
+                {
+                  id: 'node_1',
+                  type: 'engineeringNode',
+                  position: { x: 120, y: 80 },
+                  data: {
+                    label: '送风温度设定',
+                    module_type: 'compare',
+                    role: 'compare',
+                    tab_label: '送风控制',
+                    inputs: 2,
+                    outputs: 1
+                  }
+                }
+              ],
+              edges: [],
+              budget: { max_nodes: 120, max_edges: 260, max_chars: 160000, node_count: 1, edge_count: 0, truncated: false }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.startsWith('/api/projects/project_1/diff')) {
+        return new Response(
+          JSON.stringify({
+            project_id: 'project_1',
+            from_version_id: 'v_1',
+            to_version_id: 'v_2',
+            diff: {
+              summary: { added_count: 0, removed_count: 0, modified_count: 1, affected_node_count: 1 },
+              affected_node_ids: ['node_1'],
+              added: [],
+              removed: [],
+              modified: [{ node_id: 'node_1', type: 'compare', name: '送风温度设定', field_changes: [{ field: 'tripPoint' }] }]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      traceId: 'trace_1',
+      projectType: 'ahu',
+      bottomDrawerOpen: false,
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        project_id: 'project_1',
+        version_id: 'v_2',
+        planner_dry_run: {
+          valid: true,
+          diff: {
+            summary: { added_count: 0, removed_count: 0, modified_count: 1, affected_node_count: 1 },
+            affected_node_ids: ['node_1'],
+            added: [],
+            removed: [],
+            modified: [{ node_id: 'node_1', type: 'compare', name: '送风温度设定', field_changes: [{ field: 'tripPoint' }] }]
+          }
+        },
+        validation_summary: { valid: true, exportable: true, error_count: 0, warning_count: 0, blocked_export_reasons: [] }
+      }
+    });
+
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage />
+        </MemoryRouter>
+      </AppProviders>
+    );
+
+    expect(await screen.findByText('送风温度设定')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '定位 node_1' }));
+
+    await waitFor(() => expect(useWorkbenchStore.getState().selectedNodeId).toBe('node_1'));
+  });
+
+  it('shows copy_block boundary preview without applying external connection drafts', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'plant_room',
+      bottomDrawerOpen: false,
+      state: {
+        messages: [],
+        project_type: 'plant_room',
+        status: 'awaiting_patch_confirmation',
+        planner_dry_run: {
+          valid: true,
+          diff: { summary: { affected_node_count: 2 }, affected_node_ids: ['copy_1', 'copy_2'] },
+          changes: [
+            {
+              op: 'copy_block',
+              boundary_preview: {
+                connection_policy: 'not_connected_by_default',
+                entry_ports: [
+                  {
+                    source: { id: 'src_1', name: '压差输入' },
+                    source_output: 0,
+                    target: { id: 'old_1', name: '旁通阀控制' },
+                    target_input: 1
+                  }
+                ],
+                exit_ports: [
+                  {
+                    source: { id: 'old_2', name: '阀门输出' },
+                    source_output: 0,
+                    target: { id: 'out_1', name: '旁通阀 AO' },
+                    target_input: 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    render(
+      <AppProviders>
+        <MemoryRouter>
+          <WorkbenchPage />
+        </MemoryRouter>
+      </AppProviders>
+    );
+
+    expect(screen.getByText('copy_block 边界预览')).toBeInTheDocument();
+    expect(screen.getByText('外部线默认不接入')).toBeInTheDocument();
+    expect(screen.getByText(/压差输入 out-0 -> 旁通阀控制 in-1/)).toBeInTheDocument();
+  });
+
   it('keeps patch JSON behind the developer collapse and submits feedback', async () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL) => {

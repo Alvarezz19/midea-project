@@ -1,5 +1,14 @@
 import { z } from 'zod';
-import type { ApiProblem, FeedbackPayload, FeedbackResponse, PatchConfirmationResponse, ProjectType, SessionResponse } from './types';
+import type {
+  ApiProblem,
+  FeedbackPayload,
+  FeedbackResponse,
+  PatchConfirmationResponse,
+  ProjectDiffResponse,
+  ProjectFlowResponse,
+  ProjectType,
+  SessionResponse
+} from './types';
 
 const apiProblemSchema = z.object({
   detail: z.unknown().optional()
@@ -80,6 +89,27 @@ export function validateProject(projectId: string): Promise<Record<string, unkno
   return apiRequest<Record<string, unknown>>(`/api/projects/${projectId}/validate`, {
     method: 'POST'
   });
+}
+
+export function getProjectFlow(projectId: string, versionId: string, centerNodeId?: string): Promise<ProjectFlowResponse> {
+  const params = new URLSearchParams({
+    max_nodes: '120',
+    max_edges: '260',
+    max_chars: '160000'
+  });
+  if (centerNodeId) {
+    params.set('center_node_id', centerNodeId);
+  }
+  return apiRequest<ProjectFlowResponse>(`/api/projects/${projectId}/versions/${versionId}/flow?${params.toString()}`);
+}
+
+export function getProjectDiff(projectId: string, toVersionId?: string): Promise<ProjectDiffResponse> {
+  const params = new URLSearchParams();
+  if (toVersionId) {
+    params.set('to_version_id', toVersionId);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest<ProjectDiffResponse>(`/api/projects/${projectId}/diff${suffix}`);
 }
 
 export function projectExportUrl(projectId: string): string {
