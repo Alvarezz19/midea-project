@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type {
+  AgentTrace,
   ApiProblem,
   FeedbackPayload,
   FeedbackResponse,
@@ -138,6 +139,10 @@ export function submitFeedback(payload: FeedbackPayload): Promise<FeedbackRespon
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export function getTrace(traceId: string): Promise<AgentTrace> {
+  return apiRequest<AgentTrace>(`/api/traces/${encodeURIComponent(traceId)}`);
 }
 
 export interface SessionEventStreamHandlers {

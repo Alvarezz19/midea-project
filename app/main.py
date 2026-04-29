@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.graph.state import AgentState
-from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
+from app.graph.workflow import (
+    get_workflow,
+    invoke_workflow_resume_with_updates,
+    invoke_workflow_with_updates,
+)
 from app.services.flow_graph import FlowGraphError, build_react_flow
 from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
 from app.services.knowledge import search_knowledge
@@ -241,10 +245,12 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
         and _pending_interrupt_kind(thread_id) == "template_confirmation"
     ):
         try:
-            next_state = invoke_workflow_resume(
+            next_state = invoke_workflow_resume_with_updates(
                 {"action": "select_template", "selected_template_id": request.selected_template_id},
                 thread_id=thread_id,
                 workflow=app.state.workflow,
+                base_state=state,
+                on_update=_workflow_update_recorder(trace["trace_id"], thread_id),
             )
         except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
             _record_event(
@@ -289,7 +295,12 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
         state["llm_max_attempts"] = request.llm_max_attempts
 
     try:
-        next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
+        next_state = invoke_workflow_with_updates(
+            state,
+            thread_id=thread_id,
+            workflow=app.state.workflow,
+            on_update=_workflow_update_recorder(trace["trace_id"], thread_id),
+        )
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
         _record_event(
             trace["trace_id"],
@@ -349,10 +360,12 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
 
     if _pending_interrupt_kind(thread_id) == "patch_confirmation":
         try:
-            next_state = invoke_workflow_resume(
+            next_state = invoke_workflow_resume_with_updates(
                 {"action": request.action},
                 thread_id=thread_id,
                 workflow=app.state.workflow,
+                base_state=state,
+                on_update=_workflow_update_recorder(trace["trace_id"], thread_id),
             )
         except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
             _record_event(
@@ -414,7 +427,12 @@ def confirm_session_patch(thread_id: str, request: PatchConfirmationRequest) -> 
         "risk_assessment": state.get("risk_assessment"),
     }
     try:
-        next_state = invoke_workflow(state, thread_id=thread_id, workflow=app.state.workflow)
+        next_state = invoke_workflow_with_updates(
+            state,
+            thread_id=thread_id,
+            workflow=app.state.workflow,
+            on_update=_workflow_update_recorder(trace["trace_id"], thread_id),
+        )
     except Exception as exc:  # API 边界兜底，内部节点仍应返回结构化错误。
         _record_event(
             trace["trace_id"],
@@ -872,6 +890,305 @@ def _start_trace(
 
 def _finish_trace(trace_id: str, status: str, *, error: str | None = None) -> None:
     _observability_store().finish_trace(trace_id, status=status, error=error)
+
+
+def _workflow_update_recorder(trace_id: str, thread_id: str):
+    def record(step: str, update: Any, state: AgentState) -> None:
+        event_step = _event_step_name(step, update)
+        payload = _workflow_update_payload(step, update)
+        status = _event_status_from_update(step, update)
+        _record_event(
+            trace_id,
+            thread_id,
+            event_type="workflow.interrupt.created" if step == "__interrupt__" else "workflow.step.completed",
+            step=event_step,
+            status=status,
+            message=_workflow_step_message(step, update),
+            state=state,
+            payload=payload,
+        )
+        for derived in _derived_workflow_events(step, update):
+            _record_event(
+                trace_id,
+                thread_id,
+                event_type=derived["event_type"],
+                step=derived["step"],
+                status=derived["status"],
+                message=derived["message"],
+                state=state,
+                payload=derived["payload"],
+            )
+
+    return record
+
+
+def _event_step_name(step: str, update: Any) -> str:
+    if step != "__interrupt__":
+        return _WORKFLOW_STEP_NAMES.get(step, step)
+    kind = _interrupt_kind(update)
+    if kind == "template_confirmation":
+        return "template_confirmation"
+    if kind == "patch_confirmation":
+        return "risk_confirmation"
+    return "interrupt"
+
+
+def _event_status_from_update(step: str, update: Any) -> str:
+    if step == "__interrupt__":
+        return "waiting"
+    if isinstance(update, dict):
+        status = update.get("status")
+        if isinstance(status, str) and status:
+            return status
+        if update.get("error"):
+            return "failed"
+    return "completed"
+
+
+def _workflow_step_message(step: str, update: Any) -> str:
+    if step == "__interrupt__":
+        kind = _interrupt_kind(update)
+        if kind == "template_confirmation":
+            return "等待用户确认模板"
+        if kind == "patch_confirmation":
+            return "等待用户确认中高风险补丁"
+        return "工作流进入人工确认点"
+    return _WORKFLOW_STEP_MESSAGES.get(step, f"工作流步骤完成：{step}")
+
+
+def _workflow_update_payload(step: str, update: Any) -> dict[str, Any]:
+    if step == "__interrupt__":
+        return {"node": step, "interrupts": _interrupt_payload(update)}
+    if not isinstance(update, dict):
+        return {"node": step, "value": str(update)}
+
+    payload: dict[str, Any] = {
+        "node": step,
+        "updated_fields": sorted(str(key) for key in update.keys()),
+    }
+    if update.get("status") is not None:
+        payload["status"] = update.get("status")
+    if update.get("next_action") is not None:
+        payload["next_action"] = update.get("next_action")
+    if update.get("error") is not None:
+        payload["error"] = str(update.get("error"))
+    if isinstance(update.get("template_candidates"), list):
+        payload["template_candidate_count"] = len(update["template_candidates"])
+    if isinstance(update.get("planner_result"), dict):
+        planner_result = update["planner_result"]
+        payload["planner"] = {
+            "status": planner_result.get("status"),
+            "planner": planner_result.get("planner"),
+            "risk_level": planner_result.get("risk_level"),
+            "operation_count": _operation_count(planner_result.get("pending_patch") or update.get("pending_patch")),
+        }
+    if isinstance(update.get("planner_attempts"), list):
+        payload["planner_attempt_count"] = len(update["planner_attempts"])
+    if isinstance(update.get("planner_dry_run"), dict):
+        payload["dry_run"] = _dry_run_summary(update["planner_dry_run"])
+    if isinstance(update.get("patch_result"), dict):
+        payload["patch_result"] = _patch_result_summary(update["patch_result"])
+    if isinstance(update.get("risk_assessment"), dict):
+        risk = update["risk_assessment"]
+        payload["risk_assessment"] = {
+            "risk_level": risk.get("risk_level"),
+            "requires_confirmation": risk.get("requires_confirmation"),
+            "reason_count": len(risk.get("reasons") or []),
+        }
+    if isinstance(update.get("validation_report"), dict):
+        payload["validation_summary"] = _validation_summary_payload(update["validation_report"])
+    if update.get("current_project_id") or update.get("current_project_version_id"):
+        payload["project"] = {
+            "project_id": update.get("current_project_id"),
+            "version_id": update.get("current_project_version_id"),
+            "project_created_in_current_run": update.get("project_created_in_current_run"),
+        }
+    return payload
+
+
+def _derived_workflow_events(step: str, update: Any) -> list[dict[str, Any]]:
+    if not isinstance(update, dict):
+        return []
+    events: list[dict[str, Any]] = []
+
+    if step == "plan_patch" and isinstance(update.get("planner_attempts"), list):
+        for item in _planner_attempt_events(update["planner_attempts"]):
+            events.append(item)
+    if step == "plan_patch" and isinstance(update.get("planner_dry_run"), dict):
+        dry_run = _dry_run_summary(update["planner_dry_run"])
+        events.append(
+            {
+                "event_type": "workflow.dry_run.completed",
+                "step": "dry_run",
+                "status": "completed" if dry_run.get("valid") else "failed",
+                "message": "补丁 dry-run 已完成",
+                "payload": dry_run,
+            }
+        )
+    if step == "apply_pending_patch" and isinstance(update.get("patch_result"), dict):
+        events.append(
+            {
+                "event_type": "workflow.patch.applied",
+                "step": "submit_version",
+                "status": _event_status_from_update(step, update),
+                "message": "结构化补丁已应用并生成版本",
+                "payload": _patch_result_summary(update["patch_result"]),
+            }
+        )
+    if step in {"apply_pending_patch", "validate_current_project"} and isinstance(update.get("validation_report"), dict):
+        summary = _validation_summary_payload(update["validation_report"])
+        events.append(
+            {
+                "event_type": "workflow.validation.completed",
+                "step": "validation",
+                "status": "completed" if summary["valid"] else "failed",
+                "message": "工程校验已完成",
+                "payload": summary,
+            }
+        )
+    if step == "create_project_version" and update.get("current_project_version_id"):
+        events.append(
+            {
+                "event_type": "workflow.version.created",
+                "step": "submit_version",
+                "status": "completed",
+                "message": "工程版本已创建",
+                "payload": {
+                    "project_id": update.get("current_project_id"),
+                    "version_id": update.get("current_project_version_id"),
+                    "project_created_in_current_run": update.get("project_created_in_current_run"),
+                },
+            }
+        )
+    return events
+
+
+def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for index, attempt in enumerate(attempts, start=1):
+        if not isinstance(attempt, dict):
+            continue
+        error = attempt.get("error") or attempt.get("last_error")
+        events.append(
+            {
+                "event_type": "llm.call.failed" if error else "llm.call.completed",
+                "step": "llm_planner",
+                "status": "failed" if error else "completed",
+                "message": "LLM planner 调用失败" if error else "LLM planner 调用完成",
+                "payload": {
+                    "attempt": attempt.get("attempt") or index,
+                    "provider": attempt.get("provider"),
+                    "model": attempt.get("model"),
+                    "status": attempt.get("status"),
+                    "risk_level": attempt.get("risk_level"),
+                    "operation_count": _operation_count(attempt.get("pending_patch")),
+                    "error": str(error) if error else None,
+                },
+            }
+        )
+    return events
+
+
+def _interrupt_kind(value: Any) -> str | None:
+    for item in value if isinstance(value, list) else [value]:
+        interrupt_value = getattr(item, "value", item)
+        if isinstance(interrupt_value, dict) and isinstance(interrupt_value.get("kind"), str):
+            return str(interrupt_value["kind"])
+    return None
+
+
+def _interrupt_payload(value: Any) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for item in value if isinstance(value, list) else [value]:
+        interrupt_value = getattr(item, "value", item)
+        interrupt_id = getattr(item, "id", None)
+        summary: dict[str, Any] = {"id": interrupt_id}
+        if isinstance(interrupt_value, dict):
+            summary["kind"] = interrupt_value.get("kind")
+            summary["question"] = interrupt_value.get("question")
+            if isinstance(interrupt_value.get("template_candidates"), list):
+                summary["template_candidate_count"] = len(interrupt_value["template_candidates"])
+            if isinstance(interrupt_value.get("risk_assessment"), dict):
+                risk = interrupt_value["risk_assessment"]
+                summary["risk_assessment"] = {
+                    "risk_level": risk.get("risk_level"),
+                    "requires_confirmation": risk.get("requires_confirmation"),
+                    "reason_count": len(risk.get("reasons") or []),
+                }
+        else:
+            summary["value"] = str(interrupt_value)
+        payload.append(summary)
+    return payload
+
+
+def _dry_run_summary(value: dict[str, Any]) -> dict[str, Any]:
+    report = value.get("validation_report") if isinstance(value.get("validation_report"), dict) else {}
+    diff = value.get("diff") if isinstance(value.get("diff"), dict) else {}
+    return {
+        "valid": value.get("valid"),
+        "changed": value.get("changed"),
+        "change_count": len(value.get("changes") or []),
+        "diff_summary": diff.get("summary"),
+        "validation_summary": _validation_summary_payload(report),
+    }
+
+
+def _patch_result_summary(value: dict[str, Any]) -> dict[str, Any]:
+    diff = value.get("diff") if isinstance(value.get("diff"), dict) else {}
+    return {
+        "changed": value.get("changed"),
+        "change_count": len(value.get("changes") or []),
+        "diff_summary": diff.get("summary"),
+    }
+
+
+def _validation_summary_payload(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    return {
+        "valid": bool(report.get("valid")),
+        "exportable": bool(report.get("exportable")),
+        "error_count": int(report.get("error_count") or summary.get("error_count") or 0),
+        "warning_count": int(report.get("warning_count") or summary.get("warning_count") or 0),
+        "risk_count": int(report.get("risk_count") or summary.get("risk_count") or 0),
+        "blocked_export_reasons": report.get("blocked_export_reasons", []),
+    }
+
+
+def _operation_count(patch: Any) -> int:
+    if not isinstance(patch, dict):
+        return 0
+    operations = patch.get("operations")
+    return len(operations) if isinstance(operations, list) else 0
+
+
+_WORKFLOW_STEP_NAMES = {
+    "classify_project_type": "requirement_analysis",
+    "collect_requirements": "requirement_analysis",
+    "retrieve_template_candidates": "template_retrieval",
+    "select_or_wait_template": "template_confirmation",
+    "confirm_template_interrupt": "template_confirmation",
+    "create_project_version": "submit_version",
+    "plan_patch": "plan_change",
+    "apply_pending_patch": "submit_version",
+    "confirm_patch_interrupt": "risk_confirmation",
+    "validate_current_project": "validation",
+    "summarize_result": "summarize_result",
+}
+
+
+_WORKFLOW_STEP_MESSAGES = {
+    "classify_project_type": "项目类型识别已完成",
+    "collect_requirements": "结构化需求分析已完成",
+    "retrieve_template_candidates": "模板检索已完成",
+    "select_or_wait_template": "模板选择状态已更新",
+    "confirm_template_interrupt": "模板确认已处理",
+    "create_project_version": "工程版本创建步骤已完成",
+    "plan_patch": "结构化修改计划已完成",
+    "apply_pending_patch": "补丁执行步骤已完成",
+    "confirm_patch_interrupt": "风险确认已处理",
+    "validate_current_project": "工程校验步骤已完成",
+    "summarize_result": "工作流摘要已生成",
+}
 
 
 def _record_event(

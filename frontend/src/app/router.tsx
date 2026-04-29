@@ -1,6 +1,6 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
-import { TracePlaceholder } from '../features/observability/TracePlaceholder';
+import { TracePage } from '../features/observability/TracePage';
 
 export const router = createBrowserRouter([
   {
@@ -13,7 +13,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '/traces/:traceId',
-    element: <TracePlaceholder />
+    element: <TracePage />
   },
   {
     path: '*',

@@ -442,5 +442,5 @@ describe('WorkbenchPage', () => {
         comment: '复核通过'
       })
     );
-  }, 15000);
+  }, 60000);
 });

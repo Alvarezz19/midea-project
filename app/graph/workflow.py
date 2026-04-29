@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
@@ -144,3 +144,67 @@ def invoke_workflow_resume(resume: Any, *, thread_id: str, workflow: Any | None 
     compiled_workflow = workflow or get_workflow()
     config = {"configurable": {"thread_id": thread_id}}
     return compiled_workflow.invoke(Command(resume=resume), config)
+
+
+WorkflowUpdateCallback = Callable[[str, Any, AgentState], None]
+
+
+def invoke_workflow_with_updates(
+    state: AgentState,
+    *,
+    thread_id: str | None = None,
+    workflow: Any | None = None,
+    on_update: WorkflowUpdateCallback | None = None,
+) -> AgentState:
+    """执行工作流并逐节点暴露 LangGraph updates。"""
+
+    if thread_id is None:
+        thread_id = f"adhoc_{uuid.uuid4().hex}"
+    return _stream_workflow_to_state(state, base_state=state, thread_id=thread_id, workflow=workflow, on_update=on_update)
+
+
+def invoke_workflow_resume_with_updates(
+    resume: Any,
+    *,
+    thread_id: str,
+    workflow: Any | None = None,
+    base_state: AgentState | None = None,
+    on_update: WorkflowUpdateCallback | None = None,
+) -> AgentState:
+    """从 interrupt 恢复执行，并逐节点暴露 LangGraph updates。"""
+
+    if not thread_id:
+        raise ValueError("thread_id 不能为空。")
+    return _stream_workflow_to_state(
+        Command(resume=resume),
+        base_state=base_state or {},
+        thread_id=thread_id,
+        workflow=workflow,
+        on_update=on_update,
+    )
+
+
+def _stream_workflow_to_state(
+    workflow_input: Any,
+    *,
+    base_state: dict[str, Any],
+    thread_id: str,
+    workflow: Any | None,
+    on_update: WorkflowUpdateCallback | None,
+) -> AgentState:
+    compiled_workflow = workflow or get_workflow()
+    config = {"configurable": {"thread_id": thread_id}}
+    accumulated: dict[str, Any] = dict(base_state)
+
+    for chunk in compiled_workflow.stream(workflow_input, config, stream_mode="updates"):
+        if not isinstance(chunk, dict):
+            continue
+        for step, update in chunk.items():
+            if isinstance(update, dict):
+                accumulated.update(update)
+            else:
+                accumulated[step] = update
+            if on_update is not None:
+                on_update(str(step), update, accumulated)  # type: ignore[arg-type]
+
+    return accumulated  # type: ignore[return-value]

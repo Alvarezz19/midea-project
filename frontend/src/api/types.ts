@@ -239,3 +239,17 @@ export interface WorkflowEvent {
   payload?: Record<string, unknown> | null;
   created_at?: string | null;
 }
+
+export interface AgentTrace {
+  trace_id: string;
+  thread_id: string;
+  project_id?: string | null;
+  version_id?: string | null;
+  root_input?: string | null;
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  metadata?: Record<string, unknown> | null;
+  events: WorkflowEvent[];
+}

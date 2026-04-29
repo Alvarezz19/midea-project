@@ -532,6 +532,9 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     resumed_events = client.get(f"/api/sessions/{thread_id}/events", headers={"Last-Event-ID": first_event_id})
     assert resumed_events.status_code == 200
+    assert "workflow.step.completed" in resumed_events.text
+    assert "workflow.version.created" in resumed_events.text
+    assert "workflow.validation.completed" in resumed_events.text
     assert "workflow.run.completed" in resumed_events.text
     assert first_event_id not in resumed_events.text
 
@@ -550,6 +553,13 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert trace.json()["trace_id"] == message_trace_id
     assert trace.json()["thread_id"] == thread_id
     assert trace.json()["events"]
+    trace_events = trace.json()["events"]
+    event_types = [item["event_type"] for item in trace_events]
+    assert "workflow.step.completed" in event_types
+    assert "workflow.version.created" in event_types
+    assert "workflow.validation.completed" in event_types
+    assert any(item["payload"].get("node") == "classify_project_type" for item in trace_events)
+    assert any(item["step"] == "template_retrieval" for item in trace_events)
 
     traces = client.get(f"/api/projects/{state['current_project_id']}/traces")
     assert traces.status_code == 200
