@@ -7,12 +7,15 @@ interface WorkbenchStore {
   projectType?: ProjectType;
   state?: SessionState;
   selectedNodeId?: string;
+  inspectedVersionId?: string;
+  inspectedFromVersionId?: string;
   bottomDrawerOpen: boolean;
   useLlmPlanner: boolean;
   setProjectType: (projectType: ProjectType) => void;
   setSession: (payload: { threadId: string; traceId?: string; state: SessionState }) => void;
   patchState: (patch: Partial<SessionState>) => void;
   selectNode: (nodeId?: string) => void;
+  inspectVersion: (versionId?: string, fromVersionId?: string) => void;
   setBottomDrawerOpen: (open: boolean) => void;
   setUseLlmPlanner: (enabled: boolean) => void;
 }
@@ -27,10 +30,13 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
       traceId,
       state,
       projectType: state.project_type ?? undefined,
-      useLlmPlanner: state.use_llm_planner ?? false
+      useLlmPlanner: state.use_llm_planner ?? false,
+      inspectedVersionId: undefined,
+      inspectedFromVersionId: undefined
     }),
   patchState: (patch) => set((store) => ({ state: store.state ? { ...store.state, ...patch } : store.state })),
   selectNode: (selectedNodeId) => set({ selectedNodeId }),
+  inspectVersion: (inspectedVersionId, inspectedFromVersionId) => set({ inspectedVersionId, inspectedFromVersionId, selectedNodeId: undefined }),
   setBottomDrawerOpen: (bottomDrawerOpen) => set({ bottomDrawerOpen }),
   setUseLlmPlanner: (useLlmPlanner) => set({ useLlmPlanner })
 }));

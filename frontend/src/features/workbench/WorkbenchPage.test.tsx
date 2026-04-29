@@ -14,6 +14,8 @@ describe('WorkbenchPage', () => {
       projectType: undefined,
       state: undefined,
       selectedNodeId: undefined,
+      inspectedVersionId: undefined,
+      inspectedFromVersionId: undefined,
       bottomDrawerOpen: false,
       useLlmPlanner: false
     });

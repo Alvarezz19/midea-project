@@ -211,6 +211,53 @@
   margin-bottom: 12px;
 }
 
+.versionPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.versionCompareBar {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(216, 224, 228, 0.85);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.versionList {
+  max-height: 245px;
+  overflow: auto;
+}
+
+.versionItem {
+  align-items: flex-start !important;
+  padding: 10px 12px !important;
+  border: 1px solid rgba(216, 224, 228, 0.72);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.versionItemCurrent {
+  border-color: rgba(32, 112, 74, 0.34);
+  background: #f4fbf7;
+}
+
+.versionItemInspected {
+  border-color: rgba(201, 122, 52, 0.36);
+  background: #fffaf2;
+}
+
+.versionMeta {
+  display: grid;
+  gap: 4px;
+}
+
+.versionStats {
+  margin-top: 4px;
+}
+
 @media (max-width: 680px) {
   .impactMetrics {
     grid-template-columns: 1fr;

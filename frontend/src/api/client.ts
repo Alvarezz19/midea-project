@@ -6,7 +6,9 @@ import type {
   PatchConfirmationResponse,
   ProjectDiffResponse,
   ProjectFlowResponse,
+  ProjectVersionsResponse,
   ProjectType,
+  RollbackProjectResponse,
   SessionResponse
 } from './types';
 
@@ -103,13 +105,27 @@ export function getProjectFlow(projectId: string, versionId: string, centerNodeI
   return apiRequest<ProjectFlowResponse>(`/api/projects/${projectId}/versions/${versionId}/flow?${params.toString()}`);
 }
 
-export function getProjectDiff(projectId: string, toVersionId?: string): Promise<ProjectDiffResponse> {
+export function getProjectDiff(projectId: string, toVersionId?: string, fromVersionId?: string): Promise<ProjectDiffResponse> {
   const params = new URLSearchParams();
   if (toVersionId) {
     params.set('to_version_id', toVersionId);
   }
+  if (fromVersionId) {
+    params.set('from_version_id', fromVersionId);
+  }
   const suffix = params.toString() ? `?${params.toString()}` : '';
   return apiRequest<ProjectDiffResponse>(`/api/projects/${projectId}/diff${suffix}`);
+}
+
+export function listProjectVersions(projectId: string): Promise<ProjectVersionsResponse> {
+  return apiRequest<ProjectVersionsResponse>(`/api/projects/${projectId}/versions`);
+}
+
+export function rollbackProject(projectId: string, targetVersionId: string): Promise<RollbackProjectResponse> {
+  return apiRequest<RollbackProjectResponse>(`/api/projects/${projectId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ target_version_id: targetVersionId })
+  });
 }
 
 export function projectExportUrl(projectId: string): string {

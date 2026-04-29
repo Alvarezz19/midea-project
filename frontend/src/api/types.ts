@@ -195,3 +195,31 @@ export interface ProjectDiffResponse {
   to_version_id: string;
   diff: NodeDiff;
 }
+
+export interface ProjectVersion {
+  project_id?: string;
+  version_id: string;
+  parent_version_id?: string | null;
+  source_template_path?: string | null;
+  version_path?: string;
+  json_sha256?: string;
+  exportable?: boolean;
+  created_at?: string;
+  note?: string;
+  patch_summary?: Record<string, unknown>;
+  validation_summary?: ValidationSummary | null;
+  summary?: Record<string, unknown>;
+  risk_level?: string;
+}
+
+export interface ProjectVersionsResponse {
+  project_id: string;
+  versions: ProjectVersion[];
+}
+
+export interface RollbackProjectResponse {
+  project_id: string;
+  target_version_id: string;
+  state?: SessionState;
+  validation_report?: Record<string, unknown>;
+}

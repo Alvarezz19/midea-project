@@ -21,10 +21,13 @@ const nodeTypes = {
 export function GraphPanel() {
   const state = useWorkbenchStore((store) => store.state);
   const selectedNodeId = useWorkbenchStore((store) => store.selectedNodeId);
+  const inspectedVersionId = useWorkbenchStore((store) => store.inspectedVersionId);
+  const inspectedFromVersionId = useWorkbenchStore((store) => store.inspectedFromVersionId);
   const selectNode = useWorkbenchStore((store) => store.selectNode);
   const [diffKind, setDiffKind] = useState<DiffKind>('modified');
   const projectId = state?.project_id ?? state?.current_project_id ?? undefined;
-  const versionId = state?.version_id ?? state?.current_project_version_id ?? undefined;
+  const currentVersionId = state?.version_id ?? state?.current_project_version_id ?? undefined;
+  const versionId = inspectedVersionId ?? currentVersionId;
   const report = state?.validation_report as { issues?: Array<Record<string, unknown>>; blocked_export_reasons?: string[] } | null | undefined;
   const blockedReasons = state?.validation_summary?.blocked_export_reasons ?? report?.blocked_export_reasons ?? [];
   const issues = report?.issues ?? [];
@@ -35,13 +38,13 @@ export function GraphPanel() {
   }, [state?.planner_dry_run]);
 
   const diffQuery = useQuery({
-    queryKey: ['project-diff', projectId, versionId],
-    queryFn: () => getProjectDiff(projectId!, versionId),
+    queryKey: ['project-diff', projectId, versionId, inspectedFromVersionId],
+    queryFn: () => getProjectDiff(projectId!, versionId, inspectedFromVersionId),
     enabled: Boolean(projectId && versionId),
     retry: false
   });
 
-  const diff = localDiff ?? diffQuery.data?.diff;
+  const diff = inspectedVersionId ? diffQuery.data?.diff : localDiff ?? diffQuery.data?.diff;
   const affectedNodeIds = diff?.affected_node_ids ?? [];
   const centerNodeId = selectedNodeId && affectedNodeIds.includes(selectedNodeId) && state?.status !== 'awaiting_patch_confirmation' ? selectedNodeId : undefined;
   const flowQuery = useQuery({
@@ -82,6 +85,7 @@ export function GraphPanel() {
         <Space size={8} wrap>
           <Tag color="blue">节点 {flowQuery.data?.flow?.budget.node_count ?? 0}</Tag>
           <Tag color="geekblue">连线 {flowQuery.data?.flow?.budget.edge_count ?? 0}</Tag>
+          {inspectedVersionId ? <Tag color="warning">查看版本 {inspectedVersionId}</Tag> : null}
           {flowQuery.data?.flow?.budget.truncated ? <Tag color="warning">已按预算截断</Tag> : null}
         </Space>
         {selectedNodeId ? (

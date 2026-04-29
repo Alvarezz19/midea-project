@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { formatApiError, submitFeedback } from '../../api/client';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
+import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
 
 const { Text } = Typography;
 
@@ -44,7 +45,7 @@ export function BottomObservabilityDrawer() {
       <Drawer
         title="开发者观测抽屉"
         placement="bottom"
-        height={320}
+        height={420}
         open={open}
         onClose={() => setOpen(false)}
         destroyOnHidden={false}
@@ -54,7 +55,7 @@ export function BottomObservabilityDrawer() {
             {
               key: 'versions',
               label: '版本历史',
-              children: <Text type="secondary">7.5 接入版本时间线、任意版本对比和回滚确认。</Text>
+              children: <VersionHistoryPanel />
             },
             {
               key: 'trace',

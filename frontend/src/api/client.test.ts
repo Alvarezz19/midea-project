@@ -1,4 +1,15 @@
-import { ApiError, apiRequest, confirmPatch, confirmTemplate, formatApiError, submitFeedback, validateProject } from './client';
+import {
+  ApiError,
+  apiRequest,
+  confirmPatch,
+  confirmTemplate,
+  formatApiError,
+  getProjectDiff,
+  listProjectVersions,
+  rollbackProject,
+  submitFeedback,
+  validateProject
+} from './client';
 
 describe('api client', () => {
   afterEach(() => {
@@ -75,6 +86,31 @@ describe('api client', () => {
           category: 'export',
           comment: '导出后复核通过'
         })
+      })
+    );
+  });
+
+  it('requests versions, explicit diff and rollback through project APIs', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ project_id: 'project_1', versions: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await listProjectVersions('project_1');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/projects/project_1/versions',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' })
+      })
+    );
+
+    await getProjectDiff('project_1', 'v_2', 'v_1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/projects/project_1/diff?to_version_id=v_2&from_version_id=v_1', expect.any(Object));
+
+    await rollbackProject('project_1', 'v_1');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/projects/project_1/rollback',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ target_version_id: 'v_1' })
       })
     );
   });
