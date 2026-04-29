@@ -6,6 +6,7 @@ import {
   formatApiError,
   getCostSummary,
   getProjectDiff,
+  getTrendSummary,
   listProjectFeedback,
   listProjectVersions,
   listTraceFeedback,
@@ -115,6 +116,17 @@ describe('api client', () => {
 
     await getCostSummary('project_1');
     expect(fetchMock).toHaveBeenLastCalledWith('/api/observability/costs?limit=50&project_id=project_1', expect.any(Object));
+  });
+
+  it('loads trend summary globally and by project', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ project_id: null, buckets: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTrendSummary();
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/observability/trends?limit=30', expect.any(Object));
+
+    await getTrendSummary('project_1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/observability/trends?limit=30&project_id=project_1', expect.any(Object));
   });
 
   it('requests versions, explicit diff and rollback through project APIs', async () => {

@@ -567,6 +567,50 @@
   background: #fbfdfe;
 }
 
+.trendPanel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(216, 224, 228, 0.82);
+}
+
+.trendStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.trendStats :global(.ant-statistic) {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.trendStats :global(.ant-statistic-content) {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  text-overflow: ellipsis;
+}
+
+.trendChartGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.trendChart {
+  height: 210px;
+  min-width: 0;
+  margin-top: 8px;
+  border: 1px solid rgba(216, 224, 228, 0.82);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
 .costPanel {
   display: grid;
   gap: 14px;
@@ -647,6 +691,8 @@
   .metricsGrid,
   .metricsColumns,
   .metricsChartGrid,
+  .trendStats,
+  .trendChartGrid,
   .costStats,
   .costColumns,
   .feedbackPanel {

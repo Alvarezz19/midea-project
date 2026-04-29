@@ -481,6 +481,31 @@ describe('WorkbenchPage', () => {
           { status: 200 }
         );
       }
+      if (url === '/api/observability/trends?limit=30') {
+        return new Response(
+          JSON.stringify({
+            project_id: null,
+            buckets: [
+              {
+                date: '2026-04-29',
+                request_count: 3,
+                failed_request_count: 1,
+                error_rate: 0.3333,
+                p95_duration_ms: 1200,
+                llm_calls: 2,
+                llm_failed_calls: 0,
+                llm_input_tokens: 300,
+                llm_output_tokens: 90,
+                llm_estimated_cost: 0.004,
+                confirmation_approved_count: 1,
+                confirmation_cancelled_count: 1,
+                confirmation_cancel_rate: 0.5
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
       return new Response(JSON.stringify({}), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -497,6 +522,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: '指标' }));
 
     expect(await screen.findByText('LLM 成本聚合')).toBeInTheDocument();
+    expect(screen.getByText('趋势维度')).toBeInTheDocument();
     expect(screen.getByText('deepseek / deepseek-chat')).toBeInTheDocument();
     expect(screen.getByText('llm_planner')).toBeInTheDocument();
     expect(screen.getByText('project_1')).toBeInTheDocument();

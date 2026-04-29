@@ -2,20 +2,20 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Alert, Button, Drawer, Form, Input, List, Rate, Select, Skeleton, Space, Statistic, Tabs, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart, PieChart } from 'echarts/charts';
+import { BarChart, LineChart, PieChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { SVGRenderer } from 'echarts/renderers';
 import type { EChartsOption } from 'echarts';
-import { formatApiError, getCostSummary, getMetricsSummary, listProjectFeedback, submitFeedback } from '../../api/client';
-import type { CostSummaryResponse, FeedbackResponse, ObservabilityMetrics } from '../../api/types';
+import { formatApiError, getCostSummary, getMetricsSummary, getTrendSummary, listProjectFeedback, submitFeedback } from '../../api/client';
+import type { CostSummaryResponse, FeedbackResponse, ObservabilityMetrics, ObservabilityTrendResponse } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 import { VersionHistoryPanel } from '../versions/VersionHistoryPanel';
 
 const { Text } = Typography;
 
-echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, SVGRenderer]);
+echarts.use([BarChart, LineChart, PieChart, GridComponent, TooltipComponent, SVGRenderer]);
 
 export function BottomObservabilityDrawer() {
   const open = useWorkbenchStore((store) => store.bottomDrawerOpen);
@@ -200,6 +200,7 @@ function ProjectFeedbackList({ feedback, loading, error }: { feedback: FeedbackR
 }
 
 function MetricsPanel() {
+  const projectId = useWorkbenchStore((store) => store.state?.project_id ?? store.state?.current_project_id);
   const query = useQuery({
     queryKey: ['observability-metrics'],
     queryFn: getMetricsSummary,
@@ -208,6 +209,11 @@ function MetricsPanel() {
   const costQuery = useQuery({
     queryKey: ['observability-costs'],
     queryFn: () => getCostSummary(),
+    refetchInterval: 30000
+  });
+  const trendQuery = useQuery({
+    queryKey: ['observability-trends', projectId ?? null],
+    queryFn: () => getTrendSummary(projectId),
     refetchInterval: 30000
   });
 
@@ -223,6 +229,7 @@ function MetricsPanel() {
   return (
     <>
       <MetricsSummary metrics={query.data} />
+      <TrendSummaryPanel trends={trendQuery.data} loading={trendQuery.isLoading} error={trendQuery.error} />
       <CostSummaryPanel cost={costQuery.data} loading={costQuery.isLoading} error={costQuery.error} />
     </>
   );
@@ -309,6 +316,124 @@ function CostSummaryPanel({ cost, loading, error }: { cost?: CostSummaryResponse
         />
         <CostList title="Prompt" items={cost.by_prompt.slice(0, 6)} label={(item) => item.prompt_name ?? 'unknown'} />
         <CostList title="项目" items={cost.by_project.slice(0, 6)} label={(item) => item.project_id ?? 'unknown'} />
+      </div>
+    </div>
+  );
+}
+
+function TrendSummaryPanel({ trends, loading, error }: { trends?: ObservabilityTrendResponse; loading: boolean; error: unknown }) {
+  if (loading) {
+    return <Skeleton active paragraph={{ rows: 3 }} />;
+  }
+  if (error) {
+    return <Alert type="error" showIcon message="趋势加载失败" description={formatApiError(error)} />;
+  }
+  if (!trends?.buckets.length) {
+    return (
+      <div className={panelStyles.trendPanel}>
+        <div className={panelStyles.sectionHeading}>
+          <Text strong>趋势维度</Text>
+          <Text type="secondary">暂无趋势数据</Text>
+        </div>
+      </div>
+    );
+  }
+  const latest = trends.buckets[trends.buckets.length - 1];
+  return (
+    <div className={panelStyles.trendPanel}>
+      <div className={panelStyles.sectionHeading}>
+        <Text strong>趋势维度</Text>
+        <Text type="secondary">请求量、失败率、P95、LLM 调用和风险确认取消率</Text>
+      </div>
+      <div className={panelStyles.trendStats}>
+        <Statistic title="最近请求" value={latest.request_count} />
+        <Statistic title="最近失败率" value={formatRate(latest.error_rate)} valueStyle={latest.error_rate ? { color: '#A53232' } : undefined} />
+        <Statistic title="最近 P95" value={formatMetricDuration(latest.p95_duration_ms)} />
+        <Statistic title="确认取消率" value={formatRate(latest.confirmation_cancel_rate)} valueStyle={latest.confirmation_cancel_rate ? { color: '#A55C00' } : undefined} />
+      </div>
+      <TrendCharts trends={trends} />
+    </div>
+  );
+}
+
+function TrendCharts({ trends }: { trends: ObservabilityTrendResponse }) {
+  const trafficRef = useRef<HTMLDivElement>(null);
+  const qualityRef = useRef<HTMLDivElement>(null);
+  const labels = trends.buckets.map((item) => item.date);
+  const trafficOptions = useMemo<EChartsOption>(
+    () => ({
+      grid: { top: 10, right: 20, bottom: 32, left: 48 },
+      tooltip: { trigger: 'axis' },
+      color: ['#0098D1', '#C97A34'],
+      xAxis: { type: 'category', data: labels },
+      yAxis: { type: 'value', minInterval: 1 },
+      series: [
+        {
+          name: '请求量',
+          type: 'bar',
+          data: trends.buckets.map((item) => item.request_count),
+          barMaxWidth: 22
+        },
+        {
+          name: 'LLM 调用',
+          type: 'line',
+          data: trends.buckets.map((item) => item.llm_calls),
+          smooth: true
+        }
+      ]
+    }),
+    [labels, trends.buckets]
+  );
+  const qualityOptions = useMemo<EChartsOption>(
+    () => ({
+      grid: { top: 10, right: 24, bottom: 32, left: 58 },
+      tooltip: {
+        trigger: 'axis',
+        valueFormatter: (value) => (typeof value === 'number' && value <= 1 ? formatRate(value) : String(value))
+      },
+      color: ['#A53232', '#006A94', '#A55C00'],
+      xAxis: { type: 'category', data: labels },
+      yAxis: [
+        { type: 'value', min: 0, axisLabel: { formatter: (value: number) => formatRate(value) } },
+        { type: 'value', min: 0, axisLabel: { formatter: (value: number) => formatMetricDuration(value) } }
+      ],
+      series: [
+        {
+          name: '失败率',
+          type: 'line',
+          data: trends.buckets.map((item) => item.error_rate),
+          smooth: true
+        },
+        {
+          name: 'P95',
+          type: 'line',
+          yAxisIndex: 1,
+          data: trends.buckets.map((item) => item.p95_duration_ms),
+          smooth: true
+        },
+        {
+          name: '确认取消率',
+          type: 'line',
+          data: trends.buckets.map((item) => item.confirmation_cancel_rate),
+          smooth: true
+        }
+      ]
+    }),
+    [labels, trends.buckets]
+  );
+
+  useEChart(trafficRef, trafficOptions);
+  useEChart(qualityRef, qualityOptions);
+
+  return (
+    <div className={panelStyles.trendChartGrid}>
+      <div>
+        <Text strong>请求与 LLM 调用</Text>
+        <div ref={trafficRef} className={panelStyles.trendChart} role="img" aria-label="请求与 LLM 调用趋势图" />
+      </div>
+      <div>
+        <Text strong>失败率、P95 与确认取消率</Text>
+        <div ref={qualityRef} className={panelStyles.trendChart} role="img" aria-label="质量与确认趋势图" />
       </div>
     </div>
   );
@@ -454,6 +579,13 @@ function formatMetricDuration(value: number): string {
 
 function formatCost(value: number): string {
   return `$${Number.isFinite(value) ? value.toFixed(4) : '0.0000'}`;
+}
+
+function formatRate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0%';
+  }
+  return `${(value * 100).toFixed(value < 0.1 ? 1 : 0)}%`;
 }
 
 function formatTokenCount(value: number): string {

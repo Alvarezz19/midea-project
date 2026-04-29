@@ -272,6 +272,28 @@ class FileObservabilityStore:
                 llm_calls.extend(item for item in calls if isinstance(item, dict))
         return _cost_summary_from_items(llm_calls, traces, project_id=project_id, limit=limit)
 
+    def trend_summary(self, *, project_id: str | None = None, limit: int = 30) -> dict[str, Any]:
+        traces: list[dict[str, Any]] = []
+        if self.traces_dir.exists():
+            for path in self.traces_dir.glob("trace_*.json"):
+                try:
+                    with path.open("r", encoding="utf-8") as file:
+                        item = json.load(file)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if isinstance(item, dict):
+                    traces.append(item)
+        events: list[dict[str, Any]] = []
+        if self.events_dir.exists():
+            for path in self.events_dir.glob("*.jsonl"):
+                events.extend(self._read_jsonl(path))
+        llm_calls: list[dict[str, Any]] = []
+        for trace in traces:
+            calls = trace.get("llm_calls")
+            if isinstance(calls, list):
+                llm_calls.extend(item for item in calls if isinstance(item, dict))
+        return _trend_summary_from_items(events, traces, llm_calls, project_id=project_id, limit=limit)
+
     def _events_path(self, thread_id: str) -> Path:
         _validate_public_id(thread_id, "thread_id")
         return self.events_dir / f"{thread_id}.jsonl"
@@ -625,6 +647,21 @@ class PostgresObservabilityStore:
             limit=limit,
         )
 
+    def trend_summary(self, *, project_id: str | None = None, limit: int = 30) -> dict[str, Any]:
+        from app.services.postgres_runtime import _connect
+
+        with _connect() as conn:
+            event_rows = conn.execute("SELECT * FROM workflow_events").fetchall()
+            trace_rows = conn.execute("SELECT * FROM agent_traces").fetchall()
+            llm_rows = conn.execute("SELECT * FROM llm_call_records").fetchall()
+        return _trend_summary_from_items(
+            [_row_to_public_dict(row) for row in event_rows],
+            [_row_to_public_dict(row) for row in trace_rows],
+            [_row_to_public_dict(row) for row in llm_rows],
+            project_id=project_id,
+            limit=limit,
+        )
+
 
 def _validate_public_id(value: str, name: str) -> None:
     if not value or any(char in value for char in "\\/:*?\"<>|"):
@@ -822,6 +859,101 @@ def _top_cost_buckets(items: Any, limit: int) -> list[dict[str, Any]]:
     finalized = [_finalize_cost_bucket(item) for item in items]
     finalized.sort(key=lambda item: (float(item.get("estimated_cost") or 0), int(item.get("calls") or 0)), reverse=True)
     return finalized[:limit]
+
+
+def _trend_summary_from_items(
+    events: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    llm_calls: list[dict[str, Any]],
+    *,
+    project_id: str | None = None,
+    limit: int = 30,
+) -> dict[str, Any]:
+    trace_by_id = {str(item.get("trace_id")): item for item in traces if item.get("trace_id")}
+    buckets: dict[str, dict[str, Any]] = {}
+
+    for trace in traces:
+        trace_project_id = str(trace.get("project_id") or "unknown")
+        if project_id and trace_project_id != project_id:
+            continue
+        date = _date_bucket(trace.get("started_at") or trace.get("created_at"))
+        bucket = buckets.setdefault(date, _empty_trend_bucket(date))
+        bucket["request_count"] += 1
+        if trace.get("status") in {"failed", "error"}:
+            bucket["failed_request_count"] += 1
+        duration = _trace_duration_ms(trace)
+        if duration is not None:
+            bucket["durations"].append(duration)
+
+    for call in llm_calls:
+        trace = trace_by_id.get(str(call.get("trace_id") or ""), {})
+        call_project_id = str(call.get("project_id") or trace.get("project_id") or "unknown")
+        if project_id and call_project_id != project_id:
+            continue
+        date = _date_bucket(call.get("created_at") or trace.get("started_at"))
+        bucket = buckets.setdefault(date, _empty_trend_bucket(date))
+        bucket["llm_calls"] += 1
+        if call.get("status") == "failed":
+            bucket["llm_failed_calls"] += 1
+        bucket["llm_input_tokens"] += int(call.get("input_tokens") or 0)
+        bucket["llm_output_tokens"] += int(call.get("output_tokens") or 0)
+        bucket["llm_estimated_cost"] += float(call.get("estimated_cost") or 0)
+
+    for event in events:
+        trace = trace_by_id.get(str(event.get("trace_id") or ""), {})
+        event_project_id = str(event.get("project_id") or trace.get("project_id") or "unknown")
+        if project_id and event_project_id != project_id:
+            continue
+        if str(event.get("event_type") or "") not in {
+            "workflow.patch_confirmation.approved",
+            "workflow.patch_confirmation.cancelled",
+            "workflow.patch_confirmation.completed",
+        }:
+            continue
+        status = str(event.get("status") or "")
+        date = _date_bucket(event.get("created_at") or trace.get("started_at"))
+        bucket = buckets.setdefault(date, _empty_trend_bucket(date))
+        if status == "cancelled" or "cancel" in status or event.get("event_type") == "workflow.patch_confirmation.cancelled":
+            bucket["confirmation_cancelled_count"] += 1
+        else:
+            bucket["confirmation_approved_count"] += 1
+
+    ordered = [_finalize_trend_bucket(item) for _, item in sorted(buckets.items())]
+    return {
+        "project_id": project_id,
+        "buckets": ordered[-limit:],
+    }
+
+
+def _empty_trend_bucket(date: str) -> dict[str, Any]:
+    return {
+        "date": date,
+        "request_count": 0,
+        "failed_request_count": 0,
+        "durations": [],
+        "llm_calls": 0,
+        "llm_failed_calls": 0,
+        "llm_input_tokens": 0,
+        "llm_output_tokens": 0,
+        "llm_estimated_cost": 0.0,
+        "confirmation_approved_count": 0,
+        "confirmation_cancelled_count": 0,
+    }
+
+
+def _finalize_trend_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
+    item = dict(bucket)
+    durations = [float(value) for value in item.pop("durations", [])]
+    request_count = int(item.get("request_count") or 0)
+    failed_count = int(item.get("failed_request_count") or 0)
+    approved_count = int(item.get("confirmation_approved_count") or 0)
+    cancelled_count = int(item.get("confirmation_cancelled_count") or 0)
+    decision_count = approved_count + cancelled_count
+    item["error_rate"] = round(failed_count / request_count, 4) if request_count else 0
+    item["p95_duration_ms"] = round(_percentile(durations, 0.95), 3)
+    item["confirmation_cancel_rate"] = round(cancelled_count / decision_count, 4) if decision_count else 0
+    item["llm_estimated_cost"] = round(float(item.get("llm_estimated_cost") or 0), 6)
+    return item
 
 
 def _date_bucket(value: Any) -> str:

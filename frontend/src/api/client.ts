@@ -7,6 +7,7 @@ import type {
   FeedbackListResponse,
   FeedbackResponse,
   ObservabilityMetrics,
+  ObservabilityTrendResponse,
   PatchConfirmationResponse,
   ProjectDiffResponse,
   ProjectFlowResponse,
@@ -162,6 +163,14 @@ export function getCostSummary(projectId?: string | null): Promise<CostSummaryRe
     params.set('project_id', projectId);
   }
   return apiRequest<CostSummaryResponse>(`/api/observability/costs?${params.toString()}`);
+}
+
+export function getTrendSummary(projectId?: string | null): Promise<ObservabilityTrendResponse> {
+  const params = new URLSearchParams({ limit: '30' });
+  if (projectId) {
+    params.set('project_id', projectId);
+  }
+  return apiRequest<ObservabilityTrendResponse>(`/api/observability/trends?${params.toString()}`);
 }
 
 export async function getMetricsSummary(): Promise<ObservabilityMetrics> {

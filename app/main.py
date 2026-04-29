@@ -915,6 +915,14 @@ def get_observability_costs(
     return _observability_store().cost_summary(project_id=project_id, limit=limit)
 
 
+@app.get("/api/observability/trends")
+def get_observability_trends(
+    project_id: str | None = None,
+    limit: int = Query(default=30, ge=1, le=120),
+) -> dict[str, Any]:
+    return _observability_store().trend_summary(project_id=project_id, limit=limit)
+
+
 @app.post("/api/feedback")
 def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
     if _observability_store().get_trace(request.trace_id) is None:

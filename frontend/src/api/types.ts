@@ -302,6 +302,27 @@ export interface CostSummaryResponse {
   by_date: CostBucket[];
 }
 
+export interface ObservabilityTrendBucket {
+  date: string;
+  request_count: number;
+  failed_request_count: number;
+  error_rate: number;
+  p95_duration_ms: number;
+  llm_calls: number;
+  llm_failed_calls: number;
+  llm_input_tokens: number;
+  llm_output_tokens: number;
+  llm_estimated_cost: number;
+  confirmation_approved_count: number;
+  confirmation_cancelled_count: number;
+  confirmation_cancel_rate: number;
+}
+
+export interface ObservabilityTrendResponse {
+  project_id?: string | null;
+  buckets: ObservabilityTrendBucket[];
+}
+
 export interface LlmCallRecord {
   id?: string;
   llm_call_id?: string;

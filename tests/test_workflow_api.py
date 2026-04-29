@@ -682,6 +682,18 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert project_costs.status_code == 200
     assert project_costs.json()["project_id"] == state["current_project_id"]
     assert project_costs.json()["total"]["calls"] >= 1
+    trends = client.get("/api/observability/trends")
+    assert trends.status_code == 200
+    trend_data = trends.json()
+    assert trend_data["buckets"]
+    assert trend_data["buckets"][-1]["request_count"] >= 1
+    assert "error_rate" in trend_data["buckets"][-1]
+    assert "p95_duration_ms" in trend_data["buckets"][-1]
+    assert trend_data["buckets"][-1]["llm_calls"] >= 1
+    project_trends = client.get("/api/observability/trends", params={"project_id": state["current_project_id"]})
+    assert project_trends.status_code == 200
+    assert project_trends.json()["project_id"] == state["current_project_id"]
+    assert project_trends.json()["buckets"][-1]["llm_calls"] >= 1
 
     dry_run = client.post(
         "/api/planner/dry-run",
