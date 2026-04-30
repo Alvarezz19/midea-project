@@ -81,109 +81,111 @@ export function GraphPanel() {
         </Tag>
       </header>
 
-      <div className={panelStyles.flowToolbar}>
-        <Space size={8} wrap>
-          <Tag color="blue">节点 {flowQuery.data?.flow?.budget.node_count ?? 0}</Tag>
-          <Tag color="geekblue">连线 {flowQuery.data?.flow?.budget.edge_count ?? 0}</Tag>
-          {inspectedVersionId ? <Tag color="warning">查看版本 {inspectedVersionId}</Tag> : null}
-          {flowQuery.data?.flow?.budget.truncated ? <Tag color="warning">已按预算截断</Tag> : null}
-        </Space>
-        {selectedNodeId ? (
-          <Button size="small" icon={<AimOutlined />} onClick={() => selectNode(undefined)}>
-            清除定位
-          </Button>
-        ) : null}
-      </div>
-
-      <div className={panelStyles.flowPreview}>
-        {projectId && versionId ? (
-          <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            fitView
-            minZoom={0.2}
-            maxZoom={1.5}
-            onNodeClick={(_, node) => focusNode(node.id)}
-          >
-            <Background />
-            <MiniMap pannable zoomable nodeColor={(node) => nodeColor(String(node.data?.role ?? 'unknown'))} />
-            <Controls />
-          </ReactFlow>
-        ) : null}
-        {!projectId || !versionId ? (
-          <div className={panelStyles.flowEmpty}>
-            <Empty description="创建工程版本后显示局部流程图" />
-          </div>
-        ) : null}
-        {flowQuery.isError ? (
-          <div className={panelStyles.flowError}>
-            <Alert type="warning" showIcon message="局部图加载失败" description={formatApiError(flowQuery.error)} />
-          </div>
-        ) : null}
-      </div>
-
-      <div className={panelStyles.section}>
-        <div className={panelStyles.sectionHeading}>
-          <Text strong>Diff 影响范围</Text>
-          <Segmented
-            size="small"
-            value={diffKind}
-            options={[
-              { label: `新增 ${diff?.summary?.added_count ?? 0}`, value: 'added' },
-              { label: `删除 ${diff?.summary?.removed_count ?? 0}`, value: 'removed' },
-              { label: `修改 ${diff?.summary?.modified_count ?? 0}`, value: 'modified' }
-            ]}
-            onChange={(value) => setDiffKind(value as DiffKind)}
-          />
+      <div className={panelStyles.panelScroll}>
+        <div className={panelStyles.flowToolbar}>
+          <Space size={8} wrap>
+            <Tag color="blue">节点 {flowQuery.data?.flow?.budget.node_count ?? 0}</Tag>
+            <Tag color="geekblue">连线 {flowQuery.data?.flow?.budget.edge_count ?? 0}</Tag>
+            {inspectedVersionId ? <Tag color="warning">查看版本 {inspectedVersionId}</Tag> : null}
+            {flowQuery.data?.flow?.budget.truncated ? <Tag color="warning">已按预算截断</Tag> : null}
+          </Space>
+          {selectedNodeId ? (
+            <Button size="small" icon={<AimOutlined />} onClick={() => selectNode(undefined)}>
+              清除定位
+            </Button>
+          ) : null}
         </div>
-        {diffQuery.isError && !localDiff ? (
-          <Alert className={panelStyles.inlineAlert} type="info" showIcon message={formatApiError(diffQuery.error)} />
-        ) : null}
-        <DiffList items={diff?.[diffKind] ?? []} selectedNodeId={selectedNodeId} onFocus={focusNode} />
-        {selectedNode ? (
-          <div className={panelStyles.nodeDetail}>
-            <Text strong>{String(selectedNode.data.label ?? selectedNode.id)}</Text>
-            <Text type="secondary">
-              {String(selectedNode.data.module_type ?? 'unknown')} · {roleLabel(String(selectedNode.data.role ?? 'unknown'))}
-              {selectedNode.data.tab_label ? ` · ${String(selectedNode.data.tab_label)}` : ''}
-            </Text>
-          </div>
-        ) : affectedNodeIds.length ? (
-          <div className={panelStyles.chips}>
-            {affectedNodeIds.slice(0, 14).map((id) => (
-              <button key={id} type="button" onClick={() => focusNode(id)}>
-                {id}
-              </button>
-            ))}
-            {affectedNodeIds.length > 14 ? <span>+{affectedNodeIds.length - 14}</span> : null}
-          </div>
-        ) : null}
-      </div>
 
-      {boundaryPreview ? <CopyBlockBoundaryPreview preview={boundaryPreview} /> : null}
+        <div className={panelStyles.flowPreview}>
+          {projectId && versionId ? (
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              fitView
+              minZoom={0.2}
+              maxZoom={1.5}
+              onNodeClick={(_, node) => focusNode(node.id)}
+            >
+              <Background />
+              <MiniMap pannable zoomable nodeColor={(node) => nodeColor(String(node.data?.role ?? 'unknown'))} />
+              <Controls />
+            </ReactFlow>
+          ) : null}
+          {!projectId || !versionId ? (
+            <div className={panelStyles.flowEmpty}>
+              <Empty description="创建工程版本后显示局部流程图" />
+            </div>
+          ) : null}
+          {flowQuery.isError ? (
+            <div className={panelStyles.flowError}>
+              <Alert type="warning" showIcon message="局部图加载失败" description={formatApiError(flowQuery.error)} />
+            </div>
+          ) : null}
+        </div>
 
-      <div className={panelStyles.section}>
-        <Text strong>校验摘要</Text>
-        {blockedReasons.length ? (
-          <List
-            size="small"
-            dataSource={blockedReasons}
-            renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
-          />
-        ) : null}
-        <pre className={panelStyles.jsonBlock}>{JSON.stringify(state?.validation_summary ?? {}, null, 2)}</pre>
-        {issues.length ? (
-          <List
-            size="small"
-            dataSource={issues.slice(0, 8)}
-            renderItem={(item) => (
-              <List.Item className={item.severity === 'error' ? panelStyles.errorIssue : panelStyles.warningIssue}>
-                <Text>{String(item.message ?? item.code ?? '校验问题')}</Text>
-              </List.Item>
-            )}
-          />
-        ) : null}
+        <div className={panelStyles.section}>
+          <div className={panelStyles.sectionHeading}>
+            <Text strong>Diff 影响范围</Text>
+            <Segmented
+              size="small"
+              value={diffKind}
+              options={[
+                { label: `新增 ${diff?.summary?.added_count ?? 0}`, value: 'added' },
+                { label: `删除 ${diff?.summary?.removed_count ?? 0}`, value: 'removed' },
+                { label: `修改 ${diff?.summary?.modified_count ?? 0}`, value: 'modified' }
+              ]}
+              onChange={(value) => setDiffKind(value as DiffKind)}
+            />
+          </div>
+          {diffQuery.isError && !localDiff ? (
+            <Alert className={panelStyles.inlineAlert} type="info" showIcon message={formatApiError(diffQuery.error)} />
+          ) : null}
+          <DiffList items={diff?.[diffKind] ?? []} selectedNodeId={selectedNodeId} onFocus={focusNode} />
+          {selectedNode ? (
+            <div className={panelStyles.nodeDetail}>
+              <Text strong>{String(selectedNode.data.label ?? selectedNode.id)}</Text>
+              <Text type="secondary">
+                {String(selectedNode.data.module_type ?? 'unknown')} · {roleLabel(String(selectedNode.data.role ?? 'unknown'))}
+                {selectedNode.data.tab_label ? ` · ${String(selectedNode.data.tab_label)}` : ''}
+              </Text>
+            </div>
+          ) : affectedNodeIds.length ? (
+            <div className={panelStyles.chips}>
+              {affectedNodeIds.slice(0, 14).map((id) => (
+                <button key={id} type="button" onClick={() => focusNode(id)}>
+                  {id}
+                </button>
+              ))}
+              {affectedNodeIds.length > 14 ? <span>+{affectedNodeIds.length - 14}</span> : null}
+            </div>
+          ) : null}
+        </div>
+
+        {boundaryPreview ? <CopyBlockBoundaryPreview preview={boundaryPreview} /> : null}
+
+        <div className={panelStyles.section}>
+          <Text strong>校验摘要</Text>
+          {blockedReasons.length ? (
+            <List
+              size="small"
+              dataSource={blockedReasons}
+              renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
+            />
+          ) : null}
+          <pre className={panelStyles.jsonBlock}>{JSON.stringify(state?.validation_summary ?? {}, null, 2)}</pre>
+          {issues.length ? (
+            <List
+              size="small"
+              dataSource={issues.slice(0, 8)}
+              renderItem={(item) => (
+                <List.Item className={item.severity === 'error' ? panelStyles.errorIssue : panelStyles.warningIssue}>
+                  <Text>{String(item.message ?? item.code ?? '校验问题')}</Text>
+                </List.Item>
+              )}
+            />
+          ) : null}
+        </div>
       </div>
     </section>
   );

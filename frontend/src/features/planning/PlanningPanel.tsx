@@ -45,96 +45,98 @@ export function PlanningPanel() {
         </Tag>
       </header>
 
-      <div className={panelStyles.section}>
-        <Text strong>模板候选</Text>
-        {candidates.length ? (
-          <List
-            dataSource={candidates}
-            renderItem={(item) => (
-              <List.Item className={panelStyles.templateItem}>
-                <List.Item.Meta
-                  title={item.file_name ?? item.template_id}
-                  description={<TemplateDescription item={item} />}
-                />
-                <Button
-                  type={state?.selected_template_id === item.template_id ? 'primary' : 'default'}
-                  size="small"
-                  loading={templateMutation.isPending && templateMutation.variables === item.template_id}
-                  disabled={!threadId || state?.next_action !== 'confirm_template'}
-                  onClick={() => templateMutation.mutate(item.template_id)}
-                >
-                  {state?.selected_template_id === item.template_id ? '已选' : '确认'}
-                </Button>
-              </List.Item>
-            )}
-          />
-        ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无模板候选" />
-        )}
-      </div>
-
-      <div className={panelStyles.section}>
-        <Text strong>修改计划</Text>
-        {planner ? (
-          <Descriptions className={panelStyles.compactDescriptions} column={2} size="small" bordered>
-            <Descriptions.Item label="状态">{String(planner.status ?? state?.status ?? '-')}</Descriptions.Item>
-            <Descriptions.Item label="风险">{String(planner.risk_level ?? risk?.risk_level ?? '-')}</Descriptions.Item>
-            <Descriptions.Item label="Planner">{String(planner.planner ?? 'rule')}</Descriptions.Item>
-            <Descriptions.Item label="尝试次数">{state?.planner_attempts?.length ?? 0}</Descriptions.Item>
-          </Descriptions>
-        ) : (
-          <Text type="secondary">创建工程版本后，继续输入局部改造需求即可生成计划。</Text>
-        )}
-        {dryRun ? (
-          <div className={panelStyles.diffSummary}>
-            <Tag color={dryRun.valid === false ? 'error' : 'success'}>{dryRun.valid === false ? 'dry-run 未通过' : 'dry-run 通过'}</Tag>
-            <Text type="secondary">影响节点：{String(dryRun.diff?.summary?.affected_node_count ?? dryRun.diff?.affected_node_ids?.length ?? 0)}</Text>
-            <Text type="secondary">新增/删除/修改：{summaryText(dryRun.diff?.summary)}</Text>
-          </div>
-        ) : null}
-        {plannerQuestions(planner).length ? <Alert className={panelStyles.inlineAlert} type="warning" showIcon message={plannerQuestions(planner)[0]} /> : null}
-        {visiblePatch ? <OperationPreview patch={visiblePatch} dryRun={dryRun} /> : null}
-      </div>
-
-      <div className={pendingPatch ? panelStyles.riskBox : panelStyles.section}>
-        <Text strong>
-          <SafetyCertificateOutlined /> 高风险确认
-        </Text>
-        {pendingPatch ? (
-          <>
-            <Alert
-              className={panelStyles.inlineAlert}
-              type="warning"
-              showIcon
-              message="确认后才会创建新版本；取消不会改变当前版本。"
-              description={<RiskReasons reasons={risk?.reasons ?? risk?.risk_reasons ?? []} />}
+      <div className={panelStyles.panelScroll}>
+        <div className={panelStyles.section}>
+          <Text strong>模板候选</Text>
+          {candidates.length ? (
+            <List
+              dataSource={candidates}
+              renderItem={(item) => (
+                <List.Item className={panelStyles.templateItem}>
+                  <List.Item.Meta
+                    title={item.file_name ?? item.template_id}
+                    description={<TemplateDescription item={item} />}
+                  />
+                  <Button
+                    type={state?.selected_template_id === item.template_id ? 'primary' : 'default'}
+                    size="small"
+                    loading={templateMutation.isPending && templateMutation.variables === item.template_id}
+                    disabled={!threadId || state?.next_action !== 'confirm_template'}
+                    onClick={() => templateMutation.mutate(item.template_id)}
+                  >
+                    {state?.selected_template_id === item.template_id ? '已选' : '确认'}
+                  </Button>
+                </List.Item>
+              )}
             />
-            <OperationPreview patch={pendingPatch} dryRun={dryRun} compact />
-            <Space wrap>
-              <Popconfirm
-                title="确认应用该计划？"
-                description="系统会从当前版本创建一个新的子版本。"
-                okText="确认应用"
-                cancelText="再检查"
-                onConfirm={() => patchMutation.mutate('approve')}
-              >
-                <Button type="primary" icon={<CheckCircleOutlined />} loading={patchMutation.isPending && patchMutation.variables === 'approve'}>
-                  确认应用
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无模板候选" />
+          )}
+        </div>
+
+        <div className={panelStyles.section}>
+          <Text strong>修改计划</Text>
+          {planner ? (
+            <Descriptions className={panelStyles.compactDescriptions} column={2} size="small" bordered>
+              <Descriptions.Item label="状态">{String(planner.status ?? state?.status ?? '-')}</Descriptions.Item>
+              <Descriptions.Item label="风险">{String(planner.risk_level ?? risk?.risk_level ?? '-')}</Descriptions.Item>
+              <Descriptions.Item label="Planner">{String(planner.planner ?? 'rule')}</Descriptions.Item>
+              <Descriptions.Item label="尝试次数">{state?.planner_attempts?.length ?? 0}</Descriptions.Item>
+            </Descriptions>
+          ) : (
+            <Text type="secondary">创建工程版本后，继续输入局部改造需求即可生成计划。</Text>
+          )}
+          {dryRun ? (
+            <div className={panelStyles.diffSummary}>
+              <Tag color={dryRun.valid === false ? 'error' : 'success'}>{dryRun.valid === false ? 'dry-run 未通过' : 'dry-run 通过'}</Tag>
+              <Text type="secondary">影响节点：{String(dryRun.diff?.summary?.affected_node_count ?? dryRun.diff?.affected_node_ids?.length ?? 0)}</Text>
+              <Text type="secondary">新增/删除/修改：{summaryText(dryRun.diff?.summary)}</Text>
+            </div>
+          ) : null}
+          {plannerQuestions(planner).length ? <Alert className={panelStyles.inlineAlert} type="warning" showIcon message={plannerQuestions(planner)[0]} /> : null}
+          {visiblePatch ? <OperationPreview patch={visiblePatch} dryRun={dryRun} /> : null}
+        </div>
+
+        <div className={pendingPatch ? panelStyles.riskBox : panelStyles.section}>
+          <Text strong>
+            <SafetyCertificateOutlined /> 高风险确认
+          </Text>
+          {pendingPatch ? (
+            <>
+              <Alert
+                className={panelStyles.inlineAlert}
+                type="warning"
+                showIcon
+                message="确认后才会创建新版本；取消不会改变当前版本。"
+                description={<RiskReasons reasons={risk?.reasons ?? risk?.risk_reasons ?? []} />}
+              />
+              <OperationPreview patch={pendingPatch} dryRun={dryRun} compact />
+              <Space wrap>
+                <Popconfirm
+                  title="确认应用该计划？"
+                  description="系统会从当前版本创建一个新的子版本。"
+                  okText="确认应用"
+                  cancelText="再检查"
+                  onConfirm={() => patchMutation.mutate('approve')}
+                >
+                  <Button type="primary" icon={<CheckCircleOutlined />} loading={patchMutation.isPending && patchMutation.variables === 'approve'}>
+                    确认应用
+                  </Button>
+                </Popconfirm>
+                <Button
+                  danger
+                  icon={<CloseCircleOutlined />}
+                  loading={patchMutation.isPending && patchMutation.variables === 'cancel'}
+                  onClick={() => patchMutation.mutate('cancel')}
+                >
+                  取消
                 </Button>
-              </Popconfirm>
-              <Button
-                danger
-                icon={<CloseCircleOutlined />}
-                loading={patchMutation.isPending && patchMutation.variables === 'cancel'}
-                onClick={() => patchMutation.mutate('cancel')}
-              >
-                取消
-              </Button>
-            </Space>
-          </>
-        ) : (
-          <Text type="secondary">暂无待确认补丁。</Text>
-        )}
+              </Space>
+            </>
+          ) : (
+            <Text type="secondary">暂无待确认补丁。</Text>
+          )}
+        </div>
       </div>
     </section>
   );

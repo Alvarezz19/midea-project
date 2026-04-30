@@ -1,7 +1,7 @@
 import { Alert, Button, Input, List, Space, Switch, Typography, message as antMessage } from 'antd';
 import { SendOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createSession, formatApiError, sendMessage } from '../../api/client';
 import type { RequirementQuestion } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
@@ -11,12 +11,14 @@ const { Text, Title } = Typography;
 
 export function SessionPanel() {
   const [draft, setDraft] = useState('');
+  const messageListRef = useRef<HTMLDivElement>(null);
   const threadId = useWorkbenchStore((store) => store.threadId);
   const projectType = useWorkbenchStore((store) => store.projectType);
   const state = useWorkbenchStore((store) => store.state);
   const useLlmPlanner = useWorkbenchStore((store) => store.useLlmPlanner);
   const setUseLlmPlanner = useWorkbenchStore((store) => store.setUseLlmPlanner);
   const setSession = useWorkbenchStore((store) => store.setSession);
+  const appendMessage = useWorkbenchStore((store) => store.appendMessage);
   const [messageApi, holder] = antMessage.useMessage();
 
   const createMutation = useMutation({
@@ -26,15 +28,32 @@ export function SessionPanel() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: () => sendMessage(threadId!, draft, projectType, { useLlmPlanner }),
+    mutationFn: (content: string) => sendMessage(threadId!, content, projectType, { useLlmPlanner }),
     onSuccess: (data) => {
       setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state });
-      setDraft('');
     },
     onError: (error) => messageApi.error(formatApiError(error))
   });
 
   const messages = state?.messages ?? [];
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+    list.scrollTop = list.scrollHeight;
+  }, [messages.length]);
+
+  const submitDraft = () => {
+    const content = draft.trim();
+    if (!threadId || !content) {
+      return;
+    }
+    appendMessage({ role: 'user', content });
+    setDraft('');
+    sendMutation.mutate(content);
+  };
+
   const questions = (state?.open_questions ?? []).map(questionText);
   const summaryItems = [
     ...(state?.requirement_summary?.equipment ?? []),
@@ -77,7 +96,7 @@ export function SessionPanel() {
         ) : null}
       </div>
 
-      <div className={panelStyles.messageList}>
+      <div ref={messageListRef} className={panelStyles.messageList}>
         {messages.length ? (
           messages.map((item, index) => (
             <article key={`${item.role}-${index}`} className={item.role === 'user' ? panelStyles.userBubble : panelStyles.agentBubble}>
@@ -102,7 +121,7 @@ export function SessionPanel() {
           icon={<SendOutlined />}
           disabled={!threadId || !draft.trim()}
           loading={sendMutation.isPending}
-          onClick={() => sendMutation.mutate()}
+          onClick={submitDraft}
         >
           发送
         </Button>

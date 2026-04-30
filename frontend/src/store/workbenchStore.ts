@@ -17,6 +17,7 @@ interface WorkbenchStore {
   setProjectType: (projectType: ProjectType) => void;
   setSession: (payload: { threadId: string; traceId?: string; state: SessionState }) => void;
   patchState: (patch: Partial<SessionState>) => void;
+  appendMessage: (message: { role: string; content: string }) => void;
   mergeWorkflowEvent: (event: WorkflowEvent) => void;
   setEventConnectionStatus: (status: EventConnectionStatus) => void;
   selectNode: (nodeId?: string) => void;
@@ -48,6 +49,10 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
       };
     }),
   patchState: (patch) => set((store) => ({ state: store.state ? { ...store.state, ...patch } : store.state })),
+  appendMessage: (message) =>
+    set((store) => ({
+      state: store.state ? { ...store.state, messages: [...(store.state.messages ?? []), message] } : store.state
+    })),
   mergeWorkflowEvent: (event) =>
     set((store) => {
       if (store.workflowEvents.some((item) => item.event_id === event.event_id)) {

@@ -9,6 +9,12 @@
   box-shadow: 0 14px 34px rgba(23, 32, 38, 0.08);
 }
 
+.panelScroll {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 .header {
   display: flex;
   align-items: flex-start;
