@@ -2,7 +2,7 @@ import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, 
 import { CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { confirmPatch, confirmTemplate, formatApiError } from '../../api/client';
-import type { DesignBrief, TemplateCandidate } from '../../api/types';
+import type { DesignBrief, RequirementConformanceReport, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -19,6 +19,7 @@ export function PlanningPanel() {
   const planner = state?.planner_result as Record<string, unknown> | null | undefined;
   const visiblePatch = (planner?.pending_patch ?? pendingPatch) as Record<string, unknown> | null | undefined;
   const designBrief = state?.design_brief;
+  const conformance = state?.conformance_report ?? state?.validation_report?.conformance_report;
   const [messageApi, holder] = antMessage.useMessage();
 
   const templateMutation = useMutation({
@@ -76,6 +77,7 @@ export function PlanningPanel() {
         </div>
 
         {designBrief ? <DesignBriefView brief={designBrief} /> : null}
+        {conformance ? <ConformanceReportView report={conformance} /> : null}
 
         <div className={panelStyles.section}>
           <Text strong>修改计划</Text>
@@ -142,6 +144,39 @@ export function PlanningPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+function ConformanceReportView({ report }: { report: RequirementConformanceReport }) {
+  const blocked = report.blocked ?? [];
+  const partial = report.partial ?? [];
+  const missing = report.missing ?? [];
+  const covered = report.covered ?? [];
+  const type = report.context_available === false ? 'info' : blocked.length ? 'error' : 'success';
+  const message = report.context_available === false ? '需求覆盖未复核' : blocked.length ? '需求覆盖阻塞导出' : '需求覆盖已复核';
+  return (
+    <div className={panelStyles.section}>
+      <Text strong>导出门禁</Text>
+      <Alert
+        className={panelStyles.inlineAlert}
+        type={type}
+        showIcon
+        message={message}
+        description={blocked[0] ?? report.warnings?.[0] ?? `已覆盖 ${covered.length} 项，需人工复核 ${partial.length} 项。`}
+      />
+      {blocked.length || missing.length || partial.length ? (
+        <List
+          size="small"
+          dataSource={[...blocked.map((item) => ({ label: item, tone: 'error' })), ...missing.slice(0, 3).map((item) => ({ label: item.reason ?? item.requirement ?? '未覆盖需求', tone: 'warning' })), ...partial.slice(0, 3).map((item) => ({ label: item.reason ?? item.requirement ?? '需人工复核', tone: 'default' }))]}
+          renderItem={(item) => (
+            <List.Item className={panelStyles.operationItem}>
+              <Tag color={item.tone}>{item.tone === 'error' ? '阻塞' : item.tone === 'warning' ? '缺失' : '复核'}</Tag>
+              <Text>{item.label}</Text>
+            </List.Item>
+          )}
+        />
+      ) : null}
+    </div>
   );
 }
 

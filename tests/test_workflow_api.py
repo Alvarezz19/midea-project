@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.graph.state import initial_state
 from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
 from app.main import app
-from app.services.json_project import load_project
+from app.services.json_project import load_project, save_project
 from app.services.retrieval import search_nodes, search_templates
 from app.services.session_store import FileSessionStore
 from app.services.validator import validate_project
@@ -934,3 +934,79 @@ def test_export_rejects_invalid_project_json(tmp_path: Path, monkeypatch: pytest
     project_trace = client.get(f"/api/traces/{project_detail['trace_id']}")
     assert project_trace.status_code == 200
     assert project_trace.json()["project_id"] == "invalid_export_project"
+
+
+def test_validate_by_path_reports_unreviewed_requirement_coverage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.state, "session_store", FileSessionStore(tmp_path / "sessions"))
+    client = TestClient(app)
+    project_path = save_project(tmp_path / "valid-no-context.json", [{"id": "tab_1", "type": "tab", "label": "控制"}])
+
+    response = client.post("/api/projects/validate", json={"path": str(project_path)})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is True
+    assert data["exportable"] is True
+    assert data["conformance_report"]["context_available"] is False
+    assert "需求覆盖未复核" in data["conformance_report"]["warnings"][0]
+
+
+def test_export_by_project_blocks_missing_requirement_conformance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FileSessionStore(tmp_path / "sessions")
+    monkeypatch.setattr(app.state, "session_store", store)
+    client = TestClient(app)
+    project_path = save_project(tmp_path / "missing-filter-alarm.json", [{"id": "tab_1", "type": "tab", "label": "控制"}])
+    store.save(
+        "conformance-export-thread",
+        {
+            "messages": [{"role": "user", "content": "AHU 需要过滤网报警"}],
+            "project_type": "ahu",
+            "requirement_summary": {},
+            "requirement_slots": {
+                "project_type": "ahu",
+                "task_type": "new_program",
+                "equipment": [{"name": "过滤网", "status": "confirmed"}],
+                "control_features": [],
+                "communication": [],
+                "io_points": [],
+                "protection_logic": [{"name": "过滤网报警", "status": "confirmed"}],
+                "design_constraints": [],
+                "message_history": [{"message_id": "msg_1", "content": "AHU 需要过滤网报警"}],
+                "slot_sources": {},
+                "slot_status": {},
+            },
+            "design_brief": None,
+            "conformance_report": None,
+            "open_questions": [],
+            "confirmed_requirements": ["保护/联锁：过滤网报警"],
+            "template_candidates": [],
+            "selected_template_id": None,
+            "current_project_id": "conformance_export_project",
+            "current_project_version_id": "v_missing_filter",
+            "current_project_path": str(project_path),
+            "pending_patch": None,
+            "pending_confirmation_patch": None,
+            "planner_result": None,
+            "planner_dry_run": None,
+            "planner_attempts": [],
+            "risk_assessment": None,
+            "patch_confirmation": None,
+            "patch_result": None,
+            "validation_report": None,
+            "status": "project_version_ready",
+            "next_action": None,
+            "error": None,
+            "versions_dir": str(tmp_path),
+        },
+    )
+
+    response = client.get("/api/projects/conformance_export_project/export")
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["validation_report"]["valid"] is True
+    assert detail["validation_report"]["exportable"] is False
+    assert detail["validation_report"]["conformance_report"]["valid_for_requirement"] is False
+    assert detail["validation_report"]["blocked_export_reasons"] == [
+        "需求覆盖未通过：用户要求过滤网报警，但工程中无过滤网报警线索。"
+    ]

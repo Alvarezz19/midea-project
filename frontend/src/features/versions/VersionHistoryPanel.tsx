@@ -198,6 +198,7 @@ function VersionItem({
             {isCurrent ? <Tag color="success">当前</Tag> : null}
             {isInspected ? <Tag color="warning">查看中</Tag> : null}
             <ValidationTag valid={validation?.valid} exportable={version.exportable} />
+            <ConformanceTag version={version} />
           </Space>
         }
         description={
@@ -246,6 +247,20 @@ function ValidationTag({ valid, exportable }: { valid?: boolean; exportable?: bo
     return <Tag color="error">校验失败</Tag>;
   }
   return <Tag>待校验</Tag>;
+}
+
+function ConformanceTag({ version }: { version: ProjectVersion }) {
+  const report = version.requirement_context?.conformance_report;
+  if (!report) {
+    return <Tag>覆盖未复核</Tag>;
+  }
+  if (report.context_available === false) {
+    return <Tag color="blue">覆盖未复核</Tag>;
+  }
+  if (report.valid_for_requirement === false) {
+    return <Tag color="error">覆盖阻塞</Tag>;
+  }
+  return <Tag color="success">覆盖通过</Tag>;
 }
 
 function shortVersion(versionId?: string): string {

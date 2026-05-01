@@ -177,6 +177,7 @@ def create_project_version(
     source_template_id: str | None = None,
     requirement_slots: dict[str, Any] | None = None,
     design_brief: dict[str, Any] | None = None,
+    conformance_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从模板创建工程版本，返回版本元数据。"""
 
@@ -205,7 +206,11 @@ def create_project_version(
         "created_at": now.isoformat(),
         "note": note,
         "summary": summarize_project(nodes),
-        "requirement_context": _requirement_context(requirement_slots=requirement_slots, design_brief=design_brief),
+        "requirement_context": _requirement_context(
+            requirement_slots=requirement_slots,
+            design_brief=design_brief,
+            conformance_report=conformance_report,
+        ),
     }
     save_metadata(meta_path, metadata)
     if postgres_runtime_enabled():
@@ -237,6 +242,7 @@ def create_project_version_from_nodes(
     note: str = "",
     requirement_slots: dict[str, Any] | None = None,
     design_brief: dict[str, Any] | None = None,
+    conformance_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从已修改节点创建不可变子版本。"""
 
@@ -267,7 +273,11 @@ def create_project_version_from_nodes(
             "warning_count": report.get("warning_count"),
         },
         "summary": summarize_project(nodes),
-        "requirement_context": _requirement_context(requirement_slots=requirement_slots, design_brief=design_brief),
+        "requirement_context": _requirement_context(
+            requirement_slots=requirement_slots,
+            design_brief=design_brief,
+            conformance_report=conformance_report,
+        ),
     }
     save_metadata(meta_path, metadata)
     if postgres_runtime_enabled():
@@ -319,6 +329,35 @@ def get_project_version(project_id: str, version_id: str, *, versions_dir: str |
     raise ProjectJsonError(f"工程版本不存在: project_id={project_id}, version_id={version_id}")
 
 
+def update_project_version_metadata(
+    project_id: str,
+    version_id: str,
+    updates: dict[str, Any],
+    *,
+    versions_dir: str | Path = VERSIONS_DIR,
+) -> dict[str, Any]:
+    """更新文件型版本元数据中的运行时摘要。"""
+
+    if postgres_runtime_enabled():
+        metadata = get_project_version(project_id, version_id, versions_dir=versions_dir)
+        return {**metadata, **updates}
+
+    version_root = resolve_project_path(versions_dir) / project_id
+    meta_path = version_root / f"{version_id}.meta.json"
+    if not meta_path.exists():
+        raise ProjectJsonError(f"工程版本元数据不存在: project_id={project_id}, version_id={version_id}")
+    try:
+        with meta_path.open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ProjectJsonError(f"读取版本元数据失败: {meta_path} ({exc})") from exc
+    if not isinstance(metadata, dict):
+        raise ProjectJsonError(f"版本元数据根节点必须是对象: {meta_path}")
+    metadata.update(updates)
+    save_metadata(meta_path, metadata)
+    return metadata
+
+
 def save_metadata(path: str | Path, metadata: dict[str, Any]) -> Path:
     target = resolve_project_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -332,12 +371,15 @@ def _requirement_context(
     *,
     requirement_slots: dict[str, Any] | None,
     design_brief: dict[str, Any] | None,
+    conformance_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     context: dict[str, Any] = {}
     if requirement_slots:
         context["requirement_slots"] = requirement_slots
     if design_brief:
         context["design_brief"] = design_brief
+    if conformance_report:
+        context["conformance_report"] = conformance_report
     return context
 
 

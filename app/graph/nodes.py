@@ -14,6 +14,7 @@ from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
+from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
 from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
 from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
 from app.services.requirement_model import merge_requirement_slots, requirement_summary_from_slots
@@ -310,6 +311,7 @@ def create_project_version_node(state: AgentState) -> dict[str, Any]:
             source_template_id=str(selected_template_id),
             requirement_slots=state.get("requirement_slots"),
             design_brief=state.get("design_brief") or selected_design_brief_for_state(state),
+            conformance_report=state.get("conformance_report"),
         )
     except (RetrievalError, ValueError) as exc:
         return {"status": "error", "error": str(exc), "next_action": "fix_template_selection"}
@@ -462,6 +464,7 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
                 note="由结构化补丁创建。",
                 requirement_slots=state.get("requirement_slots"),
                 design_brief=state.get("design_brief"),
+                conformance_report=state.get("conformance_report"),
             )
     except (PatchEngineError, ValueError) as exc:
         return {"status": "patch_failed", "error": str(exc), "next_action": "revise_patch"}
@@ -491,7 +494,8 @@ def validate_current_project_node(state: AgentState) -> dict[str, Any]:
         return {"status": state.get("status", "no_project_version"), "next_action": state.get("next_action")}
 
     try:
-        report = validate_project(load_project(project_path))
+        nodes = load_project(project_path)
+        report = _validate_project_with_conformance(nodes, state)
         if postgres_runtime_enabled() and state.get("current_project_id"):
             from app.services.postgres_runtime import record_project_validation
 
@@ -504,9 +508,20 @@ def validate_current_project_node(state: AgentState) -> dict[str, Any]:
         return {"status": "validation_failed", "error": str(exc), "next_action": "fix_project_json"}
     return {
         "validation_report": report,
+        "conformance_report": report.get("conformance_report"),
         "status": state.get("status") if report["valid"] else "validation_failed",
         "next_action": state.get("next_action") if report["valid"] else "fix_project_json",
     }
+
+
+def _validate_project_with_conformance(nodes: list[dict[str, Any]], state: AgentState) -> dict[str, Any]:
+    report = validate_project(nodes)
+    conformance = build_requirement_conformance_report(
+        nodes=nodes,
+        requirement_slots=state.get("requirement_slots"),
+        design_brief=state.get("design_brief"),
+    )
+    return merge_conformance_into_validation(report, conformance)
 
 
 def summarize_result_node(state: AgentState) -> dict[str, Any]:

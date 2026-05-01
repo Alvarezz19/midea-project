@@ -7,6 +7,36 @@ export interface ValidationSummary {
   warning_count?: number;
   risk_count?: number;
   blocked_export_reasons?: string[];
+  requirement_reviewed?: boolean;
+  requirement_valid?: boolean;
+  conformance_blocked_count?: number;
+  conformance_missing_count?: number;
+}
+
+export interface RequirementConformanceEntry {
+  requirement?: string;
+  category?: string;
+  status?: 'covered' | 'partial' | 'missing';
+  evidence?: Array<Record<string, unknown>>;
+  reason?: string;
+}
+
+export interface RequirementConformanceReport {
+  context_available?: boolean;
+  status?: 'passed' | 'blocked' | 'not_reviewed';
+  valid_for_requirement?: boolean;
+  covered?: RequirementConformanceEntry[];
+  partial?: RequirementConformanceEntry[];
+  missing?: RequirementConformanceEntry[];
+  blocked?: string[];
+  evidence?: Array<Record<string, unknown>>;
+  warnings?: string[];
+  summary?: {
+    covered_count?: number;
+    partial_count?: number;
+    missing_count?: number;
+    blocked_count?: number;
+  };
 }
 
 export interface RiskAssessment {
@@ -22,7 +52,7 @@ export interface SessionState {
   requirement_summary?: RequirementSummary;
   requirement_slots?: Record<string, unknown>;
   design_brief?: DesignBrief | null;
-  conformance_report?: Record<string, unknown> | null;
+  conformance_report?: RequirementConformanceReport | null;
   open_questions?: Array<string | RequirementQuestion>;
   confirmed_requirements?: string[];
   template_candidates?: TemplateCandidate[];
@@ -38,7 +68,7 @@ export interface SessionState {
   planner_attempts?: Array<Record<string, unknown>>;
   risk_assessment?: RiskAssessment | null;
   validation_summary?: ValidationSummary | null;
-  validation_report?: Record<string, unknown> | null;
+  validation_report?: (Record<string, unknown> & { conformance_report?: RequirementConformanceReport }) | null;
   patch_result?: Record<string, unknown> | null;
   patch_confirmation?: Record<string, unknown> | null;
   status?: string | null;
@@ -260,6 +290,11 @@ export interface ProjectVersion {
   note?: string;
   patch_summary?: Record<string, unknown>;
   validation_summary?: ValidationSummary | null;
+  requirement_context?: {
+    conformance_report?: RequirementConformanceReport;
+    requirement_slots?: Record<string, unknown>;
+    design_brief?: DesignBrief;
+  };
   summary?: Record<string, unknown>;
   risk_level?: string;
 }

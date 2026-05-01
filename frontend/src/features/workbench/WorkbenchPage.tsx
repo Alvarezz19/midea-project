@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { formatApiError, projectExportUrl, validateProject } from '../../api/client';
+import type { RequirementConformanceReport } from '../../api/types';
 import { SessionPanel } from '../session/SessionPanel';
 import { PlanningPanel } from '../planning/PlanningPanel';
 import { GraphPanel } from '../graph/GraphPanel';
@@ -25,6 +26,7 @@ export function WorkbenchPage() {
   const projectId = state?.project_id ?? state?.current_project_id;
   const versionId = state?.version_id ?? state?.current_project_version_id;
   const validation = state?.validation_summary;
+  const conformance = state?.conformance_report ?? (state?.validation_report?.conformance_report as RequirementConformanceReport | undefined);
   const exportable = validation?.exportable === true;
   const [messageApi, holder] = antMessage.useMessage();
   const statusColor = useMemo(() => {
@@ -41,9 +43,17 @@ export function WorkbenchPage() {
         error_count: Number(report.error_count ?? 0),
         warning_count: Number(report.warning_count ?? 0),
         risk_count: typeof report.summary === 'object' && report.summary ? Number((report.summary as Record<string, unknown>).risk_count ?? 0) : 0,
-        blocked_export_reasons: Array.isArray(report.blocked_export_reasons) ? report.blocked_export_reasons.map(String) : []
+        blocked_export_reasons: Array.isArray(report.blocked_export_reasons) ? report.blocked_export_reasons.map(String) : [],
+        requirement_reviewed: typeof report.conformance_report === 'object' && report.conformance_report
+          ? Boolean((report.conformance_report as RequirementConformanceReport).context_available)
+          : undefined,
+        requirement_valid: typeof report.conformance_report === 'object' && report.conformance_report
+          ? Boolean((report.conformance_report as RequirementConformanceReport).valid_for_requirement)
+          : undefined,
+        conformance_blocked_count: conformanceNumber(report.conformance_report, 'blocked_count'),
+        conformance_missing_count: conformanceNumber(report.conformance_report, 'missing_count')
       };
-      patchState({ validation_report: report, validation_summary: summary });
+      patchState({ validation_report: report, validation_summary: summary, conformance_report: report.conformance_report as RequirementConformanceReport | undefined });
       messageApi.success(summary.exportable ? '校验通过，可以导出。' : '校验完成，请处理阻塞项。');
     },
     onError: (error) => messageApi.error(formatApiError(error))
@@ -95,6 +105,7 @@ export function WorkbenchPage() {
       <WorkflowProgress />
 
       {state?.error ? <Alert className={styles.alert} type="error" showIcon message={state.error} /> : null}
+      {conformance ? <ConformanceBanner report={conformance} blockedReasons={validation?.blocked_export_reasons ?? []} /> : null}
 
       <section className={styles.workspace}>
         <SessionPanel />
@@ -105,6 +116,33 @@ export function WorkbenchPage() {
       <BottomObservabilityDrawer />
     </main>
   );
+}
+
+function ConformanceBanner({ report, blockedReasons }: { report: RequirementConformanceReport; blockedReasons: string[] }) {
+  if (report.context_available === false) {
+    return <Alert className={styles.alert} type="info" showIcon message="需求覆盖未复核" description={report.warnings?.[0] ?? '当前导出只完成结构校验。'} />;
+  }
+  if (report.valid_for_requirement === false) {
+    return (
+      <Alert
+        className={styles.alert}
+        type="error"
+        showIcon
+        message="需求覆盖存在阻塞项"
+        description={(report.blocked?.length ? report.blocked : blockedReasons).slice(0, 3).join('；')}
+      />
+    );
+  }
+  return <Alert className={styles.alert} type="success" showIcon message="需求覆盖已复核" description={`已覆盖 ${report.summary?.covered_count ?? 0} 项，需人工复核 ${report.summary?.partial_count ?? 0} 项。`} />;
+}
+
+function conformanceNumber(value: unknown, key: 'blocked_count' | 'missing_count'): number | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const summary = (value as RequirementConformanceReport).summary;
+  const count = summary?.[key];
+  return typeof count === 'number' ? count : undefined;
 }
 
 function StatusItem({ icon, label, value, tone }: { icon: ReactNode; label: string; value: string; tone?: 'blue' }) {

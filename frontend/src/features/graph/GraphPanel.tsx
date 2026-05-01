@@ -76,8 +76,8 @@ export function GraphPanel() {
           <Title level={2}>局部流程图与校验</Title>
           <Text type="secondary">按版本摘要渲染流程图，diff 节点可点击定位</Text>
         </div>
-        <Tag color={state?.validation_summary?.valid ? 'success' : 'default'}>
-          {state?.validation_summary?.valid ? '可导出' : '待校验'}
+        <Tag color={state?.validation_summary?.exportable ? 'success' : 'default'}>
+          {state?.validation_summary?.exportable ? '可导出' : '待校验'}
         </Tag>
       </header>
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 import time
 import uuid
 from datetime import datetime, timezone
@@ -21,7 +22,13 @@ from app.graph.workflow import (
     invoke_workflow_with_updates,
 )
 from app.services.flow_graph import FlowGraphError, build_react_flow
-from app.services.json_project import get_project_version, list_project_versions, load_project, resolve_project_path
+from app.services.json_project import (
+    get_project_version,
+    list_project_versions,
+    load_project,
+    resolve_project_path,
+    update_project_version_metadata,
+)
 from app.services.knowledge import search_knowledge
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
 from app.services.observability import WorkflowEventInput, create_observability_store
@@ -29,6 +36,7 @@ from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
 from app.services.planner import plan_patch_request
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.project_diff import ProjectDiffError, diff_project_versions
+from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
 from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
 from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_templates
 from app.services.runtime_store import postgres_runtime_enabled
@@ -774,12 +782,26 @@ def validate_project_by_id(project_id: str) -> dict[str, Any]:
         state=state,
     )
     try:
-        report = validate_project(load_project(path))
+        nodes = load_project(path)
+        report = _validate_with_requirement_gate(
+            nodes,
+            state=state,
+            project_id=project_id,
+            version_id=version_id,
+            project_path=path,
+        )
     except Exception as exc:
         _record_api_failure(trace["trace_id"], thread_id, state, "api.validation.failed", "validation", "独立工程校验失败", exc)
         _finish_trace(trace["trace_id"], "failed", error=str(exc))
         raise
     _record_validation_if_needed(project_id, version_id, report)
+    _persist_conformance_context(
+        thread_id=thread_id,
+        state=state,
+        report=report,
+        project_id=project_id,
+        version_id=version_id,
+    )
     _record_event(
         trace["trace_id"],
         thread_id,
@@ -848,7 +870,8 @@ def validate_project_api(request: ValidateProjectRequest) -> dict[str, Any]:
         state=state,
     )
     try:
-        report = validate_project(load_project(path))
+        nodes = load_project(path)
+        report = _validate_with_requirement_gate(nodes, state=state, project_path=path)
     except Exception as exc:
         _record_api_failure(trace["trace_id"], thread_id, state, "api.validation.failed", "validation", "独立工程校验失败", exc)
         _finish_trace(trace["trace_id"], "failed", error=str(exc))
@@ -953,7 +976,14 @@ def _export_valid_project_file(target: Path, *, trace_id: str, thread_id: str, s
         state=state,
     )
     try:
-        report = validate_project(load_project(target))
+        nodes = load_project(target)
+        report = _validate_with_requirement_gate(
+            nodes,
+            state=state,
+            project_id=state.get("current_project_id"),
+            version_id=state.get("current_project_version_id"),
+            project_path=target,
+        )
     except Exception as exc:
         _record_api_failure(trace_id, thread_id, state, "api.export.failed", "export", "工程导出检查失败", exc)
         _finish_trace(trace_id, "failed", error=str(exc))
@@ -988,6 +1018,13 @@ def _export_valid_project_file(target: Path, *, trace_id: str, thread_id: str, s
                 "trace_id": trace_id,
             },
         )
+    _persist_conformance_context(
+        thread_id=thread_id,
+        state=state,
+        report=report,
+        project_id=state.get("current_project_id"),
+        version_id=state.get("current_project_version_id"),
+    )
     _record_export_if_needed(str(target), report)
     _record_event(
         trace_id,
@@ -1006,6 +1043,116 @@ def _export_valid_project_file(target: Path, *, trace_id: str, thread_id: str, s
         filename=target.name,
         headers={"X-Trace-Id": trace_id},
     )
+
+
+def _validate_with_requirement_gate(
+    nodes: list[dict[str, Any]],
+    *,
+    state: dict[str, Any],
+    project_id: Any | None = None,
+    version_id: Any | None = None,
+    project_path: str | Path | None = None,
+) -> dict[str, Any]:
+    report = validate_project(nodes)
+    context = _requirement_context_for_project(
+        state=state,
+        project_id=str(project_id) if project_id else None,
+        version_id=str(version_id) if version_id else None,
+        project_path=project_path,
+    )
+    conformance = build_requirement_conformance_report(
+        nodes=nodes,
+        requirement_slots=context.get("requirement_slots") if isinstance(context.get("requirement_slots"), dict) else None,
+        design_brief=context.get("design_brief") if isinstance(context.get("design_brief"), dict) else None,
+    )
+    return merge_conformance_into_validation(report, conformance)
+
+
+def _requirement_context_for_project(
+    *,
+    state: dict[str, Any],
+    project_id: str | None = None,
+    version_id: str | None = None,
+    project_path: str | Path | None = None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    if isinstance(state.get("requirement_slots"), dict) and state.get("requirement_slots"):
+        context["requirement_slots"] = state["requirement_slots"]
+    if isinstance(state.get("design_brief"), dict) and state.get("design_brief"):
+        context["design_brief"] = state["design_brief"]
+    if context:
+        return context
+
+    metadata = _version_metadata_for_context(project_id=project_id, version_id=version_id, project_path=project_path)
+    requirement_context = metadata.get("requirement_context") if isinstance(metadata, dict) else None
+    if isinstance(requirement_context, dict):
+        return requirement_context
+    return {}
+
+
+def _version_metadata_for_context(
+    *,
+    project_id: str | None,
+    version_id: str | None,
+    project_path: str | Path | None,
+) -> dict[str, Any]:
+    if project_id and version_id:
+        try:
+            return get_project_version(project_id, version_id, versions_dir=_get_versions_dir(project_id))
+        except ValueError:
+            return {}
+    if project_path is None:
+        return {}
+    meta_path = _resolve_allowed_project_file(project_path).with_suffix(".meta.json")
+    if not meta_path.exists():
+        return {}
+    try:
+        with meta_path.open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _persist_conformance_context(
+    *,
+    thread_id: str,
+    state: dict[str, Any],
+    report: dict[str, Any],
+    project_id: Any | None,
+    version_id: Any | None,
+) -> None:
+    conformance = report.get("conformance_report")
+    if isinstance(conformance, dict) and thread_id and not thread_id.startswith("api_"):
+        stored = _session_store().get(thread_id)
+        if stored is not None:
+            stored["validation_report"] = report
+            stored["conformance_report"] = conformance
+            _session_store().save(thread_id, stored)
+    if not project_id or not version_id or not isinstance(conformance, dict):
+        return
+    requirement_context = _requirement_context_for_project(
+        state=state,
+        project_id=str(project_id),
+        version_id=str(version_id),
+    )
+    if requirement_context:
+        requirement_context = {**requirement_context, "conformance_report": conformance}
+    else:
+        requirement_context = {"conformance_report": conformance}
+    try:
+        update_project_version_metadata(
+            str(project_id),
+            str(version_id),
+            {
+                "exportable": bool(report.get("exportable")),
+                "validation_summary": _validation_summary(report),
+                "requirement_context": requirement_context,
+            },
+            versions_dir=_get_versions_dir(str(project_id)) or settings.project_versions_dir,
+        )
+    except ValueError:
+        return
 
 
 def _empty_state(
@@ -1566,6 +1713,7 @@ def _patch_result_summary(value: dict[str, Any]) -> dict[str, Any]:
 
 def _validation_summary_payload(report: dict[str, Any]) -> dict[str, Any]:
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    conformance = report.get("conformance_report") if isinstance(report.get("conformance_report"), dict) else {}
     return {
         "valid": bool(report.get("valid")),
         "exportable": bool(report.get("exportable")),
@@ -1573,6 +1721,8 @@ def _validation_summary_payload(report: dict[str, Any]) -> dict[str, Any]:
         "warning_count": int(report.get("warning_count") or summary.get("warning_count") or 0),
         "risk_count": int(report.get("risk_count") or summary.get("risk_count") or 0),
         "blocked_export_reasons": report.get("blocked_export_reasons", []),
+        "requirement_reviewed": conformance.get("context_available"),
+        "requirement_valid": conformance.get("valid_for_requirement"),
     }
 
 
@@ -1657,6 +1807,8 @@ def json_dumps(value: Any) -> str:
 
 
 def _validation_summary(report: dict[str, Any]) -> dict[str, Any]:
+    conformance = report.get("conformance_report") if isinstance(report.get("conformance_report"), dict) else {}
+    conformance_summary = conformance.get("summary") if isinstance(conformance.get("summary"), dict) else {}
     return {
         "valid": report.get("valid"),
         "exportable": report.get("exportable"),
@@ -1664,6 +1816,10 @@ def _validation_summary(report: dict[str, Any]) -> dict[str, Any]:
         "warning_count": report.get("warning_count"),
         "risk_count": (report.get("summary") or {}).get("risk_count") if isinstance(report.get("summary"), dict) else None,
         "blocked_export_reasons": report.get("blocked_export_reasons", []),
+        "requirement_reviewed": conformance.get("context_available"),
+        "requirement_valid": conformance.get("valid_for_requirement"),
+        "conformance_blocked_count": conformance_summary.get("blocked_count"),
+        "conformance_missing_count": conformance_summary.get("missing_count"),
     }
 
 

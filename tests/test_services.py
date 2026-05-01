@@ -20,6 +20,7 @@ from app.services.knowledge import get_knowledge_context, load_knowledge_chunks,
 from app.services.patch_engine import PatchEngineError, apply_patch, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.project_diff import ProjectDiffError, diff_project_versions
+from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
 from app.services.retrieval import (
     RetrievalError,
     get_template_by_id,
@@ -48,6 +49,50 @@ def test_existing_templates_validate_cleanly() -> None:
         assert report["blocked_export_reasons"] == []
         assert report["error_count"] == 0
         assert report["warning_count"] == 0
+
+
+def test_requirement_conformance_blocks_explicit_missing_filter_alarm() -> None:
+    nodes = [
+        {"id": "tab_1", "type": "tab", "label": "控制"},
+        {"id": "fan_1", "type": "swInput", "z": "tab_1", "name": "送风机运行", "wires": []},
+    ]
+    slots = {
+        "project_type": "ahu",
+        "task_type": "new_program",
+        "equipment": [{"name": "过滤网", "status": "confirmed"}],
+        "control_features": [],
+        "communication": [],
+        "io_points": [],
+        "protection_logic": [{"name": "过滤网报警", "status": "confirmed"}],
+        "design_constraints": [],
+        "message_history": [{"message_id": "msg_1", "content": "AHU 需要过滤网报警"}],
+        "slot_sources": {},
+        "slot_status": {},
+    }
+
+    conformance = build_requirement_conformance_report(nodes=nodes, requirement_slots=slots)
+    merged = merge_conformance_into_validation(validate_project(nodes), conformance)
+
+    assert conformance["context_available"] is True
+    assert conformance["valid_for_requirement"] is False
+    assert conformance["blocked"] == ["用户要求过滤网报警，但工程中无过滤网报警线索。"]
+    assert merged["valid"] is True
+    assert merged["exportable"] is False
+    assert "需求覆盖未通过：用户要求过滤网报警，但工程中无过滤网报警线索。" in merged["blocked_export_reasons"]
+
+
+def test_requirement_conformance_reports_not_reviewed_without_context() -> None:
+    nodes = [{"id": "tab_1", "type": "tab", "label": "控制"}]
+
+    conformance = build_requirement_conformance_report(nodes=nodes)
+    merged = merge_conformance_into_validation(validate_project(nodes), conformance)
+
+    assert conformance["context_available"] is False
+    assert conformance["status"] == "not_reviewed"
+    assert merged["valid"] is True
+    assert merged["exportable"] is True
+    assert merged["blocked_export_reasons"] == []
+    assert "需求覆盖未复核" in merged["warnings"][0]
 
 
 def test_project_summary_and_find_nodes() -> None:
