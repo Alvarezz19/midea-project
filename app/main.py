@@ -33,7 +33,7 @@ from app.services.knowledge import search_knowledge
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
 from app.services.observability import WorkflowEventInput, create_observability_store
 from app.services.patch_engine import PatchEngineError, dry_run_patch_to_project
-from app.services.planner import plan_patch_request
+from app.services.planner import is_structural_change_intent, plan_patch_request
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.project_diff import ProjectDiffError, diff_project_versions
 from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
@@ -631,6 +631,21 @@ def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
                 project_type=request.project_type,
             )
             pending_patch = planner_result.get("pending_patch")
+            if pending_patch is None and is_structural_change_intent(request.message):
+                result = _planner_llm_dry_run_with_feedback(request, str(path), rule_result=planner_result)
+                _record_event(
+                    trace["trace_id"],
+                    thread_id,
+                    event_type="api.planner.dry_run.completed",
+                    step="dry_run",
+                    status=str(result.get("status") or "completed"),
+                    message="独立 planner dry-run 已自动 fallback 到 LLM",
+                    state=state,
+                    payload=_planner_dry_run_result_summary(result),
+                )
+                _record_llm_calls_from_result(trace["trace_id"], result)
+                _finish_trace(trace["trace_id"], "completed")
+                return {**result, "trace_id": trace["trace_id"]}
         if not pending_patch:
             result = {
                 "status": "needs_clarification",
@@ -682,12 +697,12 @@ def planner_dry_run_api(request: PlannerDryRunRequest) -> dict[str, Any]:
     return {**result, "trace_id": trace["trace_id"]}
 
 
-def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_path: str) -> dict[str, Any]:
+def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_path: str, *, rule_result: dict[str, Any] | None = None) -> dict[str, Any]:
     if not request.message:
         raise HTTPException(status_code=400, detail="pending_patch 为空时必须提供 message。")
 
     try:
-        return plan_patch_with_llm_dry_run_feedback(
+        result = plan_patch_with_llm_dry_run_feedback(
             request.message,
             project_path=project_path,
             template_id=request.template_id,
@@ -695,10 +710,55 @@ def _planner_llm_dry_run_with_feedback(request: PlannerDryRunRequest, project_pa
             provider=request.provider,
             llm_max_attempts=request.llm_max_attempts,
         )
+        planner_result = result.get("planner_result")
+        if isinstance(planner_result, dict) and rule_result is not None:
+            result["planner_result"] = {**planner_result, "fallback_from": "rule", "rule_planner_result": rule_result}
+        return result
     except LLMPlannerError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if rule_result is None:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "needs_clarification",
+            "planner_result": {
+                "status": "needs_clarification",
+                "planner": "llm",
+                "fallback_from": "rule",
+                "rule_planner_result": rule_result,
+                "questions": [_planner_fallback_question(str(exc), rule_result)],
+            },
+            "pending_patch": None,
+            "dry_run": None,
+            "planner_attempts": [],
+        }
     except PlannerDryRunFeedbackError as exc:
-        raise HTTPException(status_code=400, detail=exc.payload) from exc
+        if rule_result is None:
+            raise HTTPException(status_code=400, detail=exc.payload) from exc
+        payload = exc.payload
+        planner_result = payload.get("planner_result")
+        if not isinstance(planner_result, dict):
+            planner_result = {"status": "needs_clarification", "planner": "llm"}
+        return {
+            "status": "needs_clarification",
+            "planner_result": {
+                **planner_result,
+                "fallback_from": "rule",
+                "rule_planner_result": rule_result,
+                "questions": planner_result.get("questions") or [_planner_fallback_question(str(payload.get("last_error") or payload.get("message") or exc), rule_result)],
+            },
+            "pending_patch": None,
+            "dry_run": None,
+            "planner_attempts": payload.get("planner_attempts", []),
+        }
+
+
+def _planner_fallback_question(error: str, rule_result: dict[str, Any]) -> str:
+    rule_questions = rule_result.get("questions") if isinstance(rule_result, dict) else None
+    rule_text = "；".join(str(question) for question in rule_questions or [] if str(question))
+    suffix = f" 规则 planner 的追问：{rule_text}" if rule_text else ""
+    return (
+        "当前修改涉及结构改造，已自动尝试 LLM planner dry-run fallback，但暂时无法生成可执行计划。"
+        f"原因：{error}。请补充目标页面、节点 id、端口、点位字段和值，或配置可用的 LLM planner 后重试。{suffix}"
+    )
 
 
 @app.get("/api/projects/{project_id}/versions")

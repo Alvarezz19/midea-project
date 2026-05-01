@@ -267,6 +267,126 @@ def test_workflow_uses_llm_planner_when_enabled(monkeypatch: pytest.MonkeyPatch,
     assert renamed["name"] == "工作流LLM-比较节点"
 
 
+def test_workflow_falls_back_to_llm_for_structural_change_when_switch_is_off(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU，带 CO2 和新风阀", project_type="ahu", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    state["use_llm_planner"] = False
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    pending_patch = {
+        "operations": [
+            {
+                "op": "add_node_from_schema",
+                "module_type": "constInput",
+                "tab_selector": {"id": "ab3fc9e"},
+                "params": {"name": "CO2浓度设定值", "fixedValue": 800},
+            },
+            {"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}},
+            {
+                "op": "connect",
+                "source_node_selector": {"type": "constInput", "name": "CO2浓度设定值"},
+                "source_output": 0,
+                "target_node_selector": {"id": "f22a5df"},
+                "target_input": 1,
+            },
+        ]
+    }
+
+    def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "status": "dry_run_valid",
+            "planner_result": {
+                "status": "planned",
+                "planner": "llm",
+                "risk_level": "medium",
+                "risk_reasons": ["新增节点、动态端口和连线需要人工确认。"],
+                "pending_patch": pending_patch,
+                "questions": [],
+            },
+            "pending_patch": pending_patch,
+            "dry_run": {
+                "saved": False,
+                "valid": True,
+                "changes": [
+                    {"op": "add_node_from_schema", "node_id": "new_co2", "type": "constInput", "name": "CO2浓度设定值"},
+                    {"op": "enable_dynamic_input", "node_id": "f22a5df", "field": "inputs", "old_value": 1, "new_value": 2},
+                    {"op": "connect", "source_node_id": "new_co2", "source_output": 0, "target_node_id": "f22a5df", "target_input": 1},
+                ],
+                "diff": {"summary": {"affected_node_count": 2}},
+            },
+            "planner_attempts": [{"attempt": 1, "planner_status": "planned", "risk_level": "medium", "operation_count": 3}],
+        }
+
+    monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "新增 CO2 浓度设定并接入新风阀控制"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["next_action"] == "confirm_patch"
+    assert result["planner_result"]["planner"] == "llm"
+    assert result["planner_result"]["fallback_from"] == "rule"
+    assert result["risk_assessment"]["risk_level"] == "medium"
+    assert result["risk_assessment"]["requires_confirmation"] is True
+    assert "新增连线" in result["risk_assessment"]["operation_summaries"][2]["summary"]
+    assert "需要人工确认" in result["risk_assessment"]["confirmation_summary"]
+
+
+def test_workflow_high_risk_io_fallback_has_point_confirmation_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    state["use_llm_planner"] = False
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    pending_patch = {"op": "set_io_point", "node_selector": {"id": "22a27d1"}, "params": {"hwChannelIndex": "31"}}
+
+    def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "status": "dry_run_valid",
+            "planner_result": {
+                "status": "planned",
+                "planner": "llm",
+                "risk_level": "high",
+                "risk_reasons": ["修改 IO 通道必须按点表人工确认。"],
+                "pending_patch": pending_patch,
+                "questions": [],
+            },
+            "pending_patch": pending_patch,
+            "dry_run": {
+                "saved": False,
+                "valid": True,
+                "changes": [
+                    {
+                        "op": "set_io_point",
+                        "node_id": "22a27d1",
+                        "field": "hwChannelIndex",
+                        "old_value": "1",
+                        "new_value": "31",
+                    }
+                ],
+                "diff": {"summary": {"affected_node_count": 1}},
+            },
+            "planner_attempts": [{"attempt": 1, "planner_status": "planned", "risk_level": "high", "operation_count": 1}],
+        }
+
+    monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "修改 IO 通道，把节点 22a27d1 的通道改为 31"}]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_confirmation"
+    assert result["risk_assessment"]["risk_level"] == "high"
+    assert "set_io_point" in result["risk_assessment"]["confirmation_summary"]
+    operation_summary = result["risk_assessment"]["operation_summaries"][0]
+    assert operation_summary["risk_level"] == "high"
+    assert "修改 IO/通讯点位" in operation_summary["summary"]
+    assert any("点表" in point for point in operation_summary["confirmation_points"])
+
+
 def test_workflow_llm_planner_retries_schema_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)

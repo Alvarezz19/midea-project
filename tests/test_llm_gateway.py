@@ -393,6 +393,49 @@ def test_llm_planner_dry_run_api_executes_structured_plan(monkeypatch: pytest.Mo
     assert "nodes" not in data["dry_run"]
 
 
+def test_planner_dry_run_api_falls_back_to_llm_for_structural_intent(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_api_fallback", versions_dir=tmp_path)
+    pending_patch = {"op": "replace_constant", "node_selector": {"id": "67febfa"}, "field": "fixedValue", "value": "8"}
+
+    def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "status": "dry_run_valid",
+            "planner_result": {
+                "status": "planned",
+                "planner": "llm",
+                "risk_level": "low",
+                "pending_patch": pending_patch,
+                "questions": [],
+            },
+            "pending_patch": pending_patch,
+            "dry_run": {"saved": False, "valid": True, "diff": {"summary": {"modified_count": 1}}},
+            "planner_attempts": [{"attempt": 1, "planner_status": "planned", "risk_level": "low", "operation_count": 1}],
+        }
+
+    monkeypatch.setattr("app.main.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/planner/dry-run",
+        json={
+            "message": "新增旁通阀压差设定",
+            "project_path": metadata["version_path"],
+            "template_id": "plant_room_efb00c114dcb",
+            "project_type": "plant_room",
+            "use_llm": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "dry_run_valid"
+    assert data["planner_result"]["planner"] == "llm"
+    assert data["planner_result"]["fallback_from"] == "rule"
+    assert data["planner_result"]["rule_planner_result"]["status"] == "needs_clarification"
+    assert data["pending_patch"] == pending_patch
+
+
 def test_llm_planner_dry_run_api_retries_patch_engine_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_api_retry", versions_dir=tmp_path)
     calls: list[list[str] | None] = []

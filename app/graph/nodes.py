@@ -11,7 +11,7 @@ from app.graph.state import AgentState
 from app.services.design_brief import build_design_brief, selected_design_brief_for_state
 from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
 from app.services.patch_engine import PatchEngineError, dry_run_patch
-from app.services.planner import plan_patch_request
+from app.services.planner import is_structural_change_intent, plan_patch_request
 from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
@@ -189,12 +189,15 @@ def confirm_patch_interrupt_node(state: AgentState) -> dict[str, Any]:
     if not isinstance(pending_patch, dict):
         return {"status": "ready_for_user_patch", "next_action": "wait_user_patch"}
 
+    risk_assessment = state.get("risk_assessment")
     resume_value = interrupt(
         {
             "kind": "patch_confirmation",
             "question": "补丁 dry-run 已通过，是否确认应用？",
             "pending_patch": pending_patch,
-            "risk_assessment": state.get("risk_assessment"),
+            "risk_assessment": risk_assessment,
+            "confirmation_summary": risk_assessment.get("confirmation_summary") if isinstance(risk_assessment, dict) else None,
+            "operation_summaries": risk_assessment.get("operation_summaries") if isinstance(risk_assessment, dict) else [],
             "dry_run": state.get("planner_dry_run"),
             "current_project_version_id": state.get("current_project_version_id"),
         }
@@ -331,11 +334,9 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     if not project_path:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
-    if state.get("use_llm_planner"):
-        return _plan_patch_with_llm_node(state, project_path)
-
+    message = _last_user_content(state)
     result = plan_patch_request(
-        _last_user_content(state),
+        message,
         project_path=project_path,
         template_id=state.get("selected_template_id"),
         project_type=state.get("project_type"),
@@ -347,6 +348,8 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
             "status": "patch_planned",
             "next_action": None,
         }
+    if _should_fallback_to_llm_planner(message, result, state):
+        return _plan_patch_with_llm_node(state, project_path, rule_result=result)
     return {
         "planner_result": result,
         "status": "awaiting_patch_clarification",
@@ -354,7 +357,13 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     }
 
 
-def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str, Any]:
+def _should_fallback_to_llm_planner(message: str, rule_result: dict[str, Any], state: AgentState) -> bool:
+    if rule_result.get("status") == "planned":
+        return False
+    return is_structural_change_intent(message) or bool(state.get("use_llm_planner"))
+
+
+def _plan_patch_with_llm_node(state: AgentState, project_path: str, *, rule_result: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         result = plan_patch_with_llm_dry_run_feedback(
             _last_user_content(state),
@@ -365,8 +374,15 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str,
             llm_max_attempts=int(state.get("llm_max_attempts") or 2),
         )
     except LLMPlannerError as exc:
+        question = _llm_fallback_question(str(exc), rule_result=rule_result)
         return {
-            "planner_result": {"status": "needs_clarification", "planner": "llm", "questions": [str(exc)]},
+            "planner_result": {
+                "status": "needs_clarification",
+                "planner": "llm",
+                "fallback_from": "rule",
+                "rule_planner_result": rule_result,
+                "questions": [question],
+            },
             "pending_patch": None,
             "planner_dry_run": None,
             "planner_attempts": [],
@@ -381,10 +397,11 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str,
             planner_result = {
                 "status": "needs_clarification",
                 "planner": "llm",
-                "questions": [last_error],
+                "questions": [_llm_fallback_question(last_error, rule_result=rule_result)],
             }
         elif not planner_result.get("questions"):
-            planner_result = {**planner_result, "questions": [last_error]}
+            planner_result = {**planner_result, "questions": [_llm_fallback_question(last_error, rule_result=rule_result)]}
+        planner_result = {**planner_result, "fallback_from": "rule", "rule_planner_result": rule_result}
         return {
             "planner_result": planner_result,
             "pending_patch": None,
@@ -397,26 +414,30 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str,
 
     if result.get("status") == "dry_run_valid":
         planner_result = result.get("planner_result")
+        if isinstance(planner_result, dict) and rule_result is not None:
+            planner_result = {**planner_result, "fallback_from": "rule", "rule_planner_result": rule_result}
         risk_level = planner_result.get("risk_level") if isinstance(planner_result, dict) else None
         if risk_level != "low":
             pending_patch = result.get("pending_patch")
+            risk_assessment = _assess_patch_risk(pending_patch, planner_result=planner_result, dry_run=result.get("dry_run"))
             return {
                 "planner_result": planner_result,
                 "pending_patch": None,
                 "pending_confirmation_patch": pending_patch,
                 "planner_dry_run": result.get("dry_run"),
                 "planner_attempts": result.get("planner_attempts", []),
-                "risk_assessment": _assess_patch_risk(pending_patch, planner_result=planner_result),
+                "risk_assessment": risk_assessment,
                 "status": "awaiting_patch_confirmation",
                 "next_action": "confirm_patch",
             }
+        risk_assessment = _assess_patch_risk(result.get("pending_patch"), planner_result=planner_result, dry_run=result.get("dry_run"))
         return {
             "planner_result": planner_result,
             "pending_patch": result.get("pending_patch"),
             "pending_confirmation_patch": None,
             "planner_dry_run": result.get("dry_run"),
             "planner_attempts": result.get("planner_attempts", []),
-            "risk_assessment": _assess_patch_risk(result.get("pending_patch"), planner_result=planner_result),
+            "risk_assessment": risk_assessment,
             "status": "patch_planned",
             "next_action": None,
         }
@@ -428,6 +449,16 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str) -> dict[str,
         "status": "awaiting_patch_clarification",
         "next_action": "clarify_patch",
     }
+
+
+def _llm_fallback_question(error: str, *, rule_result: dict[str, Any] | None) -> str:
+    rule_questions = rule_result.get("questions") if isinstance(rule_result, dict) else None
+    rule_text = "；".join(str(question) for question in rule_questions or [] if str(question))
+    suffix = f" 规则 planner 的追问：{rule_text}" if rule_text else ""
+    return (
+        "当前修改涉及结构改造，已自动尝试 LLM planner dry-run fallback，但暂时无法生成可执行计划。"
+        f"原因：{error}。请补充目标页面、节点 id、端口、点位字段和值，或配置可用的 LLM planner 后重试。{suffix}"
+    )
 
 
 def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
@@ -443,7 +474,7 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
         result = dry_run_patch(nodes, pending_patch)
         report = result["validation_report"]
         planner_result = _matching_planner_result(state.get("planner_result"), pending_patch)
-        risk_assessment = _assess_patch_risk(pending_patch, planner_result=planner_result)
+        risk_assessment = _assess_patch_risk(pending_patch, planner_result=planner_result, dry_run=result)
         if report["valid"] and risk_assessment["requires_confirmation"] and not _is_approved_resume_state(state, pending_patch):
             return _await_patch_confirmation_update(state, pending_patch, result, risk_assessment)
         if report["valid"]:
@@ -661,6 +692,9 @@ def _build_assistant_summary(state: AgentState) -> str:
         dry_run = state.get("planner_dry_run") or {}
         diff = dry_run.get("diff") or {}
         summary = diff.get("summary") or {}
+        confirmation_summary = risk_assessment.get("confirmation_summary")
+        if confirmation_summary:
+            return f"补丁 dry-run 已通过，风险等级 {risk_level}，影响节点 {summary.get('affected_node_count', 0)} 个。{confirmation_summary}"
         return f"补丁 dry-run 已通过，风险等级 {risk_level}，影响节点 {summary.get('affected_node_count', 0)} 个，需要确认后再应用。"
     if status == "patch_confirmation_cancelled":
         return "已取消待确认补丁，当前工程版本未变化。"
@@ -676,17 +710,19 @@ def _build_assistant_summary(state: AgentState) -> str:
     return f"当前状态：{status}。"
 
 
-def _assess_patch_risk(patch: Any, *, planner_result: Any = None) -> dict[str, Any]:
+def _assess_patch_risk(patch: Any, *, planner_result: Any = None, dry_run: Any = None) -> dict[str, Any]:
     planner_risk = planner_result.get("risk_level") if isinstance(planner_result, dict) else None
     operations = _normalize_patch_operations(patch)
     risk_level = planner_risk if planner_risk in {"low", "medium", "high"} else "low"
     reasons: list[str] = []
+    operation_summaries: list[dict[str, Any]] = []
+    dry_run_changes = dry_run.get("changes") if isinstance(dry_run, dict) and isinstance(dry_run.get("changes"), list) else []
 
     for operation in operations:
         op = operation.get("op")
         if op in {"add_node_from_schema", "connect", "disconnect", "enable_dynamic_input", "copy_block", "delete_node", "delete_block", "set_io_point"}:
             risk_level = _max_risk(risk_level, "medium")
-            reasons.append(f"{op} 属于需要确认的结构或连线变更。")
+            _append_unique(reasons, f"{op} 属于需要确认的结构或连线变更。")
         if op in {"copy_block", "delete_node", "delete_block", "set_io_point"}:
             risk_level = _max_risk(risk_level, "high")
         if op == "update_param":
@@ -694,17 +730,147 @@ def _assess_patch_risk(patch: Any, *, planner_result: Any = None) -> dict[str, A
             risky_fields = [field for field in params if _is_risky_field(str(field))]
             if risky_fields:
                 risk_level = _max_risk(risk_level, "high")
-                reasons.append(f"修改疑似 IO/通讯字段：{', '.join(risky_fields[:5])}。")
+                _append_unique(reasons, f"修改疑似 IO/通讯字段：{', '.join(risky_fields[:5])}。")
+        operation_summaries.append(_operation_confirmation_summary(operation, dry_run_changes))
 
     requires_confirmation = risk_level in {"medium", "high"}
+    if isinstance(planner_result, dict):
+        for reason in planner_result.get("risk_reasons") or []:
+            if str(reason):
+                _append_unique(reasons, str(reason))
     if planner_risk in {"medium", "high"} and not reasons:
-        reasons.append("LLM planner 将该计划标记为中高风险。")
+        _append_unique(reasons, "LLM planner 将该计划标记为中高风险。")
+    confirmation_summary = _confirmation_summary_text(risk_level, operation_summaries, reasons)
     return {
         "risk_level": risk_level,
         "requires_confirmation": requires_confirmation,
         "reasons": reasons,
         "operation_count": len(operations),
+        "operation_summaries": operation_summaries,
+        "confirmation_summary": confirmation_summary,
     }
+
+
+def _operation_confirmation_summary(operation: dict[str, Any], dry_run_changes: list[Any]) -> dict[str, Any]:
+    op = str(operation.get("op") or "unknown")
+    matching_changes = [change for change in dry_run_changes if isinstance(change, dict) and change.get("op") == op]
+    summary = _operation_summary_text(operation, matching_changes)
+    confirmation_points = _confirmation_points_for_operation(op)
+    return {
+        "op": op,
+        "risk_level": _operation_risk_level(operation),
+        "summary": summary,
+        "confirmation_points": confirmation_points,
+        "change_count": len(matching_changes),
+        "changes": _compact_changes_for_confirmation(op, matching_changes),
+    }
+
+
+def _operation_summary_text(operation: dict[str, Any], changes: list[dict[str, Any]]) -> str:
+    op = str(operation.get("op") or "unknown")
+    if op == "copy_block":
+        change = changes[0] if changes else {}
+        copied_count = change.get("copied_node_count")
+        boundary_count = change.get("boundary_connection_count")
+        block_id = operation.get("block_id") or operation.get("source_block_id")
+        target = operation.get("target_tab_selector")
+        return f"复制功能块 {block_id} 到 {target}，复制节点 {copied_count if copied_count is not None else '待 dry-run 确认'} 个，边界接线 {boundary_count if boundary_count is not None else 0} 条。"
+    if op == "set_io_point":
+        parts = []
+        for change in changes[:5]:
+            parts.append(f"{change.get('node_id')}.{change.get('field')}: {change.get('old_value')} -> {change.get('new_value')}")
+        return "修改 IO/通讯点位：" + ("；".join(parts) if parts else str(operation.get("params") or {}))
+    if op == "connect":
+        if changes:
+            return "新增连线：" + "；".join(
+                f"{change.get('source_node_id')}:{change.get('source_output')} -> {change.get('target_node_id')}:{change.get('target_input')}"
+                for change in changes[:5]
+            )
+        return f"新增连线：{operation.get('source_node_selector')} -> {operation.get('target_node_selector')}。"
+    if op == "disconnect":
+        if changes:
+            return "断开连线：" + "；".join(
+                f"{change.get('source_node_id')}:{change.get('source_output')} -> {change.get('target_node_id')}:{change.get('target_input')}"
+                for change in changes[:5]
+            )
+        return f"断开目标输入：{operation.get('target_node_selector')} input={operation.get('target_input')}。"
+    if op == "enable_dynamic_input":
+        return f"启用动态输入：{operation.get('node_selector')}，选项 {operation.get('input_option') or operation.get('input_options') or '默认'}。"
+    if op == "add_node_from_schema":
+        return f"新增 schema 节点：{operation.get('module_type') or operation.get('schema_selector')} 到 {operation.get('tab_selector')}。"
+    if op == "replace_constant":
+        return f"替换设定/常量：{operation.get('node_selector')} 的 {operation.get('field') or '默认字段'} 改为 {operation.get('value')}。"
+    if op == "update_param":
+        return f"修改参数：{operation.get('node_selector')} -> {operation.get('params')}。"
+    if op == "rename_node":
+        return f"节点改名：{operation.get('node_selector')} -> {operation.get('new_name')}。"
+    if op == "add_comment":
+        return f"新增备注到 {operation.get('tab_selector')}。"
+    return f"{op}: {operation}"
+
+
+def _confirmation_points_for_operation(op: str) -> list[str]:
+    if op == "copy_block":
+        return ["确认复制来源和目标页面", "确认外部入口/出口边界", "确认复制节点不复用原 BACnet 对象号"]
+    if op == "set_io_point":
+        return ["确认点表字段和值", "确认通道、地址或对象号不冲突", "确认修改符合现场接线/通讯表"]
+    if op == "connect":
+        return ["确认连线方向", "确认源输出端和目标输入端", "确认不会旁路保护联锁"]
+    if op == "disconnect":
+        return ["确认断开的目标输入端", "确认不会切断保护、反馈或故障链路"]
+    if op == "enable_dynamic_input":
+        return ["确认新增动态输入端口用途", "确认后续连线目标端口正确"]
+    if op == "add_node_from_schema":
+        return ["确认新增节点类型和页面", "确认新增节点参数需要后续接线或点表复核"]
+    return []
+
+
+def _operation_risk_level(operation: dict[str, Any]) -> str:
+    op = operation.get("op")
+    if op in {"copy_block", "set_io_point", "delete_node", "delete_block"}:
+        return "high"
+    if op in {"add_node_from_schema", "connect", "disconnect", "enable_dynamic_input"}:
+        return "medium"
+    if op == "update_param":
+        params = operation.get("params") if isinstance(operation.get("params"), dict) else {}
+        if any(_is_risky_field(str(field)) for field in params):
+            return "high"
+    return "low"
+
+
+def _compact_changes_for_confirmation(op: str, changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for change in changes[:10]:
+        if op == "copy_block":
+            compacted.append(
+                {
+                    "block_id": change.get("block_id"),
+                    "target_tab_id": change.get("target_tab_id"),
+                    "copied_node_count": change.get("copied_node_count"),
+                    "dropped_external_input_count": change.get("dropped_external_input_count"),
+                    "detached_bacnet_object_count": change.get("detached_bacnet_object_count"),
+                    "boundary_connection_count": change.get("boundary_connection_count"),
+                    "boundary_preview": change.get("boundary_preview"),
+                }
+            )
+        else:
+            compacted.append(change)
+    return compacted
+
+
+def _confirmation_summary_text(risk_level: str, operation_summaries: list[dict[str, Any]], reasons: list[str]) -> str:
+    if risk_level == "low":
+        return "该计划为低风险，系统可自动应用。"
+    high_ops = [item["op"] for item in operation_summaries if item.get("risk_level") == "high"]
+    medium_ops = [item["op"] for item in operation_summaries if item.get("risk_level") == "medium"]
+    parts = [f"需要确认后再应用，需要人工确认，包含 {len(operation_summaries)} 个操作。"]
+    if high_ops:
+        parts.append("高风险操作：" + "、".join(high_ops))
+    if medium_ops:
+        parts.append("中风险操作：" + "、".join(medium_ops))
+    if reasons:
+        parts.append("主要原因：" + "；".join(reasons[:3]))
+    return " ".join(parts)
 
 
 def _normalize_patch_operations(patch: Any) -> list[dict[str, Any]]:
@@ -726,6 +892,11 @@ def _is_risky_field(field: str) -> bool:
     normalized = field.casefold()
     tokens = ("io", "address", "addr", "channel", "modbus", "bacnet", "mqtt", "object", "point")
     return any(token in normalized for token in tokens) or any(token in field for token in ("地址", "通道", "点位", "对象"))
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
 
 
 def _is_patch_confirmed(state: AgentState, patch: dict[str, Any]) -> bool:

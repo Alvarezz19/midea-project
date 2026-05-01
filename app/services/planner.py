@@ -79,6 +79,39 @@ FIELD_ALIASES = {
     "名称": "name",
 }
 
+STRUCTURAL_INTENT_KEYWORDS = (
+    "新增",
+    "增加",
+    "添加",
+    "接入",
+    "接到",
+    "连接",
+    "连线",
+    "复制",
+    "克隆",
+    "功能块",
+    "动态设定",
+    "动态输入",
+    "IO",
+    "io",
+    "I/O",
+    "点位",
+    "通道",
+    "地址",
+    "Modbus",
+    "modbus",
+    "BACnet",
+    "bacnet",
+    "通讯",
+    "通信",
+    "设备数量",
+    "台数",
+    "旁通阀",
+    "压差",
+    "CO2",
+    "co2",
+)
+
 
 def plan_patch_request(
     message: str,
@@ -139,6 +172,15 @@ def plan_patch_request(
         "reason": "当前请求无法被确定性规划器识别为低风险补丁。",
         **context,
     }
+
+
+def is_structural_change_intent(message: str) -> bool:
+    text = message.strip()
+    if not text:
+        return False
+    if any(keyword in text for keyword in ("添加备注", "新增备注", "加备注")):
+        return False
+    return any(keyword in text for keyword in STRUCTURAL_INTENT_KEYWORDS)
 
 
 def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
