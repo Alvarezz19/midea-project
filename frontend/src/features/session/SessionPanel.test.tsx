@@ -77,4 +77,38 @@ describe('SessionPanel', () => {
 
     await waitFor(() => expect(screen.getByText('正在分析可复制的功能块。')).toBeInTheDocument());
   });
+
+  it('renders normalized requirement summary fields from the backend contract', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'ahu',
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'awaiting_template_confirmation',
+        next_action: 'confirm_template',
+        requirement_summary: {
+          project_type: 'ahu',
+          equipment: ['直膨机', '排风机'],
+          control_features: ['CO2 控制'],
+          communication: ['Modbus'],
+          io_points: ['过滤网报警'],
+          protection_logic: ['防冻保护']
+        }
+      }
+    });
+
+    render(
+      <AppProviders>
+        <SessionPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('直膨机')).toBeInTheDocument();
+    expect(screen.getByText('排风机')).toBeInTheDocument();
+    expect(screen.getByText('CO2 控制')).toBeInTheDocument();
+    expect(screen.getByText('Modbus')).toBeInTheDocument();
+    expect(screen.getByText('过滤网报警')).toBeInTheDocument();
+    expect(screen.getByText('防冻保护')).toBeInTheDocument();
+  });
 });

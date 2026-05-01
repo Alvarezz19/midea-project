@@ -7,6 +7,9 @@ class AgentState(TypedDict):
     messages: list[dict[str, Any]]
     project_type: str | None
     requirement_summary: dict[str, Any]
+    requirement_slots: dict[str, Any]
+    design_brief: dict[str, Any] | None
+    conformance_report: dict[str, Any] | None
     open_questions: list[dict[str, Any]]
     confirmed_requirements: list[str]
     template_candidates: list[dict[str, Any]]
@@ -39,6 +42,9 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "messages": [{"role": "user", "content": message}],
         "project_type": project_type,
         "requirement_summary": {},
+        "requirement_slots": {},
+        "design_brief": None,
+        "conformance_report": None,
         "open_questions": [],
         "confirmed_requirements": [],
         "template_candidates": [],

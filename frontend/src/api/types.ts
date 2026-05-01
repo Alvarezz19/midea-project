@@ -63,6 +63,7 @@ export interface TemplateCandidate {
   estimated_modification_cost?: {
     level?: string;
     reason?: string;
+    reasons?: string[];
     estimated_steps?: number;
   };
   risk_points?: string[];
@@ -91,9 +92,12 @@ export interface RequirementSummary {
   blocking_missing_fields?: string[];
   raw_requirements?: string[];
   equipment?: string[];
-  control_targets?: string[];
+  control_features?: string[];
   communication?: string[];
-  protections?: string[];
+  io_points?: string[];
+  protection_logic?: string[];
+  risk_level?: 'low' | 'medium' | 'high';
+  risk_items?: string[];
   [key: string]: unknown;
 }
 

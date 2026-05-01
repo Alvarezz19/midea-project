@@ -217,7 +217,7 @@ function TemplateDescription({ item }: { item: TemplateCandidate }) {
           </Tag>
         ))}
       </div>
-      <Text type="secondary">预计改造：{cost?.level ?? item.estimated_effort ?? '未知'}{cost?.reason ? `，${cost.reason}` : ''}</Text>
+      <Text type="secondary">预计改造：{cost?.level ?? item.estimated_effort ?? '未知'}{costReasons(cost).length ? `，${costReasons(cost).join('；')}` : ''}</Text>
       {risk.length ? <Text type="danger">风险点：{risk.slice(0, 2).join('；')}</Text> : null}
     </div>
   );
@@ -228,6 +228,16 @@ function RiskReasons({ reasons }: { reasons: string[] }) {
     return <span>请检查 dry-run、影响节点和校验摘要后再确认。</span>;
   }
   return <span>{reasons.join('；')}</span>;
+}
+
+function costReasons(cost: TemplateCandidate['estimated_modification_cost']): string[] {
+  if (!cost) {
+    return [];
+  }
+  if (Array.isArray(cost.reasons)) {
+    return cost.reasons.map(String).filter(Boolean);
+  }
+  return cost.reason ? [cost.reason] : [];
 }
 
 function plannerQuestions(planner: Record<string, unknown> | null | undefined): string[] {

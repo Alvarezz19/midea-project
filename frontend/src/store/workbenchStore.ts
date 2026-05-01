@@ -30,7 +30,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
   workflowEvents: [],
   eventConnectionStatus: 'idle',
   bottomDrawerOpen: false,
-  useLlmPlanner: false,
+  useLlmPlanner: true,
   setProjectType: (projectType) => set({ projectType }),
   setSession: ({ threadId, traceId, state }) =>
     set((store) => {
@@ -40,7 +40,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
         traceId,
         state,
         projectType: state.project_type ?? undefined,
-        useLlmPlanner: state.use_llm_planner ?? false,
+        useLlmPlanner: state.use_llm_planner ?? true,
         inspectedVersionId: undefined,
         inspectedFromVersionId: undefined,
         workflowEvents: sameThread ? store.workflowEvents : [],

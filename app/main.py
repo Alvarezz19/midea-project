@@ -51,7 +51,7 @@ class CreateSessionRequest(BaseModel):
     project_type: str | None = None
     auto_confirm_template: bool = False
     versions_dir: str | None = None
-    use_llm_planner: bool = False
+    use_llm_planner: bool = True
     llm_provider: str | None = None
     llm_max_attempts: int = Field(default=2, ge=1, le=3)
 
@@ -1013,7 +1013,7 @@ def _empty_state(
     project_type: str | None,
     auto_confirm_template: bool,
     versions_dir: str | None = None,
-    use_llm_planner: bool = False,
+    use_llm_planner: bool = True,
     llm_provider: str | None = None,
     llm_max_attempts: int = 2,
 ) -> AgentState:
@@ -1021,6 +1021,9 @@ def _empty_state(
         "messages": [],
         "project_type": project_type,
         "requirement_summary": {},
+        "requirement_slots": {},
+        "design_brief": None,
+        "conformance_report": None,
         "open_questions": [],
         "confirmed_requirements": [],
         "template_candidates": [],
@@ -1691,6 +1694,9 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "messages": state.get("messages", []),
         "project_type": state.get("project_type"),
         "requirement_summary": state.get("requirement_summary", {}),
+        "requirement_slots": state.get("requirement_slots", {}),
+        "design_brief": state.get("design_brief"),
+        "conformance_report": state.get("conformance_report"),
         "open_questions": state.get("open_questions", []),
         "confirmed_requirements": state.get("confirmed_requirements", []),
         "template_candidates": state.get("template_candidates", []),
@@ -1712,7 +1718,7 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "status": state.get("status"),
         "next_action": state.get("next_action"),
         "error": state.get("error"),
-        "use_llm_planner": state.get("use_llm_planner", False),
+        "use_llm_planner": state.get("use_llm_planner", True),
         "interrupts": _public_interrupts(state.get("__interrupt__")),
     }
 

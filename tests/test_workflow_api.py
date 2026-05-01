@@ -482,7 +482,7 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "美的工程智能体工作台" in page.text
+    assert "美控（KONG）智能体工作台" in page.text
 
     legacy_page = client.get("/legacy/")
     assert legacy_page.status_code == 200
@@ -529,6 +529,7 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     created = client.post("/api/sessions", json={"auto_confirm_template": True, "versions_dir": str(tmp_path)})
     assert created.status_code == 200
+    assert created.json()["state"]["use_llm_planner"] is True
     thread_id = created.json()["thread_id"]
     assert created.json()["trace_id"].startswith("trace_")
 

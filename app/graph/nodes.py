@@ -14,6 +14,8 @@ from app.services.planner import plan_patch_request
 from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
+from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
+from app.services.requirement_model import merge_requirement_slots, requirement_summary_from_slots
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
 from app.services.runtime_store import postgres_runtime_enabled
 from app.services.validator import validate_project
@@ -32,11 +34,20 @@ def classify_project_type(state: AgentState) -> dict[str, Any]:
 
 def collect_requirements(state: AgentState) -> dict[str, Any]:
     user_text = _last_user_content(state)
-    summary = analyze_requirement(
+    rule_summary = analyze_requirement(
         user_text,
         existing=state.get("requirement_summary"),
         project_type=state.get("project_type"),
     )
+    llm_result = _try_extract_requirement_with_llm(user_text, provider=state.get("llm_provider"))
+    slots = merge_requirement_slots(
+        message=user_text,
+        rule_summary=rule_summary,
+        llm_result=llm_result,
+        existing_slots=state.get("requirement_slots"),
+        current_project_path=state.get("current_project_path"),
+    )
+    summary = requirement_summary_from_slots(slots)
     status = "requirements_collected" if summary.get("ready_for_template_search") else "awaiting_requirement_clarification"
     next_action = None if summary.get("ready_for_template_search") else "clarify_requirements"
     if "project_type" in summary.get("blocking_missing_fields", []):
@@ -45,11 +56,19 @@ def collect_requirements(state: AgentState) -> dict[str, Any]:
     return {
         "project_type": summary.get("project_type"),
         "requirement_summary": summary,
+        "requirement_slots": slots,
         "open_questions": summary.get("open_questions", []),
         "confirmed_requirements": summary.get("confirmed_requirements", []),
         "status": status,
         "next_action": next_action,
     }
+
+
+def _try_extract_requirement_with_llm(message: str, *, provider: str | None) -> dict[str, Any] | None:
+    try:
+        return extract_requirement_with_llm(message, provider=provider)
+    except RequirementExtractionError:
+        return None
 
 
 def retrieve_template_candidates(state: AgentState) -> dict[str, Any]:

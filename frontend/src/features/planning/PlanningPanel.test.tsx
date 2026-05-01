@@ -138,4 +138,42 @@ describe('PlanningPanel', () => {
 
     expect(screen.getByText(/"op": "replace_constant"/)).toBeInTheDocument();
   });
+
+  it('renders backend estimated modification cost reasons', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'ahu',
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'awaiting_template_confirmation',
+        next_action: 'confirm_template',
+        template_candidates: [
+          {
+            template_id: 'tpl_1',
+            file_name: 'AHU 六页模板.json',
+            score: 0.91,
+            node_count: 280,
+            tab_count: 6,
+            summary: '包含排风机和直膨故障页。',
+            matched_items: ['项目类型匹配：AHU 程序', '排风机'],
+            missing_items: ['CO2 控制'],
+            estimated_modification_cost: {
+              level: 'medium',
+              reasons: ['需要补齐：CO2 控制', '通讯/IO 方式未确认']
+            },
+            risk_points: ['设备数量未确认，涉及数量变化时必须人工确认。']
+          }
+        ]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <PlanningPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText(/预计改造：medium，需要补齐：CO2 控制；通讯\/IO 方式未确认/)).toBeInTheDocument();
+  });
 });

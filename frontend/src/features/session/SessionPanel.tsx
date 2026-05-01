@@ -57,9 +57,10 @@ export function SessionPanel() {
   const questions = (state?.open_questions ?? []).map(questionText);
   const summaryItems = [
     ...(state?.requirement_summary?.equipment ?? []),
-    ...(state?.requirement_summary?.control_targets ?? []),
+    ...(state?.requirement_summary?.control_features ?? []),
     ...(state?.requirement_summary?.communication ?? []),
-    ...(state?.requirement_summary?.protections ?? [])
+    ...(state?.requirement_summary?.io_points ?? []),
+    ...(state?.requirement_summary?.protection_logic ?? [])
   ].map(String);
   const requirements = state?.confirmed_requirements?.length ? state.confirmed_requirements : summaryItems;
 
