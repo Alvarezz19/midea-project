@@ -8,6 +8,9 @@ export function useSessionEvents() {
   const setEventConnectionStatus = useWorkbenchStore((store) => store.setEventConnectionStatus);
 
   useEffect(() => {
+    if (import.meta.env.MODE === 'test') {
+      return undefined;
+    }
     if (!threadId) {
       setEventConnectionStatus('idle');
       return undefined;

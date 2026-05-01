@@ -152,6 +152,7 @@ function ConformanceReportView({ report }: { report: RequirementConformanceRepor
   const partial = report.partial ?? [];
   const missing = report.missing ?? [];
   const covered = report.covered ?? [];
+  const rows = conformanceRows(blocked, missing, partial);
   const type = report.context_available === false ? 'info' : blocked.length ? 'error' : 'success';
   const message = report.context_available === false ? '需求覆盖未复核' : blocked.length ? '需求覆盖阻塞导出' : '需求覆盖已复核';
   return (
@@ -164,10 +165,10 @@ function ConformanceReportView({ report }: { report: RequirementConformanceRepor
         message={message}
         description={blocked[0] ?? report.warnings?.[0] ?? `已覆盖 ${covered.length} 项，需人工复核 ${partial.length} 项。`}
       />
-      {blocked.length || missing.length || partial.length ? (
+      {rows.length ? (
         <List
           size="small"
-          dataSource={[...blocked.map((item) => ({ label: item, tone: 'error' })), ...missing.slice(0, 3).map((item) => ({ label: item.reason ?? item.requirement ?? '未覆盖需求', tone: 'warning' })), ...partial.slice(0, 3).map((item) => ({ label: item.reason ?? item.requirement ?? '需人工复核', tone: 'default' }))]}
+          dataSource={rows}
           renderItem={(item) => (
             <List.Item className={panelStyles.operationItem}>
               <Tag color={item.tone}>{item.tone === 'error' ? '阻塞' : item.tone === 'warning' ? '缺失' : '复核'}</Tag>
@@ -178,6 +179,26 @@ function ConformanceReportView({ report }: { report: RequirementConformanceRepor
       ) : null}
     </div>
   );
+}
+
+function conformanceRows(
+  blocked: string[],
+  missing: NonNullable<RequirementConformanceReport['missing']>,
+  partial: NonNullable<RequirementConformanceReport['partial']>
+): Array<{ label: string; tone: 'error' | 'warning' | 'default' }> {
+  const rows: Array<{ label: string; tone: 'error' | 'warning' | 'default' }> = [];
+  const seen = new Set<string>();
+  const push = (label: string, tone: 'error' | 'warning' | 'default') => {
+    if (!label || seen.has(label)) {
+      return;
+    }
+    seen.add(label);
+    rows.push({ label, tone });
+  };
+  blocked.forEach((item) => push(item, 'error'));
+  missing.slice(0, 3).forEach((item) => push(item.reason ?? item.requirement ?? '未覆盖需求', 'warning'));
+  partial.slice(0, 3).forEach((item) => push(item.reason ?? item.requirement ?? '需人工复核', 'default'));
+  return rows;
 }
 
 function DesignBriefView({ brief }: { brief: DesignBrief }) {

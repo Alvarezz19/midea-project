@@ -3,7 +3,7 @@ import { CloudDownloadOutlined, HistoryOutlined, NodeIndexOutlined, RadarChartOu
 import { useMutation } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { formatApiError, projectExportUrl, validateProject } from '../../api/client';
+import { createSession, formatApiError, projectExportUrl, validateProject } from '../../api/client';
 import type { RequirementConformanceReport } from '../../api/types';
 import { SessionPanel } from '../session/SessionPanel';
 import { PlanningPanel } from '../planning/PlanningPanel';
@@ -19,8 +19,11 @@ const { Text, Title } = Typography;
 export function WorkbenchPage() {
   useSessionEvents();
   const state = useWorkbenchStore((store) => store.state);
+  const threadId = useWorkbenchStore((store) => store.threadId);
   const projectType = useWorkbenchStore((store) => store.projectType);
   const setProjectType = useWorkbenchStore((store) => store.setProjectType);
+  const setSession = useWorkbenchStore((store) => store.setSession);
+  const useLlmPlanner = useWorkbenchStore((store) => store.useLlmPlanner);
   const patchState = useWorkbenchStore((store) => store.patchState);
   const connectionStatus = useWorkbenchStore((store) => store.eventConnectionStatus);
   const projectId = state?.project_id ?? state?.current_project_id;
@@ -56,6 +59,11 @@ export function WorkbenchPage() {
       patchState({ validation_report: report, validation_summary: summary, conformance_report: report.conformance_report as RequirementConformanceReport | undefined });
       messageApi.success(summary.exportable ? '校验通过，可以导出。' : '校验完成，请处理阻塞项。');
     },
+    onError: (error) => messageApi.error(formatApiError(error))
+  });
+  const createMutation = useMutation({
+    mutationFn: () => createSession(projectType, { useLlmPlanner }),
+    onSuccess: (data) => setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state }),
     onError: (error) => messageApi.error(formatApiError(error))
   });
 
@@ -96,13 +104,22 @@ export function WorkbenchPage() {
         </Space>
       </header>
 
-      <section className={styles.statusRail}>
-        <StatusItem icon={<RadarChartOutlined />} label="事件流" value={connectionStatusLabel(connectionStatus)} tone={connectionColor(connectionStatus) === 'success' ? 'blue' : undefined} />
-        <StatusItem icon={<NodeIndexOutlined />} label="项目" value={projectId ?? '未绑定'} />
-        <StatusItem icon={<HistoryOutlined />} label="下一步" value={state?.next_action ?? 'send_message'} />
-      </section>
+      {threadId ? (
+        <section className={styles.statusRail}>
+          <StatusItem icon={<RadarChartOutlined />} label="事件流" value={connectionStatusLabel(connectionStatus)} tone={connectionColor(connectionStatus) === 'success' ? 'blue' : undefined} />
+          <StatusItem icon={<NodeIndexOutlined />} label="项目" value={projectId ?? '未绑定'} />
+          <StatusItem icon={<HistoryOutlined />} label="下一步" value={state?.next_action ?? 'send_message'} />
+        </section>
+      ) : (
+        <StartGuide
+          projectType={projectType}
+          onSelectProjectType={setProjectType}
+          onCreate={() => createMutation.mutate()}
+          loading={createMutation.isPending}
+        />
+      )}
 
-      <WorkflowProgress />
+      {threadId ? <WorkflowProgress /> : null}
 
       {state?.error ? <Alert className={styles.alert} type="error" showIcon message={state.error} /> : null}
       {conformance ? <ConformanceBanner report={conformance} blockedReasons={validation?.blocked_export_reasons ?? []} /> : null}
@@ -134,6 +151,39 @@ function ConformanceBanner({ report, blockedReasons }: { report: RequirementConf
     );
   }
   return <Alert className={styles.alert} type="success" showIcon message="需求覆盖已复核" description={`已覆盖 ${report.summary?.covered_count ?? 0} 项，需人工复核 ${report.summary?.partial_count ?? 0} 项。`} />;
+}
+
+function StartGuide({
+  projectType,
+  onSelectProjectType,
+  onCreate,
+  loading
+}: {
+  projectType?: 'plant_room' | 'ahu';
+  onSelectProjectType: (value: 'plant_room' | 'ahu') => void;
+  onCreate: () => void;
+  loading: boolean;
+}) {
+  return (
+    <section className={styles.startGuide}>
+      <div>
+        <Text type="secondary">开始</Text>
+        <Title level={2}>选择工程类型，然后创建会话</Title>
+        <p>先描述设备、控制目标、通讯和保护要求；系统会推荐模板并生成可审阅设计摘要。</p>
+      </div>
+      <Space size={10} wrap>
+        <Button type={projectType === 'plant_room' ? 'primary' : 'default'} onClick={() => onSelectProjectType('plant_room')}>
+          机房群控程序
+        </Button>
+        <Button type={projectType === 'ahu' ? 'primary' : 'default'} onClick={() => onSelectProjectType('ahu')}>
+          AHU 程序
+        </Button>
+        <Button type="primary" disabled={!projectType} loading={loading} onClick={onCreate}>
+          开始会话
+        </Button>
+      </Space>
+    </section>
+  );
 }
 
 function conformanceNumber(value: unknown, key: 'blocked_count' | 'missing_count'): number | undefined {

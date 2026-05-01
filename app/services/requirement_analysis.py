@@ -174,7 +174,19 @@ def explain_template_candidate(candidate: dict[str, Any], requirement_summary: d
 
 
 def _extract_keywords(text: str, keyword_map: dict[str, list[str]]) -> list[str]:
-    return [label for label, keywords in keyword_map.items() if any(keyword in text for keyword in keywords)]
+    return [label for label, keywords in keyword_map.items() if any(_keyword_matches(text, keyword) for keyword in keywords)]
+
+
+def _keyword_matches(text: str, keyword: str) -> bool:
+    if keyword == "风机":
+        index = text.find(keyword)
+        while index >= 0:
+            prefix = text[index - 1] if index > 0 else ""
+            if prefix != "排":
+                return True
+            index = text.find(keyword, index + len(keyword))
+        return False
+    return keyword in text
 
 
 def _merge_values(existing: Any, extracted: list[str]) -> list[str]:

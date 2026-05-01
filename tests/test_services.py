@@ -76,6 +76,9 @@ def test_requirement_conformance_blocks_explicit_missing_filter_alarm() -> None:
     assert conformance["context_available"] is True
     assert conformance["valid_for_requirement"] is False
     assert conformance["blocked"] == ["用户要求过滤网报警，但工程中无过滤网报警线索。"]
+    assert len(conformance["missing"]) == 1
+    assert conformance["missing"][0]["requirement"] == "过滤网报警"
+    assert conformance["missing"][0]["evidence"] == []
     assert merged["valid"] is True
     assert merged["exportable"] is False
     assert "需求覆盖未通过：用户要求过滤网报警，但工程中无过滤网报警线索。" in merged["blocked_export_reasons"]

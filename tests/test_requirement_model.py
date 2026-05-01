@@ -87,6 +87,31 @@ def test_requirement_slots_rejects_previous_equipment() -> None:
     assert second["slot_status"]["equipment:排风机"] == "rejected"
 
 
+def test_requirement_slots_normalize_display_noise() -> None:
+    slots = merge_requirement_slots(
+        message="我要做 AHU，需要排风机、CO2 控制和 Modbus",
+        rule_summary=analyze_requirement("我要做 AHU，需要排风机、CO2 控制和 Modbus", project_type="ahu"),
+        llm_result={
+            "project_type": "ahu",
+            "project_type_confidence": 0.9,
+            "equipment": ["排风机"],
+            "control_features": ["CO2控制"],
+            "communication": ["Modbus通讯"],
+            "io_points": ["CO2浓度"],
+            "protection_logic": [],
+            "risk_level": "low",
+            "risk_reasons": [],
+        },
+        existing_slots=None,
+    )
+    summary = requirement_summary_from_slots(slots)
+
+    assert summary["equipment"] == ["排风机"]
+    assert summary["control_features"] == ["CO2 控制"]
+    assert summary["communication"] == ["Modbus"]
+    assert summary["io_points"] == ["CO2"]
+
+
 def test_collect_requirements_merges_llm_slots(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     def fake_extract(message: str, *, provider: str | None = None) -> dict[str, Any]:
         return {

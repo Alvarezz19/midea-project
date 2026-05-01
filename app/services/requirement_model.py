@@ -274,7 +274,7 @@ def _merge_extracted(slots: dict[str, Any], extracted: dict[str, list[Any]], *, 
                     quantity=item.get("quantity"),
                 )
             else:
-                text = str(value).strip()
+                text = _normalize_slot_value(field, str(value).strip())
                 if not text:
                     continue
                 _merge_slot_item(
@@ -460,7 +460,41 @@ def _format_equipment(slots: dict[str, Any]) -> list[str]:
 
 
 def _extract_keywords(text: str, keyword_map: dict[str, list[str]]) -> list[str]:
-    return [label for label, keywords in keyword_map.items() if any(keyword in text for keyword in keywords)]
+    return [label for label, keywords in keyword_map.items() if any(_keyword_matches(text, keyword) for keyword in keywords)]
+
+
+def _keyword_matches(text: str, keyword: str) -> bool:
+    if keyword == "风机":
+        index = text.find(keyword)
+        while index >= 0:
+            prefix = text[index - 1] if index > 0 else ""
+            if prefix != "排":
+                return True
+            index = text.find(keyword, index + len(keyword))
+        return False
+    return keyword in text
+
+
+def _normalize_slot_value(field: str, value: str) -> str:
+    compact = value.replace(" ", "")
+    aliases = {
+        "control_features": {
+            "CO2控制": "CO2 控制",
+            "二氧化碳控制": "CO2 控制",
+            "PID控制": "PID 控制",
+        },
+        "communication": {
+            "Modbus通讯": "Modbus",
+            "BACnet通讯": "BACnet",
+            "MQTT通讯": "MQTT",
+            "硬接IO": "硬接 IO",
+        },
+        "io_points": {
+            "CO2浓度": "CO2",
+            "二氧化碳": "CO2",
+        },
+    }
+    return aliases.get(field, {}).get(compact, value)
 
 
 def _extract_counts(text: str) -> dict[str, int]:

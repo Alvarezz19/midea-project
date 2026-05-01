@@ -129,15 +129,28 @@ def _extend_requirements(target: list[dict[str, str]], category: str, values: An
 
 
 def _dedupe_requirements(requirements: list[dict[str, str]]) -> list[dict[str, str]]:
-    seen: set[tuple[str, str]] = set()
-    result: list[dict[str, str]] = []
+    selected: dict[tuple[str, str], dict[str, str]] = {}
     for requirement in requirements:
-        key = (requirement["category"], requirement["label"])
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(requirement)
-    return result
+        key = _requirement_identity(requirement)
+        existing = selected.get(key)
+        if existing is None or _requirement_priority(requirement) > _requirement_priority(existing):
+            selected[key] = requirement
+    return list(selected.values())
+
+
+def _requirement_identity(requirement: dict[str, str]) -> tuple[str, str]:
+    explicit_rule = _explicit_blocking_rule(requirement["label"])
+    if explicit_rule:
+        return ("blocking", str(explicit_rule["id"]))
+    return (requirement["category"], requirement["label"])
+
+
+def _requirement_priority(requirement: dict[str, str]) -> int:
+    category_order = {"equipment": 1, "point": 2, "control": 3, "protection": 4}
+    priority = category_order.get(requirement["category"], 0)
+    if any(token in requirement["label"] for token in ("保护", "报警", "故障", "反馈")):
+        priority += 2
+    return priority
 
 
 class _ProjectCorpus:
@@ -171,7 +184,7 @@ def _check_requirement(requirement: dict[str, str], corpus: _ProjectCorpus) -> d
         evidence = corpus.evidence_for(evidence_terms)
         if covered:
             return _result("covered", evidence, f"{label} 已找到工程线索。", blocking=False)
-        return _result("missing", evidence, explicit_rule["message"], blocking=True)
+        return _result("missing", [], explicit_rule["message"], blocking=True)
 
     terms = _terms_for_requirement(label)
     if terms and corpus.has_any(terms):
@@ -184,21 +197,25 @@ def _check_requirement(requirement: dict[str, str], corpus: _ProjectCorpus) -> d
 def _explicit_blocking_rule(label: str) -> dict[str, Any] | None:
     rules = [
         {
+            "id": "ahu_freeze_protection",
             "tokens": ("防冻",),
             "groups": (("防冻", "低温", "防霜"), ("保护", "报警", "故障", "联锁")),
             "message": "用户要求 AHU 防冻保护，但工程中无防冻保护线索。",
         },
         {
+            "id": "ahu_filter_alarm",
             "tokens": ("过滤网", "滤网"),
             "groups": (("过滤", "滤网"), ("报警", "故障", "压差")),
             "message": "用户要求过滤网报警，但工程中无过滤网报警线索。",
         },
         {
+            "id": "plant_pump_fault_feedback",
             "tokens": ("水泵故障", "水泵运行反馈", "泵故障", "泵运行反馈"),
             "groups": (("水泵", "泵"), ("故障", "报警"), ("运行", "反馈")),
             "message": "用户要求机房水泵故障/运行反馈，但水泵相关逻辑无故障或运行反馈线索。",
         },
         {
+            "id": "plant_bypass_pressure",
             "tokens": ("旁通阀压差", "旁通压差"),
             "groups": (("旁通",), ("压差", "差压"), ("PID", "限幅", "上限", "下限", "控制")),
             "message": "用户要求旁通阀压差控制，但工程中缺少旁通、压差或控制线索。",
