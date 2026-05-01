@@ -55,6 +55,7 @@ export function SessionPanel() {
   };
 
   const questions = (state?.open_questions ?? []).map(questionText);
+  const designBrief = state?.design_brief;
   const summaryItems = [
     ...(state?.requirement_summary?.equipment ?? []),
     ...(state?.requirement_summary?.control_features ?? []),
@@ -96,6 +97,32 @@ export function SessionPanel() {
           />
         ) : null}
       </div>
+
+      {designBrief ? (
+        <div className={panelStyles.section}>
+          <Text strong>轻量设计摘要</Text>
+          {designBrief.summary ? <p>{designBrief.summary}</p> : null}
+          <div className={panelStyles.chips}>
+            {[
+              ...(designBrief.equipment_plan ?? []),
+              ...(designBrief.control_plan ?? []),
+              ...(designBrief.point_plan ?? []),
+              ...(designBrief.protection_plan ?? [])
+            ]
+              .slice(0, 10)
+              .map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+          </div>
+          {designBrief.clarification_items?.length ? (
+            <List
+              size="small"
+              dataSource={designBrief.clarification_items.slice(0, 3)}
+              renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <div ref={messageListRef} className={panelStyles.messageList}>
         {messages.length ? (

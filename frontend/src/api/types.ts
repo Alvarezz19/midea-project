@@ -20,6 +20,9 @@ export interface SessionState {
   messages: Array<{ role: string; content: string }>;
   project_type?: ProjectType | null;
   requirement_summary?: RequirementSummary;
+  requirement_slots?: Record<string, unknown>;
+  design_brief?: DesignBrief | null;
+  conformance_report?: Record<string, unknown> | null;
   open_questions?: Array<string | RequirementQuestion>;
   confirmed_requirements?: string[];
   template_candidates?: TemplateCandidate[];
@@ -67,6 +70,45 @@ export interface TemplateCandidate {
     estimated_steps?: number;
   };
   risk_points?: string[];
+  recommendation_reasons?: string[];
+}
+
+export interface TemplateCoverage {
+  template_id?: string;
+  file_name?: string;
+  score?: number;
+  matched_items?: string[];
+  missing_items?: string[];
+  estimated_modification_cost?: {
+    level?: string;
+    reasons?: string[];
+  };
+  risk_points?: string[];
+  recommendation_reasons?: string[];
+}
+
+export interface DesignBrief {
+  selected_template?: {
+    template_id?: string;
+    file_name?: string;
+    project_type?: ProjectType;
+    project_type_label?: string;
+    score?: number;
+    tabs?: string[];
+  };
+  recommendation_reasons?: string[];
+  satisfied_requirements?: string[];
+  modification_items?: string[];
+  clarification_items?: string[];
+  risk_items?: string[];
+  equipment_plan?: string[];
+  control_plan?: string[];
+  point_plan?: string[];
+  protection_plan?: string[];
+  export_gate?: string[];
+  template_coverage?: TemplateCoverage[];
+  requirement_source?: Record<string, unknown>;
+  summary?: string;
 }
 
 export interface SessionResponse {

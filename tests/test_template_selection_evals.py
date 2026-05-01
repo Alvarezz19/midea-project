@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
+from app.services.design_brief import build_design_brief
+from app.services.requirement_model import merge_requirement_slots, requirement_summary_from_slots
 from app.services.retrieval import get_template_by_id, search_templates
 
 
@@ -62,6 +64,36 @@ def test_template_candidate_explanation_reports_match_missing_cost_and_risks() -
     assert explanation["missing_items"] == []
     assert explanation["estimated_modification_cost"]["level"] == "low"
     assert any("保护/联锁" in item for item in explanation["risk_points"])
+
+
+def test_design_brief_explains_selected_template_capability() -> None:
+    message = "我要做 AHU，带直膨、排风机、CO2、新风阀、Modbus"
+    rule_summary = analyze_requirement(message, project_type="ahu")
+    slots = merge_requirement_slots(message=message, rule_summary=rule_summary)
+    summary = requirement_summary_from_slots(slots)
+    candidates = search_templates(message, project_type=summary["project_type"], limit=3)
+    slim_candidates = [
+        {
+            **candidate,
+            **explain_template_candidate(candidate, summary),
+        }
+        for candidate in candidates
+    ]
+
+    brief = build_design_brief(
+        requirement_slots=slots,
+        requirement_summary=summary,
+        template_candidates=slim_candidates,
+        selected_template_id=slim_candidates[0]["template_id"],
+    )
+
+    assert brief is not None
+    assert brief["selected_template"]["template_id"] == "ahu_5e351de94700"
+    assert any("排风机" in item for item in brief["satisfied_requirements"])
+    assert any("直膨" in item for item in brief["satisfied_requirements"])
+    assert "Modbus" in " ".join(brief["point_plan"])
+    assert brief["export_gate"]
+    assert brief["template_coverage"][0]["estimated_modification_cost"]["level"] in {"low", "medium", "high"}
 
 
 def _load_cases() -> list[dict[str, Any]]:

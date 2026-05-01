@@ -111,4 +111,37 @@ describe('SessionPanel', () => {
     expect(screen.getByText('过滤网报警')).toBeInTheDocument();
     expect(screen.getByText('防冻保护')).toBeInTheDocument();
   });
+
+  it('renders design brief plans in the session context', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'plant_room',
+      state: {
+        messages: [],
+        project_type: 'plant_room',
+        status: 'awaiting_template_confirmation',
+        next_action: 'confirm_template',
+        design_brief: {
+          summary: '推荐模板：风冷热泵标准控制程序；设备：水泵、旁通阀；控制：压差控制',
+          selected_template: { template_id: 'tpl_plant', file_name: '风冷热泵标准控制程序.json' },
+          equipment_plan: ['水泵', '旁通阀'],
+          control_plan: ['压差控制'],
+          point_plan: ['Modbus'],
+          protection_plan: ['运行反馈'],
+          clarification_items: ['请确认关键设备数量。']
+        }
+      }
+    });
+
+    render(
+      <AppProviders>
+        <SessionPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('轻量设计摘要')).toBeInTheDocument();
+    expect(screen.getByText(/推荐模板：风冷热泵标准控制程序/)).toBeInTheDocument();
+    expect(screen.getByText('压差控制')).toBeInTheDocument();
+    expect(screen.getByText('请确认关键设备数量。')).toBeInTheDocument();
+  });
 });

@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.graph.state import AgentState
+from app.services.design_brief import build_design_brief, selected_design_brief_for_state
 from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
 from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import plan_patch_request
@@ -74,16 +75,22 @@ def _try_extract_requirement_with_llm(message: str, *, provider: str | None) -> 
 def retrieve_template_candidates(state: AgentState) -> dict[str, Any]:
     project_type = state.get("project_type")
     if not project_type:
-        return {"template_candidates": [], "status": "need_project_type", "next_action": "ask_project_type"}
+        return {"template_candidates": [], "design_brief": None, "status": "need_project_type", "next_action": "ask_project_type"}
 
     query = _requirement_query(state)
     candidates = search_templates(query, project_type=project_type, limit=3)
     if not candidates:
-        return {"template_candidates": [], "status": "no_template_candidate", "next_action": "ask_more_requirements"}
+        return {"template_candidates": [], "design_brief": None, "status": "no_template_candidate", "next_action": "ask_more_requirements"}
     requirement_summary = state.get("requirement_summary") or {}
     slim_candidates = [_slim_template_candidate(candidate, requirement_summary=requirement_summary) for candidate in candidates]
+    design_brief = build_design_brief(
+        requirement_slots=state.get("requirement_slots"),
+        requirement_summary=requirement_summary,
+        template_candidates=slim_candidates,
+    )
     return {
         "template_candidates": slim_candidates,
+        "design_brief": design_brief,
         "status": "template_candidates_ready",
         "next_action": "confirm_template",
     }
@@ -96,11 +103,21 @@ def select_or_wait_template(state: AgentState) -> dict[str, Any]:
         return {"status": state.get("status"), "next_action": state.get("next_action")}
 
     if selected_template_id:
-        return {"selected_template_id": selected_template_id, "status": "template_selected", "next_action": None}
+        next_state = dict(state)
+        next_state["selected_template_id"] = selected_template_id
+        return {
+            "selected_template_id": selected_template_id,
+            "design_brief": selected_design_brief_for_state(next_state),
+            "status": "template_selected",
+            "next_action": None,
+        }
 
     if state.get("auto_confirm_template") and candidates:
+        next_state = dict(state)
+        next_state["selected_template_id"] = candidates[0]["template_id"]
         return {
             "selected_template_id": candidates[0]["template_id"],
+            "design_brief": selected_design_brief_for_state(next_state),
             "status": "template_selected",
             "next_action": None,
         }
@@ -136,6 +153,12 @@ def confirm_template_interrupt_node(state: AgentState) -> dict[str, Any]:
         }
     return {
         "selected_template_id": selected_template_id,
+        "design_brief": build_design_brief(
+            requirement_slots=state.get("requirement_slots"),
+            requirement_summary=state.get("requirement_summary") or {},
+            template_candidates=candidates,
+            selected_template_id=selected_template_id,
+        ),
         "status": "template_selected",
         "next_action": None,
         "error": None,
@@ -285,6 +308,8 @@ def create_project_version_node(state: AgentState) -> dict[str, Any]:
             project_type=str(state.get("project_type") or template.get("project_type") or "ahu"),
             project_name=str(template.get("file_name") or selected_template_id),
             source_template_id=str(selected_template_id),
+            requirement_slots=state.get("requirement_slots"),
+            design_brief=state.get("design_brief") or selected_design_brief_for_state(state),
         )
     except (RetrievalError, ValueError) as exc:
         return {"status": "error", "error": str(exc), "next_action": "fix_template_selection"}
@@ -435,6 +460,8 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
                 request_message=_last_user_content(state),
                 patch_result={"changed": result["changed"], "changes": result["changes"], "diff": result["diff"]},
                 note="由结构化补丁创建。",
+                requirement_slots=state.get("requirement_slots"),
+                design_brief=state.get("design_brief"),
             )
     except (PatchEngineError, ValueError) as exc:
         return {"status": "patch_failed", "error": str(exc), "next_action": "revise_patch"}
@@ -552,7 +579,23 @@ def _slim_template_candidate(candidate: dict[str, Any], *, requirement_summary: 
         "missing_items": explanation["missing_items"],
         "estimated_modification_cost": explanation["estimated_modification_cost"],
         "risk_points": explanation["risk_points"],
+        "recommendation_reasons": _candidate_recommendation_reasons(candidate, explanation),
     }
+
+
+def _candidate_recommendation_reasons(candidate: dict[str, Any], explanation: dict[str, Any]) -> list[str]:
+    reasons = [str(item) for item in candidate.get("reasons") or [] if str(item)]
+    if explanation.get("matched_items"):
+        reasons.append("已覆盖：" + "、".join(explanation["matched_items"][:5]))
+    cost = explanation.get("estimated_modification_cost") or {}
+    for reason in cost.get("reasons") or []:
+        if str(reason):
+            reasons.append(str(reason))
+    result: list[str] = []
+    for reason in reasons:
+        if reason not in result:
+            result.append(reason)
+    return result
 
 
 def _selected_template_source_path(state: AgentState) -> str | None:
@@ -575,6 +618,11 @@ def _build_assistant_summary(state: AgentState) -> str:
     if status == "awaiting_template_confirmation":
         candidates = state.get("template_candidates") or []
         lines = ["已找到候选模板，请确认使用哪一个："]
+        design_brief = state.get("design_brief") or {}
+        if design_brief.get("summary"):
+            lines.append(f"设计摘要：{design_brief['summary']}")
+        for reason in (design_brief.get("recommendation_reasons") or [])[:2]:
+            lines.append(f"推荐理由：{reason}")
         for index, candidate in enumerate(candidates, start=1):
             cost = candidate.get("estimated_modification_cost") or {}
             missing = candidate.get("missing_items") or []

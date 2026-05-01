@@ -2,7 +2,7 @@ import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, 
 import { CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { confirmPatch, confirmTemplate, formatApiError } from '../../api/client';
-import type { TemplateCandidate } from '../../api/types';
+import type { DesignBrief, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -18,6 +18,7 @@ export function PlanningPanel() {
   const dryRun = state?.planner_dry_run as { diff?: { summary?: Record<string, unknown>; affected_node_ids?: string[] }; valid?: boolean } | null | undefined;
   const planner = state?.planner_result as Record<string, unknown> | null | undefined;
   const visiblePatch = (planner?.pending_patch ?? pendingPatch) as Record<string, unknown> | null | undefined;
+  const designBrief = state?.design_brief;
   const [messageApi, holder] = antMessage.useMessage();
 
   const templateMutation = useMutation({
@@ -73,6 +74,8 @@ export function PlanningPanel() {
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无模板候选" />
           )}
         </div>
+
+        {designBrief ? <DesignBriefView brief={designBrief} /> : null}
 
         <div className={panelStyles.section}>
           <Text strong>修改计划</Text>
@@ -139,6 +142,58 @@ export function PlanningPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+function DesignBriefView({ brief }: { brief: DesignBrief }) {
+  const selected = brief.selected_template;
+  return (
+    <div className={panelStyles.section}>
+      <Text strong>设计摘要</Text>
+      {brief.summary ? <p>{brief.summary}</p> : null}
+      <Descriptions className={panelStyles.compactDescriptions} column={2} size="small" bordered>
+        <Descriptions.Item label="推荐模板">{selected?.file_name ?? selected?.template_id ?? '-'}</Descriptions.Item>
+        <Descriptions.Item label="模板得分">{String(selected?.score ?? '-')}</Descriptions.Item>
+        <Descriptions.Item label="已满足">{String(brief.satisfied_requirements?.length ?? 0)}</Descriptions.Item>
+        <Descriptions.Item label="需改造">{String(brief.modification_items?.length ?? 0)}</Descriptions.Item>
+      </Descriptions>
+      <BriefTags title="设备" items={brief.equipment_plan ?? []} color="blue" />
+      <BriefTags title="控制" items={brief.control_plan ?? []} color="cyan" />
+      <BriefTags title="点表" items={brief.point_plan ?? []} color="geekblue" />
+      <BriefTags title="保护" items={brief.protection_plan ?? []} color="green" />
+      {brief.recommendation_reasons?.length ? (
+        <List
+          size="small"
+          dataSource={brief.recommendation_reasons.slice(0, 3)}
+          renderItem={(item) => <List.Item className={panelStyles.operationItem}><Text strong>推荐理由</Text><Text>{item}</Text></List.Item>}
+        />
+      ) : null}
+      {brief.modification_items?.length ? (
+        <Alert
+          className={panelStyles.inlineAlertTight}
+          type="warning"
+          showIcon
+          message="需改造或复核"
+          description={brief.modification_items.slice(0, 4).join('；')}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function BriefTags({ title, items, color }: { title: string; items: string[]; color: string }) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className={panelStyles.tagLine}>
+      <Text type="secondary">{title}</Text>
+      {items.slice(0, 6).map((item) => (
+        <Tag key={`${title}-${item}`} color={color}>
+          {item}
+        </Tag>
+      ))}
+    </div>
   );
 }
 
@@ -218,6 +273,7 @@ function TemplateDescription({ item }: { item: TemplateCandidate }) {
         ))}
       </div>
       <Text type="secondary">预计改造：{cost?.level ?? item.estimated_effort ?? '未知'}{costReasons(cost).length ? `，${costReasons(cost).join('；')}` : ''}</Text>
+      {item.recommendation_reasons?.length ? <Text type="secondary">推荐理由：{item.recommendation_reasons.slice(0, 2).join('；')}</Text> : null}
       {risk.length ? <Text type="danger">风险点：{risk.slice(0, 2).join('；')}</Text> : null}
     </div>
   );

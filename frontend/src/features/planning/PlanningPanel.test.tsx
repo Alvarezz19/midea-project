@@ -176,4 +176,45 @@ describe('PlanningPanel', () => {
 
     expect(screen.getByText(/预计改造：medium，需要补齐：CO2 控制；通讯\/IO 方式未确认/)).toBeInTheDocument();
   });
+
+  it('renders the lightweight design brief from backend state', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'ahu',
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'awaiting_template_confirmation',
+        next_action: 'confirm_template',
+        design_brief: {
+          summary: '推荐模板：AHU 六页模板.json；设备：排风机、直膨机；控制：CO2 控制',
+          selected_template: {
+            template_id: 'tpl_1',
+            file_name: 'AHU 六页模板.json',
+            score: 12.4
+          },
+          recommendation_reasons: ['包含独立排风机/直膨机故障页面。'],
+          satisfied_requirements: ['排风机：模板已包含排风机', '直膨机：模板已包含直膨机'],
+          modification_items: ['CO2 控制：需要后续补丁或人工确认'],
+          equipment_plan: ['排风机', '直膨机'],
+          control_plan: ['CO2 控制'],
+          point_plan: ['Modbus'],
+          protection_plan: ['故障报警'],
+          export_gate: ['导出前必须通过工程结构校验。']
+        },
+        template_candidates: []
+      }
+    });
+
+    render(
+      <AppProviders>
+        <PlanningPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('设计摘要')).toBeInTheDocument();
+    expect(screen.getByText(/推荐模板：AHU 六页模板/)).toBeInTheDocument();
+    expect(screen.getByText('CO2 控制')).toBeInTheDocument();
+    expect(screen.getByText('需改造或复核')).toBeInTheDocument();
+  });
 });

@@ -175,6 +175,8 @@ def create_project_version(
     project_type: str = "ahu",
     project_name: str | None = None,
     source_template_id: str | None = None,
+    requirement_slots: dict[str, Any] | None = None,
+    design_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从模板创建工程版本，返回版本元数据。"""
 
@@ -203,6 +205,7 @@ def create_project_version(
         "created_at": now.isoformat(),
         "note": note,
         "summary": summarize_project(nodes),
+        "requirement_context": _requirement_context(requirement_slots=requirement_slots, design_brief=design_brief),
     }
     save_metadata(meta_path, metadata)
     if postgres_runtime_enabled():
@@ -232,6 +235,8 @@ def create_project_version_from_nodes(
     request_message: str = "",
     patch_result: dict[str, Any] | None = None,
     note: str = "",
+    requirement_slots: dict[str, Any] | None = None,
+    design_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """从已修改节点创建不可变子版本。"""
 
@@ -262,6 +267,7 @@ def create_project_version_from_nodes(
             "warning_count": report.get("warning_count"),
         },
         "summary": summarize_project(nodes),
+        "requirement_context": _requirement_context(requirement_slots=requirement_slots, design_brief=design_brief),
     }
     save_metadata(meta_path, metadata)
     if postgres_runtime_enabled():
@@ -320,6 +326,19 @@ def save_metadata(path: str | Path, metadata: dict[str, Any]) -> Path:
         json.dump(metadata, file, ensure_ascii=False, indent=2)
         file.write("\n")
     return target
+
+
+def _requirement_context(
+    *,
+    requirement_slots: dict[str, Any] | None,
+    design_brief: dict[str, Any] | None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    if requirement_slots:
+        context["requirement_slots"] = requirement_slots
+    if design_brief:
+        context["design_brief"] = design_brief
+    return context
 
 
 def file_sha256(path: str | Path) -> str:

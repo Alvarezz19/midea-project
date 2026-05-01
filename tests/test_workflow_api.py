@@ -55,8 +55,15 @@ def test_workflow_can_create_project_version(tmp_path: Path) -> None:
     assert result["selected_template_id"]
     assert result["current_project_version_id"]
     assert result["current_project_path"]
+    assert result["design_brief"]["selected_template"]["template_id"] == result["selected_template_id"]
+    assert result["design_brief"]["satisfied_requirements"]
     assert Path(result["current_project_path"]).exists()
     assert validate_project(load_project(result["current_project_path"]))["valid"]
+
+    meta_path = Path(result["current_project_path"]).with_suffix(".meta.json")
+    metadata = meta_path.read_text(encoding="utf-8")
+    assert '"design_brief"' in metadata
+    assert '"requirement_slots"' in metadata
 
 
 def test_workflow_interrupts_and_resumes_template_confirmation(tmp_path: Path) -> None:
