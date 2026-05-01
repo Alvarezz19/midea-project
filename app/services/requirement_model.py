@@ -67,10 +67,10 @@ TASK_KEYWORDS = {
 OVERRIDE_TOKENS = ("改成", "调整为", "改为", "变成", "换成")
 REJECT_TOKENS = ("不是", "不要", "取消", "不需要", "去掉", "删除", "移除")
 COUNT_PATTERN = re.compile(
-    r"(?P<count>\d+|一|两|二|三|四|五|六|七|八|九|十)\s*(?:台|个|路|点)?\s*(?P<name>风冷热泵|冷冻泵|冷却泵|水泵|主机|冷机|冷水机组|冷却塔|旁通阀|送风机|排风机|直膨机|新风阀|回风阀|水阀|电加热|蝶阀)"
+    r"(?P<count>\d+|一|两|二|三|四|五|六|七|八|九|十)\s*(?:台|个|路|点)?\s*(?P<name>风冷热泵|热泵|冷冻泵|冷却泵|水泵|主机|冷机|冷水机组|冷却塔|旁通阀|送风机|排风机|直膨机|新风阀|回风阀|水阀|电加热|蝶阀)"
 )
 EQUIPMENT_THEN_COUNT_PATTERN = re.compile(
-    r"(?P<name>风冷热泵|冷冻泵|冷却泵|水泵|主机|冷机|冷水机组|冷却塔|旁通阀|送风机|排风机|直膨机|新风阀|回风阀|水阀|电加热|蝶阀)\s*(?:改成|调整为|改为|变成|换成)\s*(?P<count>\d+|一|两|二|三|四|五|六|七|八|九|十)\s*(?:台|个|路|点)"
+    r"(?P<name>风冷热泵|热泵|冷冻泵|冷却泵|水泵|主机|冷机|冷水机组|冷却塔|旁通阀|送风机|排风机|直膨机|新风阀|回风阀|水阀|电加热|蝶阀)\s*(?:改成|调整为|改为|变成|换成)\s*(?P<count>\d+|一|两|二|三|四|五|六|七|八|九|十)\s*(?:台|个|路|点)"
 )
 
 
@@ -332,21 +332,20 @@ def _merge_slot_item(
 
 
 def _status_for_value(message: str, value: str) -> str:
-    window = _context_window(message, value)
-    if any(token in window for token in REJECT_TOKENS):
+    if _token_applies_to_value(message, value, REJECT_TOKENS):
         return "rejected"
-    if any(token in window for token in OVERRIDE_TOKENS):
+    if _token_applies_to_value(message, value, OVERRIDE_TOKENS):
         return "confirmed"
     return "confirmed"
 
 
-def _context_window(message: str, value: str) -> str:
+def _token_applies_to_value(message: str, value: str, tokens: tuple[str, ...]) -> bool:
     index = message.find(value)
     if index < 0:
-        return message
-    start = max(0, index - 8)
-    end = min(len(message), index + len(value) + 8)
-    return message[start:end]
+        return False
+    prefix = message[max(0, index - 4) : index].strip(" ，,、；;。")
+    suffix = message[index + len(value) : index + len(value) + 4].strip(" ，,、；;。")
+    return any(prefix.endswith(token) or suffix.startswith(token) for token in tokens)
 
 
 def _refresh_missing_and_risk(slots: dict[str, Any], *, message: str, current_project_path: str | None) -> None:
@@ -487,7 +486,7 @@ def _parse_count(value: str) -> int | None:
 
 
 def _normalize_equipment_name(name: str) -> str:
-    aliases = {"冷机": "主机", "冷水机组": "主机"}
+    aliases = {"冷机": "主机", "冷水机组": "主机", "热泵": "风冷热泵"}
     return aliases.get(name, name)
 
 
