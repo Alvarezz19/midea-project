@@ -801,6 +801,8 @@ def get_project_version_flow(
     project_id: str,
     version_id: str,
     center_node_id: str | None = None,
+    focus_node_ids: Annotated[list[str] | None, Query()] = None,
+    tab_id: str | None = None,
     max_nodes: int = Query(default=80, ge=1, le=300),
     max_edges: int = Query(default=160, ge=0, le=800),
     max_chars: int = Query(default=120000, ge=1000, le=500000),
@@ -814,6 +816,8 @@ def get_project_version_flow(
         flow = build_react_flow(
             load_project(path),
             center_node_id=center_node_id,
+            focus_node_ids=focus_node_ids,
+            tab_id=tab_id,
             max_nodes=max_nodes,
             max_edges=max_edges,
             max_chars=max_chars,

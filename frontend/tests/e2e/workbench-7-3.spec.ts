@@ -12,7 +12,7 @@ test('AHU 低风险修改：选择模板、自然语言改名、校验、导出�
   await expect(page.getByText(/thread /)).toBeVisible();
 
   await page.getByPlaceholder('例如：我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯').fill(
-    '我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯，并保留防冻保护。'
+    '我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯。'
   );
   await page.getByRole('button', { name: /发送/ }).click();
 
@@ -33,6 +33,8 @@ test('AHU 低风险修改：选择模板、自然语言改名、校验、导出�
   await expect(page.getByText('重命名节点')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/补丁已应用并校验通过/)).toBeVisible();
   await expect(page.getByText('修改 1')).toBeVisible();
+  await expect(page.getByText('自动定位 1154c92')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('E2E-AHU比较节点').first()).toBeVisible();
   await expect(page.locator('.ant-tag').filter({ hasText: /版本：v_/ })).not.toHaveText(initialVersion, { timeout: 60_000 });
 
   await page.getByRole('button', { name: /校验/ }).click();

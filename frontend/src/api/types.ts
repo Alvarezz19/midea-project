@@ -211,6 +211,9 @@ export interface FlowNodeData {
   tab_label?: string;
   inputs?: number;
   outputs?: number;
+  affected?: boolean;
+  diff_kind?: 'added' | 'removed' | 'modified';
+  risk?: boolean;
 }
 
 export type EngineeringNodeRole = 'input' | 'output' | 'communication' | 'compare' | 'pid' | 'logic' | 'protection' | 'note' | 'unknown';
@@ -242,6 +245,7 @@ export interface ProjectFlowResponse {
       targetHandle?: string;
       data?: Record<string, unknown>;
     }>;
+    tabs?: Array<{ id: string; label: string }>;
     budget: FlowBudget;
   };
 }

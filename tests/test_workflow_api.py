@@ -693,7 +693,15 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     flow_data = flow.json()["flow"]
     assert 1 <= len(flow_data["nodes"]) <= 8
     assert flow_data["budget"]["node_count"] == len(flow_data["nodes"])
+    assert isinstance(flow_data["tabs"], list)
     assert "wires" not in flow.text
+    focus_id = flow_data["nodes"][-1]["id"]
+    focused_flow = client.get(
+        f"/api/projects/{state['current_project_id']}/versions/{state['current_project_version_id']}/flow",
+        params={"focus_node_ids": [focus_id], "max_nodes": 4, "max_edges": 20, "max_chars": 30000},
+    )
+    assert focused_flow.status_code == 200
+    assert focused_flow.json()["flow"]["nodes"][0]["id"] == focus_id
 
     trace = client.get(f"/api/traces/{message_trace_id}")
     assert trace.status_code == 200

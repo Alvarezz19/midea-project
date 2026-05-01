@@ -65,12 +65,20 @@
   color: var(--warning);
 }
 
-.messageList {
+.sessionTimeline {
   overflow: auto;
   flex: 1;
   min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background:
+    linear-gradient(180deg, rgba(244, 247, 248, 0.72), rgba(255, 255, 255, 0) 180px);
+}
+
+.messageList {
+  min-height: 150px;
   padding: 16px;
-  background: linear-gradient(180deg, rgba(244, 247, 248, 0.6), rgba(255, 255, 255, 0));
+  background: transparent;
 }
 
 .userBubble,
@@ -109,8 +117,11 @@
 }
 
 .composer {
+  flex-shrink: 0;
   padding: 14px;
   border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -8px 18px rgba(23, 32, 38, 0.04);
 }
 
 .composer textarea {
@@ -118,7 +129,9 @@
 }
 
 .composerOptions {
+  flex-shrink: 0;
   padding: 0 14px 14px;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .inlineAlert {
@@ -740,7 +753,11 @@
   position: relative;
   height: 320px;
   border-bottom: 1px solid var(--line);
-  background: #eef4f6;
+  background:
+    linear-gradient(rgba(126, 146, 156, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(126, 146, 156, 0.12) 1px, transparent 1px),
+    #f7fafb;
+  background-size: 22px 22px;
 }
 
 .flowToolbar {
@@ -751,6 +768,37 @@
   padding: 10px 12px;
   border-bottom: 1px solid rgba(216, 224, 228, 0.8);
   background: #fbfdfe;
+}
+
+.flowTabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(216, 224, 228, 0.8);
+  background: #f7fafb;
+}
+
+.flowTabs button {
+  flex: 0 0 auto;
+  max-width: 168px;
+  overflow: hidden;
+  padding: 5px 10px;
+  border: 1px solid rgba(126, 146, 156, 0.34);
+  border-radius: 2px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowTabs button:hover,
+.flowTabActive {
+  border-color: var(--midea-blue) !important;
+  background: #eaf6fb !important;
+  color: var(--midea-blue-dark) !important;
 }
 
 .flowEmpty {
@@ -777,14 +825,16 @@
 }
 
 .engineeringNode {
-  min-width: 142px;
-  max-width: 190px;
-  padding: 8px 10px;
-  border: 1px solid rgba(102, 115, 124, 0.38);
-  border-left-width: 4px;
-  border-radius: 8px;
+  position: relative;
+  min-width: 158px;
+  max-width: 210px;
+  min-height: 40px;
+  padding: 6px 10px 6px 44px;
+  border: 2px solid rgba(102, 115, 124, 0.42);
+  border-left-width: 0;
+  border-radius: 3px;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 18px rgba(23, 32, 38, 0.09);
+  box-shadow: 0 3px 8px rgba(23, 32, 38, 0.12);
 }
 
 .nodeSelected {
@@ -794,6 +844,75 @@
 
 .nodeAffected {
   background: #fffaf2;
+}
+
+.nodeTypeStripe {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: -2px;
+  display: grid;
+  width: 36px;
+  place-items: center;
+  border-radius: 3px 0 0 3px;
+  background: #66737c;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.nodePort {
+  width: 9px !important;
+  height: 9px !important;
+  border: 1px solid #8d969b !important;
+  background: #d7dee2 !important;
+}
+
+.nodeRisk {
+  border-color: #d46b08;
+  box-shadow: 0 0 0 3px rgba(212, 107, 8, 0.16), 0 3px 10px rgba(23, 32, 38, 0.12);
+}
+
+.nodeRiskIcon {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff7e6;
+  color: #d46b08;
+}
+
+.diff_added {
+  border-color: #249a5b;
+  background: #f0fff6;
+}
+
+.diff_added .nodeTypeStripe {
+  background: #249a5b;
+}
+
+.diff_modified {
+  border-color: #d46b08;
+  background: #fffaf2;
+}
+
+.diff_modified .nodeTypeStripe {
+  background: #b85c00;
+}
+
+.diff_removed {
+  border-color: #cf3b3b;
+  background: #fff1f0;
+  opacity: 0.82;
+}
+
+.diff_removed .nodeTypeStripe {
+  background: #cf3b3b;
 }
 
 .nodeLabel {
@@ -816,39 +935,43 @@
 }
 
 .role_input {
-  border-left-color: var(--midea-blue);
+  --node-role-color: var(--midea-blue);
 }
 
 .role_output {
-  border-left-color: var(--warning);
+  --node-role-color: var(--warning);
 }
 
 .role_communication {
-  border-left-color: var(--midea-blue-dark);
+  --node-role-color: var(--midea-blue-dark);
 }
 
 .role_compare {
-  border-left-color: #6c7a00;
+  --node-role-color: #6c7a00;
 }
 
 .role_pid {
-  border-left-color: var(--success);
+  --node-role-color: var(--success);
 }
 
 .role_logic {
-  border-left-color: var(--muted);
+  --node-role-color: var(--muted);
 }
 
 .role_protection {
-  border-left-color: var(--danger);
+  --node-role-color: var(--danger);
 }
 
 .role_note {
-  border-left-color: var(--focus);
+  --node-role-color: var(--focus);
 }
 
 .role_unknown {
-  border-left-color: #8aa0aa;
+  --node-role-color: #8aa0aa;
+}
+
+.engineeringNode:not(.diff_added):not(.diff_modified):not(.diff_removed) .nodeTypeStripe {
+  background: var(--node-role-color, #8aa0aa);
 }
 
 .diffItem {

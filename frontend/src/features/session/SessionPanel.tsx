@@ -78,63 +78,65 @@ export function SessionPanel() {
         </Button>
       </header>
 
-      {!projectType ? (
-        <Alert className={panelStyles.inlineAlert} type="info" showIcon message="请先在顶部选择机房群控程序或 AHU 程序。" />
-      ) : null}
-
-      <div className={panelStyles.section}>
-        <Text strong>结构化需求</Text>
-        <div className={panelStyles.chips}>
-          {(requirements.length ? requirements : ['等待需求分析']).map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-        {questions.length ? (
-          <List
-            size="small"
-            dataSource={questions}
-            renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
-          />
+      <div ref={messageListRef} className={panelStyles.sessionTimeline}>
+        {!projectType ? (
+          <Alert className={panelStyles.inlineAlert} type="info" showIcon message="请先在顶部选择机房群控程序或 AHU 程序。" />
         ) : null}
-      </div>
 
-      {designBrief ? (
         <div className={panelStyles.section}>
-          <Text strong>轻量设计摘要</Text>
-          {designBrief.summary ? <p>{designBrief.summary}</p> : null}
+          <Text strong>结构化需求</Text>
           <div className={panelStyles.chips}>
-            {[
-              ...(designBrief.equipment_plan ?? []),
-              ...(designBrief.control_plan ?? []),
-              ...(designBrief.point_plan ?? []),
-              ...(designBrief.protection_plan ?? [])
-            ]
-              .slice(0, 10)
-              .map((item) => (
-                <span key={item}>{item}</span>
-              ))}
+            {(requirements.length ? requirements : ['等待需求分析']).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
           </div>
-          {designBrief.clarification_items?.length ? (
+          {questions.length ? (
             <List
               size="small"
-              dataSource={designBrief.clarification_items.slice(0, 3)}
+              dataSource={questions}
               renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
             />
           ) : null}
         </div>
-      ) : null}
 
-      <div ref={messageListRef} className={panelStyles.messageList}>
-        {messages.length ? (
-          messages.map((item, index) => (
-            <article key={`${item.role}-${index}`} className={item.role === 'user' ? panelStyles.userBubble : panelStyles.agentBubble}>
-              <Text strong>{item.role === 'user' ? '工程师' : '智能体'}</Text>
-              <p>{item.content}</p>
-            </article>
-          ))
-        ) : (
-          <div className={panelStyles.empty}>选择项目类型后，描述设备、控制目标、通讯和保护要求。</div>
-        )}
+        {designBrief ? (
+          <div className={panelStyles.section}>
+            <Text strong>轻量设计摘要</Text>
+            {designBrief.summary ? <p>{designBrief.summary}</p> : null}
+            <div className={panelStyles.chips}>
+              {[
+                ...(designBrief.equipment_plan ?? []),
+                ...(designBrief.control_plan ?? []),
+                ...(designBrief.point_plan ?? []),
+                ...(designBrief.protection_plan ?? [])
+              ]
+                .slice(0, 10)
+                .map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+            </div>
+            {designBrief.clarification_items?.length ? (
+              <List
+                size="small"
+                dataSource={designBrief.clarification_items.slice(0, 3)}
+                renderItem={(item) => <List.Item className={panelStyles.question}>{item}</List.Item>}
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className={panelStyles.messageList}>
+          {messages.length ? (
+            messages.map((item, index) => (
+              <article key={`${item.role}-${index}`} className={item.role === 'user' ? panelStyles.userBubble : panelStyles.agentBubble}>
+                <Text strong>{item.role === 'user' ? '工程师' : '智能体'}</Text>
+                <p>{item.content}</p>
+              </article>
+            ))
+          ) : (
+            <div className={panelStyles.empty}>选择项目类型后，描述设备、控制目标、通讯和保护要求。</div>
+          )}
+        </div>
       </div>
 
       <Space.Compact className={panelStyles.composer} block>

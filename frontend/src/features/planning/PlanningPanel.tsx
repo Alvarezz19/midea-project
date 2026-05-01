@@ -261,6 +261,8 @@ function OperationPreview({
           </List.Item>
         )}
       />
+      <IoPointChangeList dryRun={dryRun} />
+      <CopyBlockImpactList dryRun={dryRun} />
       {affectedIds.length ? (
         <div className={panelStyles.chips}>
           {affectedIds.slice(0, 10).map((id) => (
@@ -374,9 +376,54 @@ function operationDetail(operation: Record<string, unknown>): string {
     valueText('输入端', operation.target_input),
     valueText('新名称', operation.new_name),
     valueText('新值', operation.new_value),
-    valueText('block_id', operation.block_id)
+    valueText('block_id', operation.block_id),
+    paramsText(operation.params)
   ].filter(Boolean);
   return parts.join(' · ') || '请在确认前检查影响节点、风险原因和校验结果。';
+}
+
+function IoPointChangeList({ dryRun }: { dryRun?: { diff?: { summary?: Record<string, unknown>; affected_node_ids?: string[] }; valid?: boolean } | null }) {
+  const changes = dryRunChanges(dryRun).filter((item) => item.op === 'set_io_point');
+  if (!changes.length) {
+    return null;
+  }
+  return (
+    <List
+      size="small"
+      dataSource={changes.slice(0, 6)}
+      renderItem={(item) => (
+        <List.Item className={panelStyles.operationItem}>
+          <Tag color="orange">点位</Tag>
+          <Text>{String(item.node_id ?? '未知节点')}</Text>
+          <Text type="secondary">
+            {String(item.field ?? '字段')}：{String(item.old_value ?? '-')} -&gt; {String(item.new_value ?? '-')}
+          </Text>
+        </List.Item>
+      )}
+    />
+  );
+}
+
+function CopyBlockImpactList({ dryRun }: { dryRun?: { diff?: { summary?: Record<string, unknown>; affected_node_ids?: string[] }; valid?: boolean } | null }) {
+  const changes = dryRunChanges(dryRun).filter((item) => item.op === 'copy_block');
+  if (!changes.length) {
+    return null;
+  }
+  return (
+    <List
+      size="small"
+      dataSource={changes.slice(0, 3)}
+      renderItem={(item) => (
+        <List.Item className={panelStyles.operationItem}>
+          <Tag color="red">边界</Tag>
+          <Text>{String(item.block_id ?? 'copy_block')}</Text>
+          <Text type="secondary">
+            复制 {String(item.copied_node_count ?? 0)} 个节点，入口外部线丢弃 {String(item.dropped_external_input_count ?? 0)} 条，边界接线 {String(item.boundary_connection_count ?? 0)} 条。
+          </Text>
+        </List.Item>
+      )}
+    />
+  );
 }
 
 function selectorText(value: unknown): string {
@@ -392,4 +439,25 @@ function valueText(label: string, value: unknown): string {
     return '';
   }
   return `${label} ${String(value)}`;
+}
+
+function paramsText(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return '';
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .slice(0, 3)
+    .map(([key, item]) => `${key}=${String(item)}`)
+    .join('，');
+}
+
+function dryRunChanges(value: unknown): Array<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return [];
+  }
+  const changes = (value as { changes?: unknown }).changes;
+  if (!Array.isArray(changes)) {
+    return [];
+  }
+  return changes.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));
 }

@@ -14,6 +14,8 @@ def build_react_flow(
     nodes: list[dict[str, Any]],
     *,
     center_node_id: str | None = None,
+    focus_node_ids: list[str] | None = None,
+    tab_id: str | None = None,
     max_nodes: int = 80,
     max_edges: int = 160,
     max_chars: int = 120000,
@@ -26,15 +28,20 @@ def build_react_flow(
     node_by_id = {str(node["id"]): node for node in nodes if isinstance(node.get("id"), str)}
     if center_node_id and center_node_id not in node_by_id:
         raise FlowGraphError(f"中心节点不存在: {center_node_id}")
+    focus_ids = [node_id for node_id in (focus_node_ids or []) if node_id in node_by_id]
+    if center_node_id and center_node_id not in focus_ids:
+        focus_ids.insert(0, center_node_id)
 
-    candidate_ids = _candidate_node_ids(nodes, center_node_id=center_node_id, max_nodes=max_nodes)
+    tabs = get_tabs(nodes)
+    candidate_ids = _candidate_node_ids(nodes, center_node_id=center_node_id, focus_node_ids=focus_ids, tab_id=tab_id, max_nodes=max_nodes)
     included = set(candidate_ids)
-    flow_nodes = [_flow_node(node_by_id[node_id], get_tabs(nodes)) for node_id in candidate_ids]
+    flow_nodes = [_flow_node(node_by_id[node_id], tabs) for node_id in candidate_ids]
     flow_edges = _flow_edges(nodes, included, max_edges=max_edges)
 
     result = {
         "nodes": flow_nodes,
         "edges": flow_edges,
+        "tabs": [{"id": key, "label": value} for key, value in tabs.items()],
         "budget": {
             "max_nodes": max_nodes,
             "max_edges": max_edges,
@@ -54,38 +61,71 @@ def build_react_flow(
     return result
 
 
-def _candidate_node_ids(nodes: list[dict[str, Any]], *, center_node_id: str | None, max_nodes: int) -> list[str]:
+def _candidate_node_ids(
+    nodes: list[dict[str, Any]],
+    *,
+    center_node_id: str | None,
+    focus_node_ids: list[str],
+    tab_id: str | None,
+    max_nodes: int,
+) -> list[str]:
     all_ids = _non_tab_node_ids(nodes)
-    if center_node_id is None:
-        return all_ids[:max_nodes]
-
     node_by_id = {str(node["id"]): node for node in nodes if isinstance(node.get("id"), str)}
-    selected: list[str] = [center_node_id]
-    selected_set = {center_node_id}
-    for source_id in _input_source_ids(node_by_id[center_node_id].get("wires")):
-        if source_id in node_by_id and source_id not in selected_set:
-            selected.append(source_id)
-            selected_set.add(source_id)
-        if len(selected) >= max_nodes:
+    selected: list[str] = []
+    selected_set: set[str] = set()
+
+    def add(node_id: str | None) -> bool:
+        if not node_id or node_id in selected_set or node_id not in node_by_id:
+            return len(selected) >= max_nodes
+        if node_by_id[node_id].get("type") == "tab":
+            return len(selected) >= max_nodes
+        selected.append(node_id)
+        selected_set.add(node_id)
+        return len(selected) >= max_nodes
+
+    focus_ids = focus_node_ids or ([center_node_id] if center_node_id else [])
+    for node_id in focus_ids:
+        if add(node_id):
             return selected
 
+    for node_id in focus_ids:
+        if node_id not in node_by_id:
+            continue
+        for source_id in _input_source_ids(node_by_id[node_id].get("wires")):
+            if add(source_id):
+                return selected
+
+    focus_set = set(focus_ids)
     for node in nodes:
         node_id = node.get("id")
         if not isinstance(node_id, str) or node_id in selected_set or node.get("type") == "tab":
             continue
-        if center_node_id in _input_source_ids(node.get("wires")):
-            selected.append(node_id)
-            selected_set.add(node_id)
-        if len(selected) >= max_nodes:
+        if focus_set.intersection(_input_source_ids(node.get("wires"))):
+            if add(node_id):
+                return selected
+
+    preferred_tab_ids = _preferred_tab_ids(node_by_id, focus_ids, tab_id)
+    for node_id in all_ids:
+        node = node_by_id[node_id]
+        if preferred_tab_ids and node.get("z") not in preferred_tab_ids:
+            continue
+        if add(node_id):
             return selected
 
     for node_id in all_ids:
-        if node_id not in selected_set:
-            selected.append(node_id)
-            selected_set.add(node_id)
-        if len(selected) >= max_nodes:
+        if add(node_id):
             break
     return selected
+
+
+def _preferred_tab_ids(node_by_id: dict[str, dict[str, Any]], focus_node_ids: list[str], tab_id: str | None) -> set[str]:
+    result = {tab_id} if tab_id else set()
+    for node_id in focus_node_ids:
+        node = node_by_id.get(node_id)
+        node_tab_id = node.get("z") if isinstance(node, dict) else None
+        if isinstance(node_tab_id, str) and node_tab_id:
+            result.add(node_tab_id)
+    return result
 
 
 def _non_tab_node_ids(nodes: list[dict[str, Any]]) -> list[str]:

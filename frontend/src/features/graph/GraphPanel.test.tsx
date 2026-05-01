@@ -119,9 +119,79 @@ describe('GraphPanel', () => {
     );
 
     expect((await screen.findAllByText('送风温度设定')).length).toBeGreaterThan(0);
+    expect(screen.getByText('自动定位 node_1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '定位 node_1' }));
 
     await waitFor(() => expect(useWorkbenchStore.getState().selectedNodeId).toBe('node_1'));
-    expect(fetchMock).toHaveBeenCalledWith('/api/projects/project_1/versions/v_2/flow?max_nodes=120&max_edges=260&max_chars=160000', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project_1/versions/v_2/flow?max_nodes=120&max_edges=260&max_chars=160000&center_node_id=node_1&focus_node_ids=node_1',
+      expect.any(Object)
+    );
+  });
+
+  it('shows dry-run added nodes and risk IO changes before they are saved', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/projects/project_1/diff')) {
+        return new Response(JSON.stringify({ project_id: 'project_1', diff: { summary: {} } }), { status: 200 });
+      }
+      if (url.startsWith('/api/projects/project_1/versions/v_2/flow')) {
+        return new Response(
+          JSON.stringify({
+            project_id: 'project_1',
+            version_id: 'v_2',
+            flow: {
+              nodes: [
+                {
+                  id: 'target_1',
+                  type: 'engineeringNode',
+                  position: { x: 280, y: 80 },
+                  data: { label: '新风阀控制', module_type: 'channel_selector', role: 'logic', tab_label: '控制', inputs: 2, outputs: 1 }
+                }
+              ],
+              edges: [],
+              tabs: [{ id: 'tab_control', label: '控制' }],
+              budget: { max_nodes: 120, max_edges: 260, max_chars: 160000, node_count: 1, edge_count: 0, truncated: false }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        project_id: 'project_1',
+        version_id: 'v_2',
+        pending_confirmation_patch: { op: 'set_io_point', node_selector: { id: 'target_1' }, params: { modbusAddress: 12 } },
+        planner_dry_run: {
+          valid: true,
+          changes: [{ op: 'set_io_point', node_id: 'target_1', field: 'modbusAddress', old_value: 1, new_value: 12 }],
+          diff: {
+            summary: { added_count: 1, removed_count: 0, modified_count: 1, affected_node_count: 2 },
+            affected_node_ids: ['added_1', 'target_1'],
+            added: [{ node_id: 'added_1', type: 'constant', name: 'CO2 设定', tab_id: 'tab_control' }],
+            removed: [],
+            modified: [{ node_id: 'target_1', type: 'channel_selector', name: '新风阀控制', field_changes: [{ field: 'modbusAddress' }] }]
+          }
+        },
+        risk_assessment: { risk_level: 'high', requires_confirmation: true }
+      }
+    });
+
+    render(
+      <AppProviders>
+        <GraphPanel />
+      </AppProviders>
+    );
+
+    expect((await screen.findAllByText('CO2 设定')).length).toBeGreaterThan(0);
+    expect(screen.getByText('自动定位 added_1')).toBeInTheDocument();
+    expect(screen.getByText(/target_1 · channel_selector · 字段 modbusAddress/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '定位 target_1' }));
+    await waitFor(() => expect(useWorkbenchStore.getState().selectedNodeId).toBe('target_1'));
   });
 });

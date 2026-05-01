@@ -99,14 +99,24 @@ export function validateProject(projectId: string): Promise<Record<string, unkno
   });
 }
 
-export function getProjectFlow(projectId: string, versionId: string, centerNodeId?: string): Promise<ProjectFlowResponse> {
+export function getProjectFlow(
+  projectId: string,
+  versionId: string,
+  options: { centerNodeId?: string; focusNodeIds?: string[]; tabId?: string } = {}
+): Promise<ProjectFlowResponse> {
   const params = new URLSearchParams({
     max_nodes: '120',
     max_edges: '260',
     max_chars: '160000'
   });
-  if (centerNodeId) {
-    params.set('center_node_id', centerNodeId);
+  if (options.centerNodeId) {
+    params.set('center_node_id', options.centerNodeId);
+  }
+  for (const nodeId of options.focusNodeIds ?? []) {
+    params.append('focus_node_ids', nodeId);
+  }
+  if (options.tabId) {
+    params.set('tab_id', options.tabId);
   }
   return apiRequest<ProjectFlowResponse>(`/api/projects/${projectId}/versions/${versionId}/flow?${params.toString()}`);
 }
