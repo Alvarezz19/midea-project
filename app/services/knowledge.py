@@ -91,6 +91,7 @@ def search_knowledge(
     if chunks is None:
         chunks = load_knowledge_chunks()
     query_tokens = tokenize(query)
+    recipe_query = _is_recipe_query(query)
     results: list[dict[str, Any]] = []
 
     for chunk in chunks:
@@ -98,6 +99,11 @@ def search_knowledge(
             continue
         text = f"{chunk.source_path} {chunk.title} {chunk.content}"
         score = text_score(text, query_tokens)
+        if chunk.source_path == "knowledge/补丁配方.md":
+            if recipe_query:
+                score += 2.5
+            else:
+                score *= 0.8
         if score < min_score:
             continue
         results.append(chunk.to_dict(score))
@@ -140,3 +146,7 @@ def _resolve_knowledge_dir(path: str | Path) -> Path:
     if not target.exists() or not target.is_dir():
         raise KnowledgeError(f"知识库目录不存在: {target}")
     return target
+
+
+def _is_recipe_query(query: str) -> bool:
+    return any(token in query for token in ("补丁", "配方", "patch", "dry-run", "动态输入", "接入", "接到", "set_io_point", "copy_block"))

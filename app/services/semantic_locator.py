@@ -350,10 +350,50 @@ def _target_queries(message: str) -> list[str]:
 
 
 def _knowledge_queries(message: str, intent: str) -> list[str]:
-    queries = [message.strip()] if message.strip() else []
+    cleaned = message.strip()
+    queries = [cleaned] if cleaned else []
     if intent in {"connect", "add_logic", "update_param"}:
-        queries.append(f"{message.strip()} 补丁 配方")
+        _append_unique(queries, f"{cleaned} 补丁 配方")
+    for recipe_query in _recipe_queries(cleaned):
+        _append_unique(queries, recipe_query)
     return queries
+
+
+def _recipe_queries(message: str) -> list[str]:
+    queries: list[str] = []
+    if not message:
+        return queries
+    if "CO2" in message or "二氧化碳" in message:
+        _append_unique(queries, "AHU CO2 新风阀 比较判断 动态阈值 补丁配方")
+        _append_unique(queries, "CO2 浓度设定 接入 新风阀 控制 补丁 配方")
+    if "送风" in message and ("PID" in message or "pid" in message):
+        _append_unique(queries, "AHU 送风温度 PID 动态设定 补丁配方")
+    if ("PID" in message or "pid" in message) and any(token in message for token in ("输出上限", "输出下限", "highPidOutLimit", "lowPidOutLimit", "动态")):
+        _append_unique(queries, "PID 输出上限 下限 动态输入 补丁配方")
+    if "过滤网" in message:
+        _append_unique(queries, "AHU 过滤网 报警 点位 补丁配方")
+    if "防冻" in message:
+        _append_unique(queries, "AHU 防冻保护 禁止旁路 补丁配方")
+    if "水泵" in message and any(token in message for token in ("阈值", "台数", "比较判断", "运行台数")):
+        _append_unique(queries, "机房 水泵 运行台数 阈值 比较判断 补丁配方")
+    if "旁通" in message and "压差" in message:
+        if any(token in message for token in ("新增", "接入", "接到", "动态")):
+            _append_unique(queries, "机房 旁通阀 压差设定 新增 接入 比较判断 补丁配方")
+        _append_unique(queries, "机房 旁通阀 压差设定 修改 补丁配方")
+    if "比较判断" in message and any(token in message for token in ("动态", "接入", "接到", "阈值")):
+        _append_unique(queries, "比较判断 动态阈值 输入 target_input=1 补丁配方")
+    if any(token in message for token in ("IO", "io", "I/O", "点位", "通道", "地址", "Modbus", "BACnet", "对象号")):
+        _append_unique(queries, "IO 通讯 点位 修改 风险 set_io_point 补丁配方")
+    if any(token in message for token in ("copy_block", "复制", "功能块", "克隆")):
+        _append_unique(queries, "copy_block 功能块 边界接线 确认 补丁配方")
+    if any(token in message for token in ("断开保护", "删除保护", "保护链路", "联锁")):
+        _append_unique(queries, "删除 断开 保护链路 禁止 确认 补丁配方")
+    return queries
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value and value not in items:
+        items.append(value)
 
 
 def _display_name(node: dict[str, Any]) -> str:

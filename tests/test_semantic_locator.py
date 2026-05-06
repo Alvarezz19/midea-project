@@ -57,3 +57,29 @@ def test_semantic_locator_returns_user_readable_candidates() -> None:
     assert all(candidate["display_name"] for candidate in public_candidates)
     assert all("node_id" not in candidate for candidate in public_candidates)
     assert all("selector" in candidate for candidate in public_candidates)
+
+
+def test_semantic_locator_emits_business_recipe_queries() -> None:
+    co2 = locate_semantic_targets(
+        "新增 CO2 浓度设定并接入新风阀控制",
+        project_path=PLANT_TEMPLATE,
+        project_type="ahu",
+        conversation_context={},
+    )
+    assert any("CO2" in query and "补丁" in query for query in co2["knowledge_queries"])
+
+    bypass = locate_semantic_targets(
+        "新增旁通阀压差设定并接入比较判断",
+        project_path=PLANT_TEMPLATE,
+        project_type="plant_room",
+        conversation_context={},
+    )
+    assert any("旁通阀" in query and "压差设定" in query and "补丁" in query for query in bypass["knowledge_queries"])
+
+    io = locate_semantic_targets(
+        "把物理输入点位通道改成 31",
+        project_path=PLANT_TEMPLATE,
+        project_type="plant_room",
+        conversation_context={},
+    )
+    assert any("set_io_point" in query for query in io["knowledge_queries"])

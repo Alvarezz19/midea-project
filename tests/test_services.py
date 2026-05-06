@@ -1443,6 +1443,7 @@ def test_knowledge_chunks_and_search() -> None:
     assert any(chunk.source_path == "knowledge/AHU控制策略.md" for chunk in chunks)
     assert any(chunk.source_path == "knowledge/机房群控控制策略.md" for chunk in chunks)
     assert any(chunk.source_path == "knowledge/工程规范.md" for chunk in chunks)
+    assert any(chunk.source_path == "knowledge/补丁配方.md" for chunk in chunks)
 
     ahu_results = search_knowledge("AHU 防冻保护 新风阀", limit=3, chunks=chunks)
     assert ahu_results
@@ -1457,6 +1458,16 @@ def test_knowledge_chunks_and_search() -> None:
     standard_results = search_knowledge("唯一节点选择器 结构字段 wires", limit=3, chunks=chunks)
     assert standard_results
     assert standard_results[0]["source_path"] == "knowledge/工程规范.md"
+
+    recipe_results = search_knowledge("旁通阀 压差设定 新增 接入 比较判断 补丁配方", limit=3, chunks=chunks)
+    assert recipe_results
+    assert recipe_results[0]["source_path"] == "knowledge/补丁配方.md"
+    assert "旁通阀压差设定新增" in recipe_results[0]["title"]
+
+    io_recipe_results = search_knowledge("IO 通讯 点位 修改 风险 set_io_point 补丁配方", limit=3, chunks=chunks)
+    assert io_recipe_results
+    assert io_recipe_results[0]["source_path"] == "knowledge/补丁配方.md"
+    assert "点位修改风险" in io_recipe_results[0]["title"]
 
 
 def test_knowledge_context_is_bounded() -> None:

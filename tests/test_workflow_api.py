@@ -375,7 +375,7 @@ def test_workflow_falls_back_to_llm_for_structural_change_when_switch_is_off(mon
     def fake_llm_dry_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
         assert args == ("新增 CO2 浓度设定并接入新风阀控制",)
         assert kwargs["project_path"] == created["current_project_path"]
-        assert kwargs["conversation_context"]["recent_user_intents"] == []
+        assert kwargs["conversation_context"]["recent_user_intents"][-1]["message"] == "新增 CO2 浓度设定并接入新风阀控制"
         assert kwargs["target_resolution"]["intent"] == "connect"
         assert kwargs["target_resolution"]["status"] == "needs_clarification"
         return {

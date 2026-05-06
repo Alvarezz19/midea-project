@@ -15,6 +15,7 @@ from app.services.requirement_extractor import extract_requirement_with_llm
 
 
 PLANT_TEMPLATE = "programs/机房群控程序/风冷热泵标准控制程序[风冷涡旋]20240905.json"
+AHU_TEMPLATE = "programs/AHU程序/泰安宁阳中医院/flows_20260206160555.json"
 
 
 def test_llm_gateway_parses_json_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -281,6 +282,7 @@ def test_llm_planner_uses_locator_knowledge_queries(monkeypatch: pytest.MonkeyPa
     def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
         del provider
         assert "旁通阀压差设定接入 补丁 配方" in messages[1]["content"]
+        assert "机房 旁通阀 压差设定 新增 接入 比较判断 补丁配方" in messages[1]["content"]
         assert "context_used" in messages[1]["content"]
         return {
             "status": "needs_clarification",
@@ -305,9 +307,62 @@ def test_llm_planner_uses_locator_knowledge_queries(monkeypatch: pytest.MonkeyPa
         target_resolution=target_resolution,
     )
 
-    assert searched_queries == ["新增旁通阀压差设定", "旁通阀压差设定接入 补丁 配方"]
+    assert searched_queries[0] == "旁通阀压差设定接入 补丁 配方"
+    assert "新增旁通阀压差设定" in searched_queries
+    assert any("旁通阀 压差设定" in query and "补丁配方" in query for query in searched_queries)
     assert result["status"] == "needs_clarification"
-    assert result["context"]["context_used"]["knowledge_count"] == 2
+    assert result["context"]["context_used"]["knowledge_count"] >= 3
+
+
+@pytest.mark.parametrize(
+    ("template_path", "project_type", "message", "expected_title"),
+    [
+        (AHU_TEMPLATE, "ahu", "新增 CO2 浓度设定并接入新风阀控制", "AHU CO2 浓度设定接入新风阀控制"),
+        (AHU_TEMPLATE, "ahu", "送风 PID 输出上限改成动态设定并接入常量", "PID 输出上限和下限动态输入"),
+        (PLANT_TEMPLATE, "plant_room", "新增旁通阀压差设定并接入比较判断", "机房旁通阀压差设定新增并接入比较判断"),
+        (PLANT_TEMPLATE, "plant_room", "水泵运行台数阈值改为 3", "机房水泵运行台数阈值修改"),
+        (PLANT_TEMPLATE, "plant_room", "修改 IO 点位通道为扩展模块 1 通道 31", "IO 和通讯点位修改风险"),
+    ],
+)
+def test_llm_planner_retrieves_patch_recipe_for_complex_intents(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    template_path: str,
+    project_type: str,
+    message: str,
+    expected_title: str,
+) -> None:
+    version_id = "v_recipe_" + str(abs(hash(message)) % 100000)
+    metadata = create_project_version(template_path, project_id=f"recipe_{project_type}", version_id=version_id, versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del provider
+        assert expected_title in messages[1]["content"]
+        return {
+            "status": "needs_clarification",
+            "intent": "unknown",
+            "summary": "需要确认业务细节。",
+            "risk_level": "medium",
+            "risk_reasons": ["复杂补丁需要确认。"],
+            "required_context": [],
+            "operations": [],
+            "validation_expectations": [],
+            "questions": ["请确认目标对象和接入位置。"],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+
+    result = plan_patch_with_llm(
+        message,
+        project_path=metadata["version_path"],
+        project_type=project_type,
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert any(
+        item["source_path"] == "knowledge/补丁配方.md" and expected_title in item["title"]
+        for item in result["context"]["knowledge"]
+    )
 
 
 def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

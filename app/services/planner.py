@@ -127,7 +127,7 @@ def plan_patch_request(
     """
 
     nodes = load_project(project_path)
-    knowledge = search_knowledge(message, limit=3)
+    knowledge = _search_rule_planner_knowledge(message, semantic_location=semantic_location, limit=3)
     related_tabs = search_tabs(message, template_id=template_id, limit=3) if template_id else []
     related_nodes = search_nodes(message, template_id=template_id, limit=5) if template_id else []
 
@@ -187,6 +187,27 @@ def is_structural_change_intent(message: str) -> bool:
     if any(keyword in text for keyword in ("添加备注", "新增备注", "加备注")):
         return False
     return any(keyword in text for keyword in STRUCTURAL_INTENT_KEYWORDS)
+
+
+def _search_rule_planner_knowledge(message: str, *, semantic_location: dict[str, Any] | None, limit: int) -> list[dict[str, Any]]:
+    queries = [message]
+    if isinstance(semantic_location, dict):
+        for query in semantic_location.get("knowledge_queries") or []:
+            if isinstance(query, str) and query.strip() and query.strip() not in queries:
+                queries.append(query.strip())
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    per_query_limit = 2 if len(queries) > 1 else limit
+    for query in queries:
+        for item in search_knowledge(query, limit=per_query_limit):
+            chunk_id = str(item.get("chunk_id") or "")
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            results.append({**item, "matched_query": query})
+            if len(results) >= limit:
+                return results
+    return results
 
 
 def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
