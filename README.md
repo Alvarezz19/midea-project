@@ -53,6 +53,7 @@
   - `enable_dynamic_input`
   - `set_io_point`
   - `rename_node`
+  - `add_tab`
   - `add_comment`
   - `add_node_from_schema`
   - `copy_block`
@@ -303,6 +304,18 @@ PID 等带选项的动态输入需要指定选项：
   "new_name": "水泵比较判断"
 }
 ```
+
+新增页面：
+
+```json
+{
+  "op": "add_tab",
+  "label": "CO2 控制",
+  "info": "新增 CO2 控制逻辑页面"
+}
+```
+
+`add_tab` 只新增空页面，不自动创建功能节点或连线。后续可继续用 `add_node_from_schema`、`copy_block` 或 `connect` 在该页面内补控制逻辑；涉及新增节点、复制功能块或接线时仍会按中高风险确认策略处理。
 
 从 schema 新增节点：
 

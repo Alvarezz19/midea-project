@@ -20,6 +20,7 @@ PatchOp = Literal[
     "enable_dynamic_input",
     "set_io_point",
     "rename_node",
+    "add_tab",
     "add_comment",
     "add_node_from_schema",
     "copy_block",
@@ -45,6 +46,7 @@ class PlannedOperation(BaseModel):
 
     op: PatchOp
     node_selector: dict[str, Any] | None = None
+    label: str | None = None
     new_name: str | None = None
     params: dict[str, Any] | None = None
     field: str | None = None
@@ -71,6 +73,8 @@ class PlannedOperation(BaseModel):
     x: int | None = None
     y: int | None = None
     position: dict[str, int] | None = None
+    disabled: bool | None = None
+    allow_duplicate_label: bool | None = None
 
     @model_validator(mode="after")
     def validate_operation_contract(self) -> PlannedOperation:
@@ -97,6 +101,13 @@ class PlannedOperation(BaseModel):
             _require_dict(self.node_selector, "rename_node.node_selector")
             if not _non_empty_string(self.new_name):
                 raise ValueError("rename_node.new_name 不能为空。")
+        elif self.op == "add_tab":
+            if not _non_empty_string(self.label):
+                raise ValueError("add_tab.label 不能为空。")
+            if self.disabled is not None and not isinstance(self.disabled, bool):
+                raise ValueError("add_tab.disabled 必须是布尔值。")
+            if self.allow_duplicate_label is not None and not isinstance(self.allow_duplicate_label, bool):
+                raise ValueError("add_tab.allow_duplicate_label 必须是布尔值。")
         elif self.op == "add_comment":
             _require_dict(self.tab_selector, "add_comment.tab_selector")
             if not _non_empty_string(self.text):
@@ -209,11 +220,12 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 3. enable_dynamic_input：需要 node_selector；PID、线性变换等需要 input_option 或 input_options；只打开动态输入端口并维护 inputs、inputsOption/inputAuxEnable、wires，不自动连线。
 4. set_io_point：需要 node_selector 和 params；只允许修改已有 IO/通讯点位白名单字段，例如 hwExpander、hwChannelIndex、modbusPort、modbusAddress、functionCode、modbusRegAddr、bacnetObjectType、bacnetObjectInstance、bacnetIpDeviceInstance、bacnetIpObjectType、bacnetIpObjectInstance、topic、objectName。
 5. rename_node：需要 node_selector 和 new_name。
-6. add_comment：需要 tab_selector 和 text。
-7. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
-8. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix；只有用户基于边界预览明确给出 boundary_connections 时，才可按 entry/exit 显式接线。默认只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
-9. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
-10. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
+6. add_tab：需要 label；用于新增页面/tab 节点，可选 info 和 disabled。只新增页面，不自动新增功能节点或连线。除非用户明确要求允许重复页面名，否则不要设置 allow_duplicate_label。
+7. add_comment：需要 tab_selector 和 text。
+8. add_node_from_schema：需要 tab_selector，且需要 module_type 或 schema_selector；可提供 params、x、y。
+9. copy_block：需要 block_id 和 target_tab_selector；可提供 x_offset、y_offset、name_prefix；只有用户基于边界预览明确给出 boundary_connections 时，才可按 entry/exit 显式接线。默认只复制功能块内部节点和内部连线，必须丢弃所有外部入口/出口连线，不自动接入外部线。
+10. connect：需要 source_node_selector、target_node_selector、source_output、target_input。wires 表示目标输入端的上游源。
+11. disconnect：需要 target_node_selector；可选 source_node_selector、source_output、target_input。
 
 选择器规则：
 1. 已知节点优先使用 {"id": "..."}。
@@ -231,10 +243,11 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 
 风险规则：
 1. rename_node、update_param、replace_constant、add_comment 通常是 low。
-2. enable_dynamic_input、add_node_from_schema、connect、disconnect 至少是 medium。
-3. copy_block 至少是 high。
-4. set_io_point 至少是 high，必须人工确认。
-5. 删除、断线、修改设备数量、影响保护逻辑必须是 high；遇到没有对应 op 的需求应追问或说明需要人工确认。
+2. add_tab 只新增空页面时通常是 low；如果同时复制功能块、新增节点或接线，按后续操作升级风险。
+3. enable_dynamic_input、add_node_from_schema、connect、disconnect 至少是 medium。
+4. copy_block 至少是 high。
+5. set_io_point 至少是 high，必须人工确认。
+6. 删除、断线、修改设备数量、影响保护逻辑必须是 high；遇到没有对应 op 的需求应追问或说明需要人工确认。
 """
 
 

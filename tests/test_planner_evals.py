@@ -87,7 +87,7 @@ def test_llm_planner_real_deepseek_returns_structured_dry_runnable_plan(tmp_path
         }
     )
     assert plan.operations
-    assert all(operation.op in {"update_param", "replace_constant", "enable_dynamic_input", "set_io_point", "rename_node", "add_comment", "add_node_from_schema", "copy_block", "connect", "disconnect"} for operation in plan.operations)
+    assert all(operation.op in {"update_param", "replace_constant", "enable_dynamic_input", "set_io_point", "rename_node", "add_tab", "add_comment", "add_node_from_schema", "copy_block", "connect", "disconnect"} for operation in plan.operations)
 
     dry_run = dry_run_patch_to_project(str(template_path), result["pending_patch"])
     assert dry_run["valid"]

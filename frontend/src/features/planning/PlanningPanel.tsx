@@ -382,6 +382,7 @@ function operationTitle(operation: Record<string, unknown>, index: number): stri
     rename_node: '重命名节点',
     replace_constant: '替换设定值',
     enable_dynamic_input: '启用动态输入',
+    add_tab: '新增页面',
     copy_block: '复制功能块',
     set_io_point: '修改 IO/通讯点位',
     connect: '新增连线',
@@ -394,6 +395,7 @@ function operationTitle(operation: Record<string, unknown>, index: number): stri
 function operationDetail(operation: Record<string, unknown>): string {
   const parts = [
     selectorText(operation.node_selector ?? operation.target_node_selector ?? operation.source_node_selector),
+    valueText('页面', operation.label),
     valueText('输入端', operation.target_input),
     valueText('新名称', operation.new_name),
     valueText('新值', operation.new_value),

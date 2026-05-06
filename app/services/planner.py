@@ -145,6 +145,10 @@ def plan_patch_request(
     if comment_plan:
         return {**comment_plan, **context}
 
+    add_tab_plan = _plan_add_tab(message, nodes)
+    if add_tab_plan:
+        return {**add_tab_plan, **context}
+
     rename_plan = _plan_rename(message, nodes)
     if rename_plan:
         return {**rename_plan, **context}
@@ -248,6 +252,40 @@ def _plan_add_comment(message: str, nodes: list[dict[str, Any]]) -> dict[str, An
         "pending_patch": {"op": "add_comment", "tab_selector": {"id": tab_id}, "text": text},
         "questions": [],
         "reason": "识别为添加备注请求，且已唯一确定目标页面。",
+    }
+
+
+def _plan_add_tab(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not any(keyword in message for keyword in ["新增", "添加", "创建", "新建"]):
+        return None
+    if not any(keyword in message for keyword in ["页面", "页签", "tab", "Tab"]):
+        return None
+    if re.search(r"在.+(?:页面|页签|tab|Tab).*(?:新增|添加|创建|新建)", message):
+        return None
+
+    label = _extract_new_tab_label(message)
+    if not label:
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": ["请说明要新增的页面名称，例如：新增一个 CO2 控制页面。"],
+            "reason": "新增页面请求缺少页面名称。",
+        }
+
+    tabs = get_tabs(nodes)
+    if label in set(tabs.values()):
+        return {
+            "status": "needs_clarification",
+            "pending_patch": None,
+            "questions": [f"页面“{label}”已存在，请确认是否要使用现有页面，或换一个新的页面名称。"],
+            "reason": "新增页面请求与现有页面标签重复。",
+        }
+
+    return {
+        "status": "planned",
+        "pending_patch": {"op": "add_tab", "label": label},
+        "questions": [],
+        "reason": "识别为新增页面请求，只新增空页面，不新增功能节点或连线。",
     }
 
 
@@ -551,6 +589,22 @@ def _extract_text_replacement(message: str) -> tuple[str, str] | None:
         new_text = _strip_wrapping_quotes(match.group("new").strip())
         if old_text and new_text:
             return old_text, new_text
+    return None
+
+
+def _extract_new_tab_label(message: str) -> str | None:
+    patterns = [
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。]+?)\s*(?:页面|页签|tab|Tab)\s*$",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。]+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if not match:
+            continue
+        label = _strip_wrapping_quotes(match.group("label").strip())
+        label = re.sub(r"^(一个|1个)", "", label).strip()
+        if label:
+            return label
     return None
 
 

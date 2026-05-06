@@ -136,6 +136,8 @@ def apply_patch(nodes: list[dict[str, Any]], patch: dict[str, Any]) -> dict[str,
             changes.extend(_set_io_point(next_nodes, operation, index))
         elif op == "rename_node":
             changes.extend(_rename_node(next_nodes, operation, index))
+        elif op == "add_tab":
+            changes.extend(_add_tab(next_nodes, operation, index))
         elif op == "add_comment":
             changes.extend(_add_comment(next_nodes, operation, index))
         elif op == "add_node_from_schema":
@@ -270,6 +272,7 @@ def _summarize_diff_node(node: dict[str, Any]) -> dict[str, Any]:
         "node_id": node.get("id"),
         "type": node.get("type"),
         "name": node.get("name", ""),
+        "label": node.get("label", ""),
         "tab_id": node.get("z"),
     }
 
@@ -541,6 +544,47 @@ def _rename_node(nodes: list[dict[str, Any]], operation: dict[str, Any], op_inde
             "field": "name",
             "old_value": old_name,
             "new_value": new_name,
+        }
+    ]
+
+
+def _add_tab(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index: int) -> list[dict[str, Any]]:
+    label = operation.get("label") or operation.get("name")
+    if not isinstance(label, str) or not label.strip():
+        raise PatchEngineError("add_tab 需要非空 label。")
+    label = label.strip()
+
+    allow_duplicate = operation.get("allow_duplicate_label")
+    if allow_duplicate is not None and not isinstance(allow_duplicate, bool):
+        raise PatchEngineError("add_tab.allow_duplicate_label 必须是布尔值。")
+    if not allow_duplicate:
+        duplicate_labels = [existing_label for existing_label in get_tabs(nodes).values() if existing_label == label]
+        if duplicate_labels:
+            raise PatchEngineError(f"第 {op_index} 个操作指定的页面标签已存在: {label}")
+
+    info = operation.get("info", "")
+    if not isinstance(info, str):
+        raise PatchEngineError("add_tab.info 必须是字符串。")
+    disabled = operation.get("disabled", False)
+    if not isinstance(disabled, bool):
+        raise PatchEngineError("add_tab.disabled 必须是布尔值。")
+
+    tab_id = _new_node_id(nodes)
+    tab = {
+        "id": tab_id,
+        "type": "tab",
+        "label": label,
+        "disabled": disabled,
+        "info": info,
+    }
+    nodes.append(tab)
+    return [
+        {
+            "op": "add_tab",
+            "tab_id": tab_id,
+            "label": label,
+            "disabled": disabled,
+            "info": info,
         }
     ]
 

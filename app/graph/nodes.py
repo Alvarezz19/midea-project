@@ -798,6 +798,8 @@ def _operation_summary_text(operation: dict[str, Any], changes: list[dict[str, A
         return f"启用动态输入：{operation.get('node_selector')}，选项 {operation.get('input_option') or operation.get('input_options') or '默认'}。"
     if op == "add_node_from_schema":
         return f"新增 schema 节点：{operation.get('module_type') or operation.get('schema_selector')} 到 {operation.get('tab_selector')}。"
+    if op == "add_tab":
+        return f"新增页面：{operation.get('label') or operation.get('name')}。"
     if op == "replace_constant":
         return f"替换设定/常量：{operation.get('node_selector')} 的 {operation.get('field') or '默认字段'} 改为 {operation.get('value')}。"
     if op == "update_param":

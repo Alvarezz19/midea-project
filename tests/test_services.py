@@ -10,6 +10,7 @@ from app.services.json_project import (
     create_project_version,
     create_project_version_from_nodes,
     find_nodes,
+    get_tabs,
     get_project_version,
     list_project_versions,
     load_project,
@@ -333,6 +334,27 @@ def test_patch_engine_replaces_constant_value_with_dry_run_diff() -> None:
     }
     assert result["diff"]["affected_node_ids"] == ["67febfa"]
     assert find_nodes(nodes, {"id": "67febfa"})[0]["fixedValue"] == "4"
+
+
+def test_patch_engine_adds_tab_and_validates() -> None:
+    nodes = load_project(PLANT_TEMPLATE)
+
+    result = dry_run_patch(nodes, {"op": "add_tab", "label": "测试新增页面", "info": "测试页面说明"})
+
+    assert result["valid"] is True
+    assert result["changed"] is True
+    assert result["changes"][0]["op"] == "add_tab"
+    assert result["changes"][0]["label"] == "测试新增页面"
+    assert result["diff"]["summary"] == {
+        "added_count": 1,
+        "removed_count": 0,
+        "modified_count": 0,
+        "affected_node_count": 1,
+    }
+    tabs = get_tabs(result["nodes"])
+    tab_id = result["changes"][0]["tab_id"]
+    assert tabs[tab_id] == "测试新增页面"
+    assert "测试新增页面" not in set(get_tabs(nodes).values())
 
 
 def test_patch_engine_enables_aux_dynamic_input() -> None:
@@ -1356,6 +1378,9 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
     with pytest.raises(PatchEngineError, match="功能块不存在"):
         apply_patch(nodes, {"op": "copy_block", "block_id": "missing-block", "target_tab_selector": {"label": "水泵控制"}})
 
+    with pytest.raises(PatchEngineError, match="页面标签已存在"):
+        apply_patch(nodes, {"op": "add_tab", "label": "水泵控制"})
+
     with pytest.raises(PatchEngineError, match="target_copied_from_id 无效"):
         apply_patch(
             nodes,
@@ -1477,6 +1502,18 @@ def test_planner_creates_update_and_comment_patches(tmp_path: Path) -> None:
     assert comment["pending_patch"]["op"] == "add_comment"
     assert comment["pending_patch"]["tab_selector"] == {"id": "73b96a8"}
     assert comment["pending_patch"]["text"] == "planner 测试备注"
+
+
+def test_planner_creates_add_tab_patch(tmp_path: Path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="planner_project", version_id="v_add_tab", versions_dir=tmp_path)
+
+    result = plan_patch_request("新增一个 CO2 控制页面", project_path=metadata["version_path"])
+
+    assert result["status"] == "planned"
+    assert result["pending_patch"] == {"op": "add_tab", "label": "CO2 控制"}
+    dry_run = dry_run_patch(load_project(metadata["version_path"]), result["pending_patch"])
+    assert dry_run["valid"]
+    assert "CO2 控制" in set(get_tabs(dry_run["nodes"]).values())
 
 
 def test_planner_replaces_unique_tab_label_text(tmp_path: Path) -> None:

@@ -218,6 +218,34 @@ def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.
     assert result["pending_patch"] == {"operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}]}
 
 
+def test_llm_planner_accepts_add_tab_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_add_tab", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        assert "add_tab" in messages[0]["content"]
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增 CO2 控制页面。",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [{"type": "tab", "query": "CO2 控制", "reason": "确认页面不存在"}],
+            "operations": [{"op": "add_tab", "label": "CO2 控制", "info": "新增 CO2 控制逻辑页面"}],
+            "validation_expectations": ["页面标签不重复", "dry-run 校验通过"],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm("新增一个 CO2 控制页面", project_path=metadata["version_path"])
+
+    assert result["status"] == "planned"
+    assert result["risk_level"] == "low"
+    assert result["pending_patch"] == {
+        "operations": [{"op": "add_tab", "label": "CO2 控制", "info": "新增 CO2 控制逻辑页面"}]
+    }
+
+
 def test_llm_planner_accepts_copy_block_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_copy_block", versions_dir=tmp_path)
 
