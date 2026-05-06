@@ -144,4 +144,70 @@ describe('SessionPanel', () => {
     expect(screen.getByText('压差控制')).toBeInTheDocument();
     expect(screen.getByText('请确认关键设备数量。')).toBeInTheDocument();
   });
+
+  it('lets the user select a semantic candidate without exposing the internal node id', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          thread_id: 'thread_1',
+          trace_id: 'trace_2',
+          state: {
+            messages: [{ role: 'assistant', content: '已收到候选选择。' }],
+            project_type: 'plant_room',
+            status: 'running',
+            next_action: 'send_message',
+            semantic_target_candidates: []
+          }
+        }),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'plant_room',
+      state: {
+        messages: [{ role: 'assistant', content: '我找到了多个比较判断，请确认要修改哪一个。' }],
+        project_type: 'plant_room',
+        status: 'needs_clarification',
+        next_action: 'clarify_patch',
+        semantic_target_candidates: [
+          {
+            candidate_id: 'candidate_1',
+            display_name: '水泵控制 / 比较判断 / compare',
+            description: '当前阈值 2，上游为水泵运行台数',
+            confidence: 0.91,
+            selector: { id: 'node_secret_1' },
+            tab_label: '水泵控制',
+            type: 'compare',
+            key_params: { tripPoint: 2 }
+          }
+        ]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <SessionPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('请选择目标对象')).toBeInTheDocument();
+    expect(screen.getByText('水泵控制 / 比较判断 / compare')).toBeInTheDocument();
+    expect(screen.getByText('当前阈值 2，上游为水泵运行台数')).toBeInTheDocument();
+    expect(screen.queryByText('node_secret_1')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /选\s*择/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/sessions/thread_1/message', expect.any(Object)));
+    const [, request] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+    expect(request.body).toBe(
+      JSON.stringify({
+        message: '选择第 1 个：水泵控制 / 比较判断 / compare',
+        project_type: 'plant_room',
+        selected_candidate_id: 'candidate_1',
+        use_llm_planner: false
+      })
+    );
+  });
 });

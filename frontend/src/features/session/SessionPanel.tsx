@@ -1,13 +1,14 @@
-import { Alert, Button, Input, List, Space, Switch, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Input, List, Space, Switch, Tag, Typography, message as antMessage } from 'antd';
 import { SendOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { createSession, formatApiError, sendMessage } from '../../api/client';
-import type { RequirementQuestion } from '../../api/types';
+import type { RequirementQuestion, SemanticTargetCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
 const { Text, Title } = Typography;
+type SendPayload = { content: string; selectedCandidateId?: string };
 
 export function SessionPanel() {
   const [draft, setDraft] = useState('');
@@ -28,7 +29,8 @@ export function SessionPanel() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: (content: string) => sendMessage(threadId!, content, projectType, { useLlmPlanner }),
+    mutationFn: ({ content, selectedCandidateId }: SendPayload) =>
+      sendMessage(threadId!, content, projectType, { useLlmPlanner, selectedCandidateId }),
     onSuccess: (data) => {
       setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state });
     },
@@ -51,11 +53,23 @@ export function SessionPanel() {
     }
     appendMessage({ role: 'user', content });
     setDraft('');
-    sendMutation.mutate(content);
+    sendMutation.mutate({ content });
+  };
+
+  const selectCandidate = (candidate: SemanticTargetCandidate, index: number) => {
+    if (!threadId) {
+      return;
+    }
+    const content = `选择第 ${index + 1} 个：${candidate.display_name ?? '候选对象'}`;
+    appendMessage({ role: 'user', content });
+    sendMutation.mutate({ content, selectedCandidateId: candidate.candidate_id });
   };
 
   const questions = (state?.open_questions ?? []).map(questionText);
   const designBrief = state?.design_brief;
+  const semanticCandidates = state?.semantic_target_candidates ?? [];
+  const touchedEntities = state?.last_touched_entities ?? [];
+  const showSemanticCandidateSelection = semanticCandidates.length > 0 && state?.next_action === 'clarify_patch';
   const summaryItems = [
     ...(state?.requirement_summary?.equipment ?? []),
     ...(state?.requirement_summary?.control_features ?? []),
@@ -125,6 +139,12 @@ export function SessionPanel() {
           </div>
         ) : null}
 
+        {showSemanticCandidateSelection ? (
+          <SemanticCandidateList candidates={semanticCandidates} loadingId={sendMutation.variables?.selectedCandidateId} onSelect={selectCandidate} />
+        ) : null}
+
+        {touchedEntities.length ? <TouchedEntityList entities={touchedEntities} /> : null}
+
         <div className={panelStyles.messageList}>
           {messages.length ? (
             messages.map((item, index) => (
@@ -172,4 +192,96 @@ function questionText(item: string | RequirementQuestion): string {
     return item;
   }
   return item.question ?? item.field ?? '请补充需求信息。';
+}
+
+function SemanticCandidateList({
+  candidates,
+  loadingId,
+  onSelect
+}: {
+  candidates: SemanticTargetCandidate[];
+  loadingId?: string;
+  onSelect: (candidate: SemanticTargetCandidate, index: number) => void;
+}) {
+  return (
+    <div className={panelStyles.section}>
+      <Text strong>请选择目标对象</Text>
+      <List
+        size="small"
+        dataSource={candidates.slice(0, 5)}
+        renderItem={(candidate, index) => (
+          <List.Item className={panelStyles.candidateItem}>
+            <div className={panelStyles.candidateBody}>
+              <div className={panelStyles.candidateTitleRow}>
+                <Text strong>{candidate.display_name ?? `候选 ${index + 1}`}</Text>
+                <Tag color="blue">匹配 {confidenceText(candidate.confidence)}</Tag>
+              </div>
+              <Text type="secondary">{candidate.description || candidateMeta(candidate) || '系统已定位到一个可能的工程对象。'}</Text>
+              <div className={panelStyles.tagLine}>
+                {candidate.tab_label ? <Tag color="geekblue">{candidate.tab_label}</Tag> : null}
+                {candidate.type ? <Tag color="cyan">{candidate.type}</Tag> : null}
+                {keyParamTags(candidate.key_params).map((item) => (
+                  <Tag key={item} color="default">
+                    {item}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+            <Button
+              size="small"
+              type="primary"
+              disabled={!candidate.candidate_id}
+              loading={Boolean(candidate.candidate_id && loadingId === candidate.candidate_id)}
+              onClick={() => onSelect(candidate, index)}
+            >
+              选择
+            </Button>
+          </List.Item>
+        )}
+      />
+    </div>
+  );
+}
+
+function TouchedEntityList({ entities }: { entities: Array<Record<string, unknown>> }) {
+  const labels = entities.map(entityDisplayName).filter(Boolean).slice(0, 6);
+  if (!labels.length) {
+    return null;
+  }
+  return (
+    <div className={panelStyles.section}>
+      <Text strong>本次定位目标</Text>
+      <div className={panelStyles.chips}>
+        {labels.map((label) => (
+          <span key={label}>{label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function candidateMeta(candidate: SemanticTargetCandidate): string {
+  const parts = [candidate.tab_label, candidate.type].filter(Boolean).map(String);
+  return parts.join(' / ');
+}
+
+function confidenceText(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '-';
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+function keyParamTags(value: Record<string, unknown> | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return Object.entries(value)
+    .filter(([, item]) => item !== undefined && item !== null && item !== '')
+    .slice(0, 3)
+    .map(([key, item]) => `${key}=${String(item)}`);
+}
+
+function entityDisplayName(value: Record<string, unknown>): string {
+  return String(value.display_name ?? value.name ?? value.label ?? '').trim();
 }

@@ -49,7 +49,9 @@ export function GraphPanel() {
   });
 
   const diff = inspectedVersionId ? diffQuery.data?.diff : localDiff ?? diffQuery.data?.diff;
-  const affectedNodeIds = diff?.affected_node_ids ?? [];
+  const memoryAffectedNodeIds = state?.last_affected_node_ids ?? [];
+  const affectedNodeIds = diff?.affected_node_ids?.length ? diff.affected_node_ids : memoryAffectedNodeIds;
+  const touchedEntityByNodeId = useMemo(() => buildTouchedEntityMap(state?.last_touched_entities ?? []), [state?.last_touched_entities]);
   const diffKindByNodeId = useMemo(() => buildDiffKindMap(diff), [diff]);
   const riskNodeIds = useMemo(() => buildRiskNodeIds(state?.pending_confirmation_patch ?? state?.planner_result, state?.planner_dry_run), [state?.pending_confirmation_patch, state?.planner_result, state?.planner_dry_run]);
   const centerNodeId = selectedNodeId ?? affectedNodeIds[0];
@@ -106,7 +108,7 @@ export function GraphPanel() {
             <Tag color="blue">节点 {flowQuery.data?.flow?.budget.node_count ?? 0}</Tag>
             <Tag color="geekblue">连线 {flowQuery.data?.flow?.budget.edge_count ?? 0}</Tag>
             {inspectedVersionId ? <Tag color="warning">查看版本 {inspectedVersionId}</Tag> : null}
-            {centerNodeId ? <Tag color="gold">自动定位 {centerNodeId}</Tag> : null}
+            {centerNodeId ? <Tag color="gold">自动定位 {nodeDisplayName(centerNodeId, touchedEntityByNodeId)}</Tag> : null}
             {flowQuery.data?.flow?.budget.truncated ? <Tag color="warning">已按预算截断</Tag> : null}
           </Space>
           <Space size={8} wrap>
@@ -205,7 +207,7 @@ export function GraphPanel() {
             <div className={panelStyles.chips}>
               {affectedNodeIds.slice(0, 14).map((id) => (
                 <button key={id} type="button" onClick={() => focusNode(id)}>
-                  {id}
+                  {nodeDisplayName(id, touchedEntityByNodeId)}
                 </button>
               ))}
               {affectedNodeIds.length > 14 ? <span>+{affectedNodeIds.length - 14}</span> : null}
@@ -582,6 +584,28 @@ function nodeRefText(value: unknown): string {
   }
   const node = value as Record<string, unknown>;
   return String(node.name ?? node.label ?? node.id ?? '未知节点');
+}
+
+function buildTouchedEntityMap(entities: Array<Record<string, unknown>>): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const entity of entities) {
+    const selector = entity.selector;
+    const selectorId =
+      selector && typeof selector === 'object' && !Array.isArray(selector) && typeof (selector as Record<string, unknown>).id === 'string'
+        ? String((selector as Record<string, unknown>).id)
+        : '';
+    const directId = typeof entity.node_id === 'string' ? entity.node_id : typeof entity.id === 'string' ? entity.id : '';
+    const id = selectorId || directId;
+    const label = String(entity.display_name ?? entity.name ?? entity.label ?? '').trim();
+    if (id && label) {
+      result.set(id, label);
+    }
+  }
+  return result;
+}
+
+function nodeDisplayName(nodeId: string, labels: Map<string, string>): string {
+  return labels.get(nodeId) ?? nodeId;
 }
 
 function roleLabel(role: string): string {

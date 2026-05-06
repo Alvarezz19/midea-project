@@ -217,4 +217,47 @@ describe('PlanningPanel', () => {
     expect(screen.getByText('CO2 控制')).toBeInTheDocument();
     expect(screen.getByText('需改造或复核')).toBeInTheDocument();
   });
+
+  it('renders semantic target candidates and touched entities in user-readable form', () => {
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'plant_room',
+      state: {
+        messages: [],
+        project_type: 'plant_room',
+        status: 'needs_clarification',
+        semantic_target_candidates: [
+          {
+            candidate_id: 'candidate_1',
+            display_name: '旁通阀控制 / 比较判断 / compare',
+            description: '当前阈值 45，上游为旁通阀压差信号',
+            confidence: 0.82,
+            selector: { id: 'node_internal_1' },
+            tab_label: '旁通阀控制',
+            type: 'compare'
+          }
+        ],
+        last_touched_entities: [
+          {
+            display_name: '水泵控制 / 工作流规划-水泵比较节点',
+            description: '已重命名并通过 dry-run',
+            selector: { id: 'node_internal_2' }
+          }
+        ]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <PlanningPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('语义定位')).toBeInTheDocument();
+    expect(screen.getByText(/旁通阀控制 \/ 比较判断 \/ compare/)).toBeInTheDocument();
+    expect(screen.getByText('当前阈值 45，上游为旁通阀压差信号')).toBeInTheDocument();
+    expect(screen.getByText('水泵控制 / 工作流规划-水泵比较节点')).toBeInTheDocument();
+    expect(screen.queryByText('node_internal_1')).not.toBeInTheDocument();
+    expect(screen.queryByText('node_internal_2')).not.toBeInTheDocument();
+  });
 });

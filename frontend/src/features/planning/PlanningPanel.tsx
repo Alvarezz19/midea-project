@@ -2,7 +2,7 @@ import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, 
 import { CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { confirmPatch, confirmTemplate, formatApiError } from '../../api/client';
-import type { DesignBrief, RequirementConformanceReport, TemplateCandidate } from '../../api/types';
+import type { DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -20,6 +20,8 @@ export function PlanningPanel() {
   const visiblePatch = (planner?.pending_patch ?? pendingPatch) as Record<string, unknown> | null | undefined;
   const designBrief = state?.design_brief;
   const conformance = state?.conformance_report ?? state?.validation_report?.conformance_report;
+  const semanticCandidates = state?.semantic_target_candidates ?? [];
+  const touchedEntities = state?.last_touched_entities ?? [];
   const [messageApi, holder] = antMessage.useMessage();
 
   const templateMutation = useMutation({
@@ -78,6 +80,9 @@ export function PlanningPanel() {
 
         {designBrief ? <DesignBriefView brief={designBrief} /> : null}
         {conformance ? <ConformanceReportView report={conformance} /> : null}
+        {semanticCandidates.length || touchedEntities.length ? (
+          <TargetResolutionView candidates={semanticCandidates} touchedEntities={touchedEntities} />
+        ) : null}
 
         <div className={panelStyles.section}>
           <Text strong>修改计划</Text>
@@ -144,6 +149,47 @@ export function PlanningPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+function TargetResolutionView({
+  candidates,
+  touchedEntities
+}: {
+  candidates: SemanticTargetCandidate[];
+  touchedEntities: Array<Record<string, unknown>>;
+}) {
+  return (
+    <div className={panelStyles.section}>
+      <Text strong>语义定位</Text>
+      {touchedEntities.length ? (
+        <div className={panelStyles.impactStrip}>
+          {touchedEntities.slice(0, 4).map((item, index) => (
+            <div key={`${entityName(item)}-${index}`} className={panelStyles.impactPill}>
+              <Text strong>{entityName(item) || '已影响对象'}</Text>
+              {entityDescription(item) ? <Text type="secondary">{entityDescription(item)}</Text> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {candidates.length ? (
+        <List
+          size="small"
+          dataSource={candidates.slice(0, 5)}
+          renderItem={(candidate, index) => (
+            <List.Item className={panelStyles.candidateItemReadOnly}>
+              <List.Item.Meta
+                title={`${index + 1}. ${candidate.display_name ?? '候选对象'}`}
+                description={candidate.description || candidateReadableMeta(candidate)}
+              />
+              <Tag color={candidate.confidence && candidate.confidence >= 0.85 ? 'success' : 'warning'}>
+                {confidenceText(candidate.confidence)}
+              </Tag>
+            </List.Item>
+          )}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -235,6 +281,25 @@ function DesignBriefView({ brief }: { brief: DesignBrief }) {
       ) : null}
     </div>
   );
+}
+
+function entityName(value: Record<string, unknown>): string {
+  return String(value.display_name ?? value.name ?? value.label ?? '').trim();
+}
+
+function entityDescription(value: Record<string, unknown>): string {
+  return String(value.description ?? value.reason ?? '').trim();
+}
+
+function candidateReadableMeta(candidate: SemanticTargetCandidate): string {
+  return [candidate.tab_label, candidate.type].filter(Boolean).join(' / ') || '系统已定位到一个可能的工程对象。';
+}
+
+function confidenceText(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '匹配 -';
+  }
+  return `匹配 ${Math.round(value * 100)}%`;
 }
 
 function BriefTags({ title, items, color }: { title: string; items: string[]; color: string }) {

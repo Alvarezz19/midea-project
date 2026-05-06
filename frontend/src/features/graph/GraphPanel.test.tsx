@@ -194,4 +194,79 @@ describe('GraphPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '定位 target_1' }));
     await waitFor(() => expect(useWorkbenchStore.getState().selectedNodeId).toBe('target_1'));
   });
+
+  it('uses last affected nodes to focus the local graph when no diff is available yet', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/projects/project_1/diff')) {
+        return new Response(
+          JSON.stringify({
+            project_id: 'project_1',
+            from_version_id: 'v_1',
+            to_version_id: 'v_2',
+            diff: {
+              summary: { added_count: 0, removed_count: 0, modified_count: 0, affected_node_count: 0 },
+              affected_node_ids: [],
+              added: [],
+              removed: [],
+              modified: []
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.startsWith('/api/projects/project_1/versions/v_2/flow')) {
+        return new Response(
+          JSON.stringify({
+            project_id: 'project_1',
+            version_id: 'v_2',
+            flow: {
+              nodes: [
+                {
+                  id: 'node_memory_1',
+                  type: 'engineeringNode',
+                  position: { x: 100, y: 80 },
+                  data: { label: '演示节点', module_type: 'compare', role: 'compare', tab_label: '水泵控制', inputs: 1, outputs: 1 }
+                }
+              ],
+              edges: [],
+              budget: { max_nodes: 120, max_edges: 260, max_chars: 160000, node_count: 1, edge_count: 0, truncated: false }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      state: {
+        messages: [],
+        project_type: 'plant_room',
+        project_id: 'project_1',
+        version_id: 'v_2',
+        last_affected_node_ids: ['node_memory_1'],
+        last_touched_entities: [
+          {
+            display_name: '水泵控制 / 演示节点 / compare',
+            selector: { id: 'node_memory_1' }
+          }
+        ]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <GraphPanel />
+      </AppProviders>
+    );
+
+    expect(await screen.findByText('自动定位 水泵控制 / 演示节点 / compare')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/projects/project_1/versions/v_2/flow?max_nodes=120&max_edges=260&max_chars=160000&center_node_id=node_memory_1&focus_node_ids=node_memory_1',
+        expect.any(Object)
+      )
+    );
+  });
 });
