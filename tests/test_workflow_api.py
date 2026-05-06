@@ -159,6 +159,12 @@ def test_workflow_plans_and_applies_natural_language_patch(tmp_path: Path) -> No
     assert result["current_project_path"] != original_path
     assert result["planner_result"]["status"] == "planned"
     assert result["validation_report"]["valid"]
+    assert result["last_affected_node_ids"] == ["3a4c97e"]
+    assert result["last_touched_entities"][0]["selector"] == {"id": "3a4c97e"}
+    assert result["last_touched_entities"][0]["display_name"].startswith("水泵控制 / 工作流规划-水泵比较节点")
+    assert result["last_patch_summary"]["affected_node_ids"] == ["3a4c97e"]
+    assert result["last_patch_summary"]["project_version_id"] == result["current_project_version_id"]
+    assert result["recent_user_intents"][-1]["message"] == "把节点 3a4c97e 改名为 工作流规划-水泵比较节点"
     assert next(item for item in load_project(original_path) if item.get("id") == "3a4c97e").get("name") != "工作流规划-水泵比较节点"
     nodes = load_project(result["current_project_path"])
     renamed = next(item for item in nodes if item.get("id") == "3a4c97e")
@@ -657,6 +663,11 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     created = client.post("/api/sessions", json={"auto_confirm_template": True, "versions_dir": str(tmp_path)})
     assert created.status_code == 200
     assert created.json()["state"]["use_llm_planner"] is True
+    assert created.json()["state"]["recent_user_intents"] == []
+    assert created.json()["state"]["last_affected_node_ids"] == []
+    assert created.json()["state"]["last_touched_entities"] == []
+    assert created.json()["state"]["last_patch_summary"] is None
+    assert created.json()["state"]["semantic_target_candidates"] == []
     thread_id = created.json()["thread_id"]
     assert created.json()["trace_id"].startswith("trace_")
 

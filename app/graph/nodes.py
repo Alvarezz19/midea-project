@@ -14,6 +14,7 @@ from app.services.patch_engine import PatchEngineError, dry_run_patch
 from app.services.planner import is_structural_change_intent, plan_patch_request
 from app.services.llm_planner import LLMPlannerError
 from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
+from app.services.project_semantic_index import summarize_affected_nodes
 from app.services.requirement_conformance import build_requirement_conformance_report, merge_conformance_into_validation
 from app.services.requirement_analysis import analyze_requirement, explain_template_candidate
 from app.services.requirement_extractor import RequirementExtractionError, extract_requirement_with_llm
@@ -335,6 +336,7 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
     message = _last_user_content(state)
+    memory_update = _recent_user_intent_update(state, message)
     result = plan_patch_request(
         message,
         project_path=project_path,
@@ -343,14 +345,16 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     )
     if result.get("status") == "planned":
         return {
+            **memory_update,
             "planner_result": result,
             "pending_patch": result.get("pending_patch"),
             "status": "patch_planned",
             "next_action": None,
         }
     if _should_fallback_to_llm_planner(message, result, state):
-        return _plan_patch_with_llm_node(state, project_path, rule_result=result)
+        return {**memory_update, **_plan_patch_with_llm_node(state, project_path, rule_result=result)}
     return {
+        **memory_update,
         "planner_result": result,
         "status": "awaiting_patch_clarification",
         "next_action": "clarify_patch",
@@ -457,7 +461,7 @@ def _llm_fallback_question(error: str, *, rule_result: dict[str, Any] | None) ->
     suffix = f" 规则 planner 的追问：{rule_text}" if rule_text else ""
     return (
         "当前修改涉及结构改造，已自动尝试 LLM planner dry-run fallback，但暂时无法生成可执行计划。"
-        f"原因：{error}。请补充目标页面、节点 id、端口、点位字段和值，或配置可用的 LLM planner 后重试。{suffix}"
+        f"原因：{error}。请补充目标页面、节点名称或业务对象、接线位置、点位含义和值，或配置可用的 LLM planner 后重试。{suffix}"
     )
 
 
@@ -510,10 +514,23 @@ def apply_pending_patch_node(state: AgentState) -> dict[str, Any]:
         "next_action": None if report["valid"] else "revise_patch",
     }
     if report["valid"]:
+        affected_node_ids = _affected_node_ids(result)
+        last_touched_entities = summarize_affected_nodes(metadata["version_path"], affected_node_ids)
         response.update(
             {
                 "current_project_version_id": metadata["version_id"],
                 "current_project_path": metadata["version_path"],
+                "last_affected_node_ids": affected_node_ids,
+                "last_touched_entities": last_touched_entities,
+                "last_patch_summary": _build_last_patch_summary(
+                    state,
+                    pending_patch=pending_patch,
+                    result=result,
+                    risk_assessment=risk_assessment,
+                    affected_node_ids=affected_node_ids,
+                    last_touched_entities=last_touched_entities,
+                    project_version_id=metadata["version_id"],
+                ),
             }
         )
     return response
@@ -597,6 +614,53 @@ def _last_user_content(state: AgentState) -> str:
         if message.get("role") == "user":
             return str(message.get("content", ""))
     return ""
+
+
+def _recent_user_intent_update(state: AgentState, message: str) -> dict[str, Any]:
+    if not message.strip():
+        return {}
+    intents = list(state.get("recent_user_intents") or [])
+    intent = {
+        "message": message,
+        "created_at": _utc_now_iso(),
+        "project_version_id": state.get("current_project_version_id"),
+        "project_path": state.get("current_project_path"),
+    }
+    if intents and intents[-1].get("message") == message and intents[-1].get("project_version_id") == intent["project_version_id"]:
+        return {"recent_user_intents": intents[-5:]}
+    return {"recent_user_intents": (intents + [intent])[-5:]}
+
+
+def _affected_node_ids(result: dict[str, Any]) -> list[str]:
+    diff = result.get("diff") if isinstance(result.get("diff"), dict) else {}
+    affected = diff.get("affected_node_ids") if isinstance(diff, dict) else []
+    if not isinstance(affected, list):
+        return []
+    return [str(node_id) for node_id in affected if isinstance(node_id, str) and node_id]
+
+
+def _build_last_patch_summary(
+    state: AgentState,
+    *,
+    pending_patch: dict[str, Any],
+    result: dict[str, Any],
+    risk_assessment: dict[str, Any],
+    affected_node_ids: list[str],
+    last_touched_entities: list[dict[str, Any]],
+    project_version_id: str | None,
+) -> dict[str, Any]:
+    diff = result.get("diff") if isinstance(result.get("diff"), dict) else {}
+    return {
+        "message": _last_user_content(state),
+        "created_at": _utc_now_iso(),
+        "project_version_id": project_version_id,
+        "operations": _normalize_patch_operations(pending_patch),
+        "change_count": len(result.get("changes") or []),
+        "diff_summary": diff.get("summary") if isinstance(diff, dict) else None,
+        "affected_node_ids": affected_node_ids,
+        "touched_entities": last_touched_entities,
+        "risk_level": risk_assessment.get("risk_level"),
+    }
 
 
 def _requirement_query(state: AgentState) -> str:
@@ -701,6 +765,11 @@ def _build_assistant_summary(state: AgentState) -> str:
     if status == "patch_applied":
         patch_result = state.get("patch_result") or {}
         changes = patch_result.get("changes") or []
+        touched = state.get("last_touched_entities") or []
+        if touched:
+            names = "、".join(str(item.get("display_name")) for item in touched[:3] if isinstance(item, dict) and item.get("display_name"))
+            if names:
+                return f"补丁已应用并校验通过，共 {len(changes)} 项变更。本次定位目标：{names}。"
         return f"补丁已应用并校验通过，共 {len(changes)} 项变更。"
     if status == "validation_failed":
         report = state.get("validation_report") or {}

@@ -10,6 +10,12 @@ class AgentState(TypedDict):
     requirement_slots: dict[str, Any]
     design_brief: dict[str, Any] | None
     conformance_report: dict[str, Any] | None
+    conversation_summary: dict[str, Any] | None
+    recent_user_intents: list[dict[str, Any]]
+    last_affected_node_ids: list[str]
+    last_touched_entities: list[dict[str, Any]]
+    last_patch_summary: dict[str, Any] | None
+    semantic_target_candidates: list[dict[str, Any]]
     open_questions: list[dict[str, Any]]
     confirmed_requirements: list[str]
     template_candidates: list[dict[str, Any]]
@@ -45,6 +51,12 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "requirement_slots": {},
         "design_brief": None,
         "conformance_report": None,
+        "conversation_summary": None,
+        "recent_user_intents": [],
+        "last_affected_node_ids": [],
+        "last_touched_entities": [],
+        "last_patch_summary": None,
+        "semantic_target_candidates": [],
         "open_questions": [],
         "confirmed_requirements": [],
         "template_candidates": [],
