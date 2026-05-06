@@ -64,13 +64,14 @@ export function sendMessage(
   threadId: string,
   message: string,
   projectType?: ProjectType,
-  options: { useLlmPlanner?: boolean } = {}
+  options: { useLlmPlanner?: boolean; selectedCandidateId?: string } = {}
 ): Promise<SessionResponse> {
   return apiRequest<SessionResponse>(`/api/sessions/${threadId}/message`, {
     method: 'POST',
     body: JSON.stringify({
       message,
       project_type: projectType,
+      selected_candidate_id: options.selectedCandidateId,
       use_llm_planner: options.useLlmPlanner
     })
   });

@@ -68,6 +68,7 @@ class MessageRequest(BaseModel):
     message: str = Field(min_length=1)
     project_type: str | None = None
     selected_template_id: str | None = None
+    selected_candidate_id: str | None = None
     auto_confirm_template: bool | None = None
     pending_patch: dict[str, Any] | None = None
     use_llm_planner: bool | None = None
@@ -286,7 +287,10 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
         _finish_trace(trace["trace_id"], "completed")
         return {"thread_id": thread_id, "trace_id": trace["trace_id"], "state": _public_state(next_state)}
 
-    state["messages"] = list(state.get("messages") or []) + [{"role": "user", "content": request.message}]
+    user_message: dict[str, Any] = {"role": "user", "content": request.message}
+    if request.selected_candidate_id is not None:
+        user_message["selected_candidate_id"] = request.selected_candidate_id
+    state["messages"] = list(state.get("messages") or []) + [user_message]
     if request.project_type is not None:
         state["project_type"] = request.project_type
     if request.selected_template_id is not None:

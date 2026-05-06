@@ -252,6 +252,64 @@ def test_llm_planner_uses_context_aware_project_semantics(monkeypatch: pytest.Mo
     assert captured_prompt["user"]
 
 
+def test_llm_planner_uses_locator_knowledge_queries(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_knowledge_project", version_id="v_knowledge", versions_dir=tmp_path)
+    searched_queries: list[str] = []
+    target_resolution = {
+        "status": "needs_clarification",
+        "intent": "connect",
+        "selected": None,
+        "candidates": [],
+        "questions": [],
+        "knowledge_queries": ["旁通阀压差设定接入 补丁 配方"],
+    }
+
+    def fake_search_knowledge(query: str, *, limit: int = 5, **kwargs: Any) -> list[dict[str, Any]]:
+        del limit, kwargs
+        searched_queries.append(query)
+        return [
+            {
+                "chunk_id": f"chunk-{len(searched_queries)}",
+                "source_path": "knowledge/补丁配方.md",
+                "title": "旁通阀压差设定接入",
+                "heading_level": 2,
+                "content": f"检索词：{query}",
+                "score": 1.0,
+            }
+        ]
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del provider
+        assert "旁通阀压差设定接入 补丁 配方" in messages[1]["content"]
+        assert "context_used" in messages[1]["content"]
+        return {
+            "status": "needs_clarification",
+            "intent": "unknown",
+            "summary": "需要确认接线位置。",
+            "risk_level": "medium",
+            "risk_reasons": ["新增节点并接线需要确认"],
+            "required_context": [],
+            "operations": [],
+            "validation_expectations": [],
+            "questions": ["请确认接入比较判断的动态阈值输入，还是只新增设定节点。"],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.search_knowledge", fake_search_knowledge)
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+
+    result = plan_patch_with_llm(
+        "新增旁通阀压差设定",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+        target_resolution=target_resolution,
+    )
+
+    assert searched_queries == ["新增旁通阀压差设定", "旁通阀压差设定接入 补丁 配方"]
+    assert result["status"] == "needs_clarification"
+    assert result["context"]["context_used"]["knowledge_count"] == 2
+
+
 def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_dynamic", versions_dir=tmp_path)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -337,15 +338,20 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     if not project_path:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
-    message = _last_user_content(state)
-    memory_update = _recent_user_intent_update(state, message)
-    semantic_location = locate_semantic_targets(
-        message,
-        project_path=project_path,
-        project_type=state.get("project_type"),
-        template_id=state.get("selected_template_id"),
-        conversation_context=_planner_conversation_context(state),
-    )
+    user_message = _last_user_content(state)
+    candidate_selection = _candidate_selection_from_state(state, user_message)
+    message = str(candidate_selection.get("source_message") or user_message) if candidate_selection else user_message
+    memory_update = _conversation_memory_update(state, user_message, effective_message=message, candidate_selection=candidate_selection)
+    if candidate_selection:
+        semantic_location = _semantic_location_from_candidate_selection(candidate_selection)
+    else:
+        semantic_location = locate_semantic_targets(
+            message,
+            project_path=project_path,
+            project_type=state.get("project_type"),
+            template_id=state.get("selected_template_id"),
+            conversation_context=_planner_conversation_context({**state, **memory_update}),
+        )
     semantic_candidates = public_semantic_candidates(semantic_location)
     if semantic_location.get("status") == "candidates" and _should_ask_semantic_candidate_selection(semantic_location):
         return {
@@ -382,7 +388,7 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
         return {
             **memory_update,
             "semantic_target_candidates": semantic_candidates,
-            **_plan_patch_with_llm_node(state, project_path, rule_result=result),
+            **_plan_patch_with_llm_node({**state, **memory_update}, project_path, rule_result=result),
         }
     if semantic_location.get("status") in {"candidates", "needs_clarification"} and semantic_location.get("questions"):
         result = {
@@ -520,6 +526,93 @@ def _supported_keyword_arguments(func: Any) -> set[str] | None:
         if parameter.kind in {inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}:
             supported.add(parameter.name)
     return supported
+
+
+def _candidate_selection_from_state(state: AgentState, message: str) -> dict[str, Any] | None:
+    candidate_id = _last_user_selected_candidate_id(state) or _candidate_id_from_message(message)
+    if not candidate_id:
+        return None
+    candidates = [candidate for candidate in state.get("semantic_target_candidates", []) if isinstance(candidate, dict)]
+    selected = next((candidate for candidate in candidates if candidate.get("candidate_id") == candidate_id), None)
+    if selected is None:
+        return None
+    prior_resolution = (state.get("planner_result") or {}).get("target_resolution")
+    prior_intents = [intent for intent in state.get("recent_user_intents", []) if isinstance(intent, dict)]
+    source_message = next(
+        (str(intent.get("message")) for intent in reversed(prior_intents) if intent.get("message") and str(intent.get("message")) != message),
+        _previous_user_content(state, exclude_last=True),
+    )
+    return {
+        "candidate_id": candidate_id,
+        "candidate": selected,
+        "source_message": source_message or message,
+        "prior_target_resolution": prior_resolution if isinstance(prior_resolution, dict) else None,
+    }
+
+
+def _semantic_location_from_candidate_selection(selection: dict[str, Any]) -> dict[str, Any]:
+    candidate = selection["candidate"]
+    prior = selection.get("prior_target_resolution") if isinstance(selection.get("prior_target_resolution"), dict) else {}
+    selected = {
+        "candidate_id": candidate.get("candidate_id"),
+        "kind": candidate.get("kind", "node"),
+        "confidence": candidate.get("confidence", 0.95),
+        "selector": candidate.get("selector"),
+        "display_name": candidate.get("display_name", ""),
+        "description": candidate.get("description", ""),
+        "reason": "用户从上一轮候选中选择。",
+        "tab_label": candidate.get("tab_label"),
+        "type": candidate.get("type"),
+        "key_params": candidate.get("key_params", {}),
+    }
+    return {
+        "status": "resolved",
+        "intent": prior.get("intent") or "unknown",
+        "selected": selected,
+        "candidates": [selected],
+        "questions": [],
+        "target_queries": prior.get("target_queries", []),
+        "knowledge_queries": prior.get("knowledge_queries", []),
+        "selection": {"candidate_id": selection.get("candidate_id"), "source_message": selection.get("source_message")},
+    }
+
+
+def _last_user_selected_candidate_id(state: AgentState) -> str | None:
+    for message in reversed(state.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        candidate_id = message.get("selected_candidate_id")
+        return str(candidate_id) if candidate_id else None
+    return None
+
+
+def _candidate_id_from_message(message: str) -> str | None:
+    text = message.strip()
+    if not text:
+        return None
+    explicit = re.search(r"candidate[_-]?(?P<index>\d+)", text, re.IGNORECASE)
+    if explicit:
+        return f"candidate_{int(explicit.group('index'))}"
+    numeric = re.fullmatch(r"(?:选择|选)?\s*(?:第\s*)?(?P<index>\d+)\s*(?:个|项|条)?", text)
+    if numeric:
+        return f"candidate_{int(numeric.group('index'))}"
+    chinese_digits = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
+    chinese = re.fullmatch(r"(?:选择|选)?\s*(?:第\s*)?(?P<index>[一二三四五])\s*(?:个|项|条)?", text)
+    if chinese:
+        return f"candidate_{chinese_digits[chinese.group('index')]}"
+    return None
+
+
+def _previous_user_content(state: AgentState, *, exclude_last: bool) -> str:
+    seen_last = False
+    for message in reversed(state.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        if exclude_last and not seen_last:
+            seen_last = True
+            continue
+        return str(message.get("content", ""))
+    return ""
 
 
 def _llm_fallback_question(error: str, *, rule_result: dict[str, Any] | None) -> str:
@@ -696,6 +789,54 @@ def _recent_user_intent_update(state: AgentState, message: str) -> dict[str, Any
     if intents and intents[-1].get("message") == message and intents[-1].get("project_version_id") == intent["project_version_id"]:
         return {"recent_user_intents": intents[-5:]}
     return {"recent_user_intents": (intents + [intent])[-5:]}
+
+
+def _conversation_memory_update(
+    state: AgentState,
+    user_message: str,
+    *,
+    effective_message: str,
+    candidate_selection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    update = _recent_user_intent_update(state, effective_message)
+    conversation_summary = _merge_conversation_summary(
+        state,
+        user_message=user_message,
+        effective_message=effective_message,
+        recent_user_intents=update.get("recent_user_intents", state.get("recent_user_intents", [])),
+        candidate_selection=candidate_selection,
+    )
+    return {**update, "conversation_summary": conversation_summary}
+
+
+def _merge_conversation_summary(
+    state: AgentState,
+    *,
+    user_message: str,
+    effective_message: str,
+    recent_user_intents: list[dict[str, Any]],
+    candidate_selection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    previous = state.get("conversation_summary") if isinstance(state.get("conversation_summary"), dict) else {}
+    selected = candidate_selection.get("candidate") if isinstance(candidate_selection, dict) else None
+    selected_target = None
+    if isinstance(selected, dict):
+        selected_target = {
+            "candidate_id": selected.get("candidate_id"),
+            "display_name": selected.get("display_name"),
+            "description": selected.get("description"),
+            "selector": selected.get("selector"),
+        }
+    recent_messages = [str(intent.get("message")) for intent in recent_user_intents[-5:] if isinstance(intent, dict) and intent.get("message")]
+    return {
+        **previous,
+        "latest_user_message": user_message,
+        "active_patch_request": effective_message,
+        "recent_user_messages": recent_messages,
+        "last_selected_candidate": selected_target,
+        "last_patch_summary": state.get("last_patch_summary"),
+        "updated_at": _utc_now_iso(),
+    }
 
 
 def _planner_conversation_context(state: AgentState) -> dict[str, Any]:

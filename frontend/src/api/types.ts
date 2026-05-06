@@ -53,6 +53,12 @@ export interface SessionState {
   requirement_slots?: Record<string, unknown>;
   design_brief?: DesignBrief | null;
   conformance_report?: RequirementConformanceReport | null;
+  conversation_summary?: Record<string, unknown> | null;
+  recent_user_intents?: Array<Record<string, unknown>>;
+  last_affected_node_ids?: string[];
+  last_touched_entities?: Array<Record<string, unknown>>;
+  last_patch_summary?: Record<string, unknown> | null;
+  semantic_target_candidates?: SemanticTargetCandidate[];
   open_questions?: Array<string | RequirementQuestion>;
   confirmed_requirements?: string[];
   template_candidates?: TemplateCandidate[];
@@ -75,6 +81,18 @@ export interface SessionState {
   next_action?: string | null;
   error?: string | null;
   use_llm_planner?: boolean;
+}
+
+export interface SemanticTargetCandidate {
+  candidate_id?: string;
+  kind?: string;
+  display_name?: string;
+  description?: string;
+  confidence?: number;
+  selector?: Record<string, unknown>;
+  tab_label?: string;
+  type?: string;
+  key_params?: Record<string, unknown>;
 }
 
 export interface TemplateCandidate {

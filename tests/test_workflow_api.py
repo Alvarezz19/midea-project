@@ -271,6 +271,30 @@ def test_workflow_returns_clarification_when_planner_is_ambiguous(tmp_path: Path
     assert "需要补充信息" in result["messages"][-1]["content"]
 
 
+def test_workflow_uses_candidate_selection_for_followup(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把比较判断改名为 候选选择节点"}]
+    ambiguous = invoke_workflow(created)
+
+    assert ambiguous["status"] == "awaiting_patch_clarification"
+    assert ambiguous["semantic_target_candidates"]
+
+    ambiguous["messages"] = list(ambiguous["messages"]) + [{"role": "user", "content": "第 1 个"}]
+    selected = invoke_workflow(ambiguous)
+
+    assert selected["status"] == "patch_applied"
+    target_id = ambiguous["semantic_target_candidates"][0]["selector"]["id"]
+    assert selected["planner_result"]["target_resolution"]["selection"]["candidate_id"] == "candidate_1"
+    assert selected["pending_patch"] is None
+    nodes = load_project(selected["current_project_path"])
+    assert next(item for item in nodes if item.get("id") == target_id)["name"] == "候选选择节点"
+    assert selected["conversation_summary"]["last_selected_candidate"]["candidate_id"] == "candidate_1"
+
+
 def test_workflow_uses_llm_planner_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序", project_type="plant_room", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)

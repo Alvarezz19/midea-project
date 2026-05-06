@@ -356,6 +356,7 @@ def _build_planner_context(
             block_contexts.append(load_block_context(block_id, max_nodes=24, max_chars=9000))
         except RetrievalError:
             continue
+    knowledge = _search_planner_knowledge(message, target_resolution=target_resolution, limit=4)
 
     return {
         "project_type": project_type,
@@ -367,11 +368,17 @@ def _build_planner_context(
         "current_project": current_project,
         "current_project_nodes": current_project_nodes,
         "node_neighborhoods": node_neighborhoods,
-        "knowledge": search_knowledge(message, limit=3),
+        "knowledge": knowledge,
         "related_tabs": search_tabs(message, template_id=template_id, limit=3) if template_id else [],
         "related_nodes": search_nodes(message, template_id=template_id, limit=10) if template_id else [],
         "related_blocks": blocks,
         "block_contexts": block_contexts,
+        "context_used": {
+            "current_project_node_count": len(current_project_nodes),
+            "node_neighborhood_count": len(node_neighborhoods),
+            "knowledge_count": len(knowledge),
+            "block_context_count": len(block_contexts),
+        },
     }
 
 
@@ -404,11 +411,32 @@ def _compact_context_for_prompt(context: dict[str, Any]) -> dict[str, Any]:
         "current_project_nodes": context.get("current_project_nodes"),
         "node_neighborhoods": context.get("node_neighborhoods"),
         "knowledge": context.get("knowledge"),
+        "context_used": context.get("context_used"),
         "related_tabs": context.get("related_tabs"),
         "related_nodes": context.get("related_nodes"),
         "related_blocks": context.get("related_blocks"),
         "block_contexts": context.get("block_contexts"),
     }
+
+
+def _search_planner_knowledge(message: str, *, target_resolution: dict[str, Any] | None, limit: int) -> list[dict[str, Any]]:
+    queries = [message]
+    if isinstance(target_resolution, dict):
+        for query in target_resolution.get("knowledge_queries") or []:
+            if isinstance(query, str) and query.strip():
+                queries.append(query.strip())
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for query in queries:
+        for item in search_knowledge(query, limit=limit):
+            chunk_id = str(item.get("chunk_id") or "")
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            results.append(item)
+            if len(results) >= limit:
+                return results
+    return results
 
 
 def _anchor_node_ids(target_resolution: dict[str, Any] | None, current_project_nodes: list[dict[str, Any]]) -> list[str]:
