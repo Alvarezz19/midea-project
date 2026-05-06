@@ -55,10 +55,24 @@ def locate_semantic_targets(
             return {**recent, "target_queries": target_queries, "knowledge_queries": knowledge_queries}
 
     index = build_project_semantic_index(project_path)
+    explicit_node = _node_from_explicit_id(index, message)
+    if explicit_node:
+        selected = _candidate_from_index_node(explicit_node, index=1, confidence=0.99, reason="用户输入中包含明确节点 ID。")
+        return {
+            "status": "resolved",
+            "intent": intent,
+            "selected": selected,
+            "candidates": [selected],
+            "questions": [],
+            "target_queries": target_queries,
+            "knowledge_queries": knowledge_queries,
+        }
     tab = _extract_tab(index, message)
     node_type = _infer_node_type(message)
     name_hint = _extract_name_hint(message, tab_label=tab["label"] if tab else None)
     candidates = _filter_candidates(index, message, tab=tab, node_type=node_type, name_hint=name_hint, limit=limit)
+    if not candidates and name_hint and (tab or node_type):
+        candidates = _filter_candidates(index, message, tab=tab, node_type=node_type, name_hint=None, limit=limit)
 
     if len(candidates) == 1:
         selected = {**candidates[0], "confidence": max(float(candidates[0]["confidence"]), 0.88), "reason": "页面、类型或名称约束后唯一匹配。"}
@@ -194,6 +208,18 @@ def _filter_candidates(
     return [_candidate_from_index_node(node, index=idx, confidence=score, reason=_candidate_reason(tab=tab, node_type=node_type, name_hint=name_hint)) for idx, (score, node) in enumerate(scored[:limit], start=1)]
 
 
+def _node_from_explicit_id(index: dict[str, Any], message: str) -> dict[str, Any] | None:
+    match = re.search(r"\b[a-fA-F0-9]{5,12}\b", message)
+    if not match:
+        return None
+    node_id = match.group(0)
+    nodes = index.get("nodes") if isinstance(index.get("nodes"), list) else []
+    for node in nodes:
+        if isinstance(node, dict) and node.get("id") == node_id:
+            return node
+    return None
+
+
 def _score_node(
     node: dict[str, Any],
     message: str,
@@ -301,8 +327,18 @@ def _candidate_reason(*, tab: dict[str, Any] | None, node_type: str | None, name
 
 def _extract_tab(index: dict[str, Any], message: str) -> dict[str, Any] | None:
     tabs = [tab for tab in index.get("tabs", []) if isinstance(tab, dict)]
-    matches = [tab for tab in sorted(tabs, key=lambda item: len(str(item.get("label", ""))), reverse=True) if str(tab.get("label", "")) and str(tab.get("label")) in message]
+    matches = [
+        tab
+        for tab in sorted(tabs, key=lambda item: len(str(item.get("label", ""))), reverse=True)
+        if _tab_label_matches(str(tab.get("label", "")), message)
+    ]
     return matches[0] if matches else None
+
+
+def _tab_label_matches(label: str, message: str) -> bool:
+    if not label:
+        return False
+    return label in message or f"{label}页面" in message or f"{label}页" in message or f"{label}页签" in message
 
 
 def _infer_node_type(message: str) -> str | None:

@@ -60,7 +60,9 @@ def plan_patch_with_llm_dry_run_feedback(
                 current_project_context=current_project_context,
             ),
         )
-        pending_patch = planner_result.get("pending_patch")
+        pending_patch = _normalize_pending_patch(planner_result.get("pending_patch"))
+        if pending_patch is not planner_result.get("pending_patch"):
+            planner_result = {**planner_result, "pending_patch": pending_patch}
         planner_attempts.append(
             {
                 "attempt": attempt_index + 1,
@@ -139,6 +141,46 @@ def _operation_count(patch: Any) -> int:
     if patch.get("op"):
         return 1
     return 0
+
+
+def _normalize_pending_patch(patch: Any) -> Any:
+    if not isinstance(patch, dict):
+        return patch
+    operations = patch.get("operations")
+    if isinstance(operations, list):
+        return {
+            **patch,
+            "operations": [_normalize_operation(operation) for operation in operations],
+        }
+    return _normalize_operation(patch)
+
+
+def _normalize_operation(operation: Any) -> Any:
+    if not isinstance(operation, dict):
+        return operation
+    if operation.get("op") != "add_node_from_schema":
+        return operation
+    module_type = str(operation.get("module_type") or "")
+    params = operation.get("params")
+    if module_type != "constInput" or not isinstance(params, dict):
+        return operation
+    normalized_params = dict(params)
+    if "user_defined_name" not in normalized_params:
+        for alias in ("user_defined_name", "name", "label"):
+            value = params.get(alias)
+            if value not in (None, ""):
+                normalized_params["user_defined_name"] = value
+                break
+    if "fixedValue" not in normalized_params:
+        for alias in ("fixedValue", "value", "fixed_value"):
+            value = params.get(alias)
+            if value not in (None, ""):
+                normalized_params["fixedValue"] = value
+                break
+    for alias in ("name", "label", "value", "fixed_value"):
+        if alias in normalized_params and alias not in {"user_defined_name", "fixedValue"}:
+            normalized_params.pop(alias, None)
+    return {**operation, "params": normalized_params}
 
 
 def _optional_context_kwargs(

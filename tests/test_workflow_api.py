@@ -310,7 +310,7 @@ def test_workflow_uses_llm_planner_when_enabled(monkeypatch: pytest.MonkeyPatch,
         provider: str | None = None,
         llm_max_attempts: int = 2,
     ) -> dict[str, Any]:
-        assert "比较判断改名" in message
+        assert message == "新增复杂控制逻辑"
         assert project_path == created["current_project_path"]
         assert template_id == created["selected_template_id"]
         assert project_type == "plant_room"
@@ -334,7 +334,7 @@ def test_workflow_uses_llm_planner_when_enabled(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
     created["use_llm_planner"] = True
     created["llm_provider"] = "deepseek"
-    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "请把比较判断改名"}]
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "新增复杂控制逻辑"}]
 
     result = invoke_workflow(created)
 
@@ -377,7 +377,7 @@ def test_workflow_falls_back_to_llm_for_structural_change_when_switch_is_off(mon
         assert kwargs["project_path"] == created["current_project_path"]
         assert kwargs["conversation_context"]["recent_user_intents"][-1]["message"] == "新增 CO2 浓度设定并接入新风阀控制"
         assert kwargs["target_resolution"]["intent"] == "connect"
-        assert kwargs["target_resolution"]["status"] == "needs_clarification"
+        assert kwargs["target_resolution"]["status"] in {"candidates", "needs_clarification"}
         return {
             "status": "dry_run_valid",
             "planner_result": {
@@ -550,7 +550,7 @@ def test_workflow_llm_planner_returns_clarification_after_feedback_failure(
 
     monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
     created["use_llm_planner"] = True
-    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "请把比较判断改名"}]
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "新增复杂控制逻辑"}]
 
     result = invoke_workflow(created)
 

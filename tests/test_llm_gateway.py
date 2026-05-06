@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.main import app
 from app.services.json_project import create_project_version
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
+from app.services.planner_execution import plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_extractor import extract_requirement_with_llm
 
 
@@ -640,6 +641,54 @@ def test_planner_dry_run_api_falls_back_to_llm_for_structural_intent(monkeypatch
     assert data["planner_result"]["fallback_from"] == "rule"
     assert data["planner_result"]["rule_planner_result"]["status"] == "needs_clarification"
     assert data["pending_patch"] == pending_patch
+
+
+def test_llm_dry_run_feedback_normalizes_const_input_param_aliases() -> None:
+    captured_patch: dict[str, Any] = {}
+
+    def fake_planner(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "status": "planned",
+            "planner": "llm",
+            "risk_level": "medium",
+            "pending_patch": {
+                "operations": [
+                    {
+                        "op": "add_node_from_schema",
+                        "module_type": "constInput",
+                        "tab_selector": {"label": "旁通阀控制"},
+                        "params": {"name": "评测旁通阀压差设定", "value": 45},
+                    },
+                    {"op": "enable_dynamic_input", "node_selector": {"id": "169a370"}},
+                ]
+            },
+            "questions": [],
+        }
+
+    def fake_dry_runner(project_path: str, pending_patch: dict[str, Any]) -> dict[str, Any]:
+        del project_path
+        captured_patch.update(pending_patch)
+        return {
+            "saved": False,
+            "valid": True,
+            "validation_report": {"valid": True, "issues": []},
+            "diff": {"summary": {"added_count": 1, "modified_count": 1, "affected_node_count": 2}},
+            "nodes": [{"id": "should_be_removed"}],
+        }
+
+    result = plan_patch_with_llm_dry_run_feedback(
+        "新增旁通阀压差设定",
+        project_path=PLANT_TEMPLATE,
+        planner=fake_planner,
+        dry_runner=fake_dry_runner,
+    )
+
+    add_node = captured_patch["operations"][0]
+    assert add_node["params"] == {"user_defined_name": "评测旁通阀压差设定", "fixedValue": 45}
+    assert result["pending_patch"]["operations"][0]["params"] == add_node["params"]
+    assert result["dry_run"]["valid"] is True
+    assert "nodes" not in result["dry_run"]
 
 
 def test_llm_planner_dry_run_api_retries_patch_engine_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

@@ -6,6 +6,7 @@ from app.services.semantic_locator import locate_semantic_targets, public_semant
 
 
 PLANT_TEMPLATE = Path("programs/机房群控程序/风冷热泵标准控制程序[风冷涡旋]20240905.json")
+AHU_TEMPLATE = Path("programs/AHU程序/泰安宁阳中医院/flows_20260206160555.json")
 
 
 def test_semantic_locator_resolves_tab_and_node_type() -> None:
@@ -37,6 +38,20 @@ def test_semantic_locator_resolves_recent_node_reference() -> None:
     assert result["selected"]["selector"] == {"id": "3a4c97e"}
     assert result["selected"]["confidence"] >= 0.9
     assert "最近目标引用" in result["selected"]["reason"]
+
+
+def test_semantic_locator_resolves_explicit_node_id_before_broad_type_candidates() -> None:
+    result = locate_semantic_targets(
+        "把节点 67febfa 的常量值替换为 6。",
+        project_path=PLANT_TEMPLATE,
+        project_type="plant_room",
+        conversation_context={},
+    )
+
+    assert result["status"] == "resolved"
+    assert result["selected"]["selector"] == {"id": "67febfa"}
+    assert result["selected"]["confidence"] == 0.99
+    assert "明确节点 ID" in result["selected"]["reason"]
 
 
 def test_semantic_locator_returns_user_readable_candidates() -> None:
@@ -83,3 +98,18 @@ def test_semantic_locator_emits_business_recipe_queries() -> None:
         conversation_context={},
     )
     assert any("set_io_point" in query for query in io["knowledge_queries"])
+
+
+def test_semantic_locator_treats_page_suffix_as_tab_and_returns_candidates() -> None:
+    result = locate_semantic_targets(
+        "在控制页面新增一个 CO2 浓度设定常量，命名为 评测CO2浓度设定，固定值 800，并接入新风阀控制的比较判断动态阈值输入。",
+        project_path=AHU_TEMPLATE,
+        project_type="ahu",
+        conversation_context={},
+    )
+
+    assert result["status"] == "candidates"
+    assert result["intent"] == "connect"
+    assert result["candidates"]
+    assert all(candidate["tab_label"] == "控制" for candidate in result["candidates"])
+    assert "节点 id" not in result["questions"][0]
