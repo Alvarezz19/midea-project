@@ -119,6 +119,7 @@ def plan_patch_request(
     project_path: str,
     template_id: str | None = None,
     project_type: str | None = None,
+    semantic_location: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """将简单自然语言修改请求规划为结构化补丁。
 
@@ -135,6 +136,7 @@ def plan_patch_request(
         "knowledge": knowledge,
         "related_tabs": related_tabs,
         "related_nodes": related_nodes,
+        "target_resolution": semantic_location,
     }
 
     tab_label_plan = _plan_update_tab_label(message, nodes)
@@ -149,30 +151,30 @@ def plan_patch_request(
     if add_tab_plan:
         return {**add_tab_plan, **context}
 
-    rename_plan = _plan_rename(message, nodes)
+    rename_plan = _plan_rename(message, nodes, semantic_location=semantic_location)
     if rename_plan:
         return {**rename_plan, **context}
 
-    dynamic_input_plan = _plan_enable_dynamic_input(message, nodes)
+    dynamic_input_plan = _plan_enable_dynamic_input(message, nodes, semantic_location=semantic_location)
     if dynamic_input_plan:
         return {**dynamic_input_plan, **context}
 
-    disconnect_plan = _plan_disconnect(message, nodes)
+    disconnect_plan = _plan_disconnect(message, nodes, semantic_location=semantic_location)
     if disconnect_plan:
         return {**disconnect_plan, **context}
 
-    replace_constant_plan = _plan_replace_constant(message, nodes)
+    replace_constant_plan = _plan_replace_constant(message, nodes, semantic_location=semantic_location)
     if replace_constant_plan:
         return {**replace_constant_plan, **context}
 
-    update_plan = _plan_update_param(message, nodes)
+    update_plan = _plan_update_param(message, nodes, semantic_location=semantic_location)
     if update_plan:
         return {**update_plan, **context}
 
     return {
         "status": "needs_clarification",
         "pending_patch": None,
-        "questions": ["请说明要修改的节点、页面、参数和值。例如：把节点 3a4c97e 改名为 水泵比较判断。"],
+        "questions": ["请说明目标所在页面、节点名称或业务对象，以及要修改的参数和值。例如：把水泵控制里的比较判断改名为水泵比较判断。"],
         "reason": "当前请求无法被确定性规划器识别为低风险补丁。",
         **context,
     }
@@ -289,7 +291,7 @@ def _plan_add_tab(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] |
     }
 
 
-def _plan_rename(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_rename(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     match = re.search(r"(?:把|将)?(?P<target>.+?)(?:节点)?改名为(?P<new_name>[^，。]+)", message)
     if not match:
         return None
@@ -304,7 +306,7 @@ def _plan_rename(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | 
             "reason": "改名请求缺少新名称。",
         }
 
-    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes, semantic_location=semantic_location)
     if selector_result["status"] != "resolved":
         return selector_result
 
@@ -317,7 +319,7 @@ def _plan_rename(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | 
     }
 
 
-def _plan_update_param(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_update_param(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     field_name = _infer_field_name(message)
     if not field_name:
         return None
@@ -331,7 +333,7 @@ def _plan_update_param(message: str, nodes: list[dict[str, Any]]) -> dict[str, A
         }
 
     target_text = _extract_update_target_text(message, field_name)
-    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes, semantic_location=semantic_location)
     if selector_result["status"] != "resolved":
         return selector_result
 
@@ -358,7 +360,7 @@ def _plan_update_param(message: str, nodes: list[dict[str, Any]]) -> dict[str, A
     }
 
 
-def _plan_replace_constant(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_replace_constant(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if not any(keyword in message for keyword in ["替换常量", "修改常量", "常量值", "固定值", "设定值"]):
         return None
 
@@ -373,7 +375,7 @@ def _plan_replace_constant(message: str, nodes: list[dict[str, Any]]) -> dict[st
         }
 
     target_text = _extract_update_target_text(message, field_name) if field_name else _clean_target_text(re.split(r"改为|设为|设置为|调整为|替换为", message, maxsplit=1)[0])
-    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes, semantic_location=semantic_location)
     if selector_result["status"] != "resolved":
         return selector_result
 
@@ -405,12 +407,12 @@ def _plan_replace_constant(message: str, nodes: list[dict[str, Any]]) -> dict[st
     }
 
 
-def _plan_enable_dynamic_input(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_enable_dynamic_input(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if not ("动态" in message and "输入" in message and any(keyword in message for keyword in ["启用", "开启", "打开"])):
         return None
 
     target_text = _clean_target_text(re.split(r"启用|开启|打开", message, maxsplit=1)[-1])
-    selector_result = _resolve_unique_node_selector(message, target_text, nodes)
+    selector_result = _resolve_unique_node_selector(message, target_text, nodes, semantic_location=semantic_location)
     if selector_result["status"] != "resolved":
         return selector_result
 
@@ -439,24 +441,22 @@ def _plan_enable_dynamic_input(message: str, nodes: list[dict[str, Any]]) -> dic
     }
 
 
-def _plan_disconnect(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_disconnect(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if not any(keyword in message for keyword in ["断开", "断掉", "取消连接", "移除连接"]):
         return None
 
     node_id = _extract_node_id(message)
     if not node_id:
-        return {
-            "status": "needs_clarification",
-            "pending_patch": None,
-            "questions": ["请提供要断开输入的目标节点 id。"],
-            "reason": "断线请求缺少明确节点 id。",
-        }
+        selector_result = _resolve_unique_node_selector(message, _clean_target_text(message), nodes, semantic_location=semantic_location)
+        if selector_result["status"] != "resolved":
+            return selector_result
+        node_id = str(selector_result["selector"]["id"])
     matches = find_nodes(nodes, {"id": node_id})
     if len(matches) != 1:
         return {
             "status": "needs_clarification",
             "pending_patch": None,
-            "questions": [f"未找到节点 id：{node_id}，请确认节点 id 是否正确。"],
+            "questions": [f"没有找到指定的内部节点 {node_id}，请改用目标页面、节点名称或业务对象描述。"],
             "reason": "指定节点 id 不存在。",
         }
 
@@ -465,7 +465,7 @@ def _plan_disconnect(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any
         return {
             "status": "needs_clarification",
             "pending_patch": None,
-            "questions": ["请说明要断开第几个输入端，例如：断开节点 2853d21 的输入 0。"],
+            "questions": ["请说明要断开哪个输入位置，例如：断开比较判断的第 1 个输入，或断开来自压差信号的输入。"],
             "reason": "断线请求缺少目标输入端口。",
             "target_node": _summarize_node(matches[0]),
         }
@@ -479,7 +479,13 @@ def _plan_disconnect(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def _resolve_unique_node_selector(
+    message: str,
+    target_text: str,
+    nodes: list[dict[str, Any]],
+    *,
+    semantic_location: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     node_id = _extract_node_id(message)
     if node_id:
         matches = find_nodes(nodes, {"id": node_id})
@@ -488,9 +494,13 @@ def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[di
         return {
             "status": "needs_clarification",
             "pending_patch": None,
-            "questions": [f"未找到节点 id：{node_id}，请确认节点 id 是否正确。"],
+            "questions": [f"没有找到指定的内部节点 {node_id}，请改用目标页面、节点名称或业务对象描述。"],
             "reason": "指定节点 id 不存在。",
         }
+
+    semantic_result = _selector_from_semantic_location(semantic_location, nodes)
+    if semantic_result is not None:
+        return semantic_result
 
     selector: dict[str, Any] = {}
     tab_label = _extract_tab_label(message, nodes)
@@ -512,7 +522,7 @@ def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[di
             return {
                 "status": "needs_clarification",
                 "pending_patch": None,
-                "questions": [f"名称为 {name_text} 的节点有 {len(exact_matches)} 个，请补充节点 id 或页面。"],
+                "questions": [f"名称为 {name_text} 的节点有 {len(exact_matches)} 个，请补充目标页面或业务对象。"],
                 "reason": "节点名称不唯一。",
                 "matched_nodes": [_summarize_node(node) for node in exact_matches[:10]],
             }
@@ -522,7 +532,7 @@ def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[di
         return {
             "status": "needs_clarification",
             "pending_patch": None,
-            "questions": ["请提供节点 id，或同时说明页面、节点类型、节点名称。"],
+            "questions": ["请说明目标所在页面、节点类型、节点名称或业务对象。"],
             "reason": "节点定位信息不足。",
         }
 
@@ -534,16 +544,34 @@ def _resolve_unique_node_selector(message: str, target_text: str, nodes: list[di
         return {
             "status": "needs_clarification",
             "pending_patch": None,
-            "questions": [f"没有找到匹配节点，请补充节点 id 或更准确的节点名称。当前选择器：{selector}"],
+            "questions": [f"没有找到匹配节点，请补充目标页面、节点名称或业务对象。当前选择器：{selector}"],
             "reason": "节点选择器未匹配到节点。",
         }
     return {
         "status": "needs_clarification",
         "pending_patch": None,
-        "questions": [f"匹配到 {len(matches)} 个节点，请补充节点 id 或更具体的页面/名称。"],
+        "questions": [f"匹配到 {len(matches)} 个节点，请补充更具体的页面、节点名称或业务对象。"],
         "reason": "节点选择器不唯一。",
         "matched_nodes": [_summarize_node(node) for node in matches[:10]],
     }
+
+
+def _selector_from_semantic_location(semantic_location: dict[str, Any] | None, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not isinstance(semantic_location, dict) or semantic_location.get("status") != "resolved":
+        return None
+    selected = semantic_location.get("selected")
+    if not isinstance(selected, dict):
+        return None
+    selector = selected.get("selector")
+    if not isinstance(selector, dict):
+        return None
+    node_id = selector.get("id")
+    if not isinstance(node_id, str) or not node_id:
+        return None
+    matches = find_nodes(nodes, {"id": node_id})
+    if len(matches) != 1:
+        return None
+    return {"status": "resolved", "selector": {"id": node_id}, "node": _summarize_node(matches[0])}
 
 
 def _resolve_tab_id_from_message(message: str, nodes: list[dict[str, Any]]) -> tuple[str | None, str | None]:

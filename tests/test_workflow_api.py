@@ -171,6 +171,53 @@ def test_workflow_plans_and_applies_natural_language_patch(tmp_path: Path) -> No
     assert renamed["name"] == "工作流规划-水泵比较节点"
 
 
+def test_workflow_renames_node_by_semantic_description(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把水泵控制里的比较判断改名为 演示节点"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["pending_patch"] == {"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": "演示节点"}
+    assert result["planner_result"]["target_resolution"]["status"] == "resolved"
+    assert result["semantic_target_candidates"][0]["display_name"].startswith("水泵控制 / 比较判断")
+    assert result["last_affected_node_ids"] == ["3a4c97e"]
+    nodes = load_project(result["current_project_path"])
+    assert next(item for item in nodes if item.get("id") == "3a4c97e")["name"] == "演示节点"
+
+
+def test_workflow_updates_recent_node_by_reference_after_confirmation(tmp_path: Path) -> None:
+    thread_id = f"pytest-semantic-reference-{uuid.uuid4().hex}"
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state, thread_id=thread_id)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把水泵控制里的比较判断改名为 演示节点"}]
+    renamed = invoke_workflow(created, thread_id=thread_id)
+    assert renamed["status"] == "patch_applied"
+    assert renamed["last_affected_node_ids"] == ["3a4c97e"]
+
+    renamed["messages"] = list(renamed["messages"]) + [{"role": "user", "content": "把刚才那个节点的阈值改为 3"}]
+    planned = invoke_workflow(renamed, thread_id=thread_id)
+
+    assert planned["status"] == "awaiting_patch_confirmation"
+    assert planned["pending_confirmation_patch"] == {"op": "update_param", "node_selector": {"id": "3a4c97e"}, "params": {"tripPoint": 3}}
+    assert planned["planner_result"]["target_resolution"]["selected"]["selector"] == {"id": "3a4c97e"}
+    assert planned["semantic_target_candidates"][0]["display_name"].startswith("水泵控制 / 演示节点")
+
+    applied = invoke_workflow_resume({"action": "approve"}, thread_id=thread_id)
+
+    assert applied["status"] == "patch_applied"
+    nodes = load_project(applied["current_project_path"])
+    target = next(item for item in nodes if item.get("id") == "3a4c97e")
+    assert target["name"] == "演示节点"
+    assert target["tripPoint"] == 3
+
+
 def test_workflow_plans_and_applies_replace_constant_patch(tmp_path: Path) -> None:
     state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)
@@ -219,6 +266,8 @@ def test_workflow_returns_clarification_when_planner_is_ambiguous(tmp_path: Path
     assert result["status"] == "awaiting_patch_clarification"
     assert result["next_action"] == "clarify_patch"
     assert result["planner_result"]["status"] == "needs_clarification"
+    assert result["semantic_target_candidates"]
+    assert "节点 id" not in result["messages"][-1]["content"]
     assert "需要补充信息" in result["messages"][-1]["content"]
 
 
@@ -473,7 +522,7 @@ def test_workflow_llm_planner_returns_clarification_after_feedback_failure(
 
     monkeypatch.setattr("app.graph.nodes.plan_patch_with_llm_dry_run_feedback", fake_llm_dry_run)
     created["use_llm_planner"] = True
-    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把比较判断改名为 不应执行"}]
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "请把比较判断改名"}]
 
     result = invoke_workflow(created)
 

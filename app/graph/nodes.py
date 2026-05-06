@@ -21,6 +21,7 @@ from app.services.requirement_extractor import RequirementExtractionError, extra
 from app.services.requirement_model import merge_requirement_slots, requirement_summary_from_slots
 from app.services.retrieval import RetrievalError, get_template_by_id, normalize_project_type, search_templates
 from app.services.runtime_store import postgres_runtime_enabled
+from app.services.semantic_locator import locate_semantic_targets, public_semantic_candidates
 from app.services.validator import validate_project
 
 
@@ -337,24 +338,61 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
 
     message = _last_user_content(state)
     memory_update = _recent_user_intent_update(state, message)
+    semantic_location = locate_semantic_targets(
+        message,
+        project_path=project_path,
+        project_type=state.get("project_type"),
+        template_id=state.get("selected_template_id"),
+        conversation_context=_planner_conversation_context(state),
+    )
+    semantic_candidates = public_semantic_candidates(semantic_location)
+    if semantic_location.get("status") == "candidates" and _should_ask_semantic_candidate_selection(semantic_location):
+        return {
+            **memory_update,
+            "semantic_target_candidates": semantic_candidates,
+            "planner_result": {
+                "status": "needs_clarification",
+                "pending_patch": None,
+                "questions": semantic_location.get("questions") or ["请确认要修改的目标对象。"],
+                "reason": "语义定位匹配到多个候选目标，需要用户确认。",
+                "target_resolution": semantic_location,
+                "matched_nodes": semantic_candidates,
+            },
+            "status": "awaiting_patch_clarification",
+            "next_action": "clarify_patch",
+        }
     result = plan_patch_request(
         message,
         project_path=project_path,
         template_id=state.get("selected_template_id"),
         project_type=state.get("project_type"),
+        semantic_location=semantic_location,
     )
     if result.get("status") == "planned":
         return {
             **memory_update,
+            "semantic_target_candidates": semantic_candidates,
             "planner_result": result,
             "pending_patch": result.get("pending_patch"),
             "status": "patch_planned",
             "next_action": None,
         }
     if _should_fallback_to_llm_planner(message, result, state):
-        return {**memory_update, **_plan_patch_with_llm_node(state, project_path, rule_result=result)}
+        return {
+            **memory_update,
+            "semantic_target_candidates": semantic_candidates,
+            **_plan_patch_with_llm_node(state, project_path, rule_result=result),
+        }
+    if semantic_location.get("status") in {"candidates", "needs_clarification"} and semantic_location.get("questions"):
+        result = {
+            **result,
+            "questions": semantic_location.get("questions"),
+            "target_resolution": semantic_location,
+            "matched_nodes": semantic_candidates,
+        }
     return {
         **memory_update,
+        "semantic_target_candidates": semantic_candidates,
         "planner_result": result,
         "status": "awaiting_patch_clarification",
         "next_action": "clarify_patch",
@@ -365,6 +403,11 @@ def _should_fallback_to_llm_planner(message: str, rule_result: dict[str, Any], s
     if rule_result.get("status") == "planned":
         return False
     return is_structural_change_intent(message) or bool(state.get("use_llm_planner"))
+
+
+def _should_ask_semantic_candidate_selection(location: dict[str, Any]) -> bool:
+    intent = location.get("intent")
+    return intent in {"rename_node", "update_param", "disconnect", "set_io_point"}
 
 
 def _plan_patch_with_llm_node(state: AgentState, project_path: str, *, rule_result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -629,6 +672,18 @@ def _recent_user_intent_update(state: AgentState, message: str) -> dict[str, Any
     if intents and intents[-1].get("message") == message and intents[-1].get("project_version_id") == intent["project_version_id"]:
         return {"recent_user_intents": intents[-5:]}
     return {"recent_user_intents": (intents + [intent])[-5:]}
+
+
+def _planner_conversation_context(state: AgentState) -> dict[str, Any]:
+    return {
+        "conversation_summary": state.get("conversation_summary"),
+        "recent_user_intents": state.get("recent_user_intents", []),
+        "last_affected_node_ids": state.get("last_affected_node_ids", []),
+        "last_touched_entities": state.get("last_touched_entities", []),
+        "last_patch_summary": state.get("last_patch_summary"),
+        "semantic_target_candidates": state.get("semantic_target_candidates", []),
+        "requirement_slots": state.get("requirement_slots", {}),
+    }
 
 
 def _affected_node_ids(result: dict[str, Any]) -> list[str]:
