@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.services.json_project import get_tabs, load_project, summarize_project
 from app.services.knowledge import search_knowledge
 from app.services.llm_gateway import LLMGatewayError, chat_json
-from app.services.retrieval import RetrievalError, load_block_context, search_blocks, search_nodes, search_tabs
+from app.services.project_semantic_index import search_current_project_nodes, summarize_current_project_for_planner
+from app.services.retrieval import RetrievalError, load_block_context, load_node_neighborhood, search_blocks, search_nodes, search_tabs
 
 
 RiskLevel = Literal["low", "medium", "high"]
@@ -233,6 +234,8 @@ SYSTEM_PROMPT = """你是楼宇自控工程 JSON 智能体的结构化补丁规�
 3. 禁止只用 {"type": "compare"} 这类明显不唯一的选择器。
 4. 无法唯一定位节点、页面、端口或参数时，status 必须是 needs_clarification，并提出具体追问。
 5. 页面标签是 type="tab" 节点的 label 字段；用户要求把页面标签中的 A 改成 B 时，应先在 tabs 上唯一定位包含 A 的页面，再输出 update_param，node_selector 使用该 tab id，params 只修改 {"label": "替换后的完整页面标签"}。不要把页面标签写入 name 字段，也不要新增备注或新增节点。
+6. 用户看不见内部节点 ID。节点 ID 只能来自系统提供的 target_resolution、current_project_nodes、node_neighborhoods 或 block_contexts；禁止要求用户提供节点 ID。
+7. 如果 target_resolution.selected 已唯一定位，优先使用它的 selector。若 target_resolution.candidates 不唯一，不要自行猜测，必须用候选的页面、名称、类型、关键参数、上下游摘要向用户追问。
 
 组合计划规则：
 1. 如果要把新增常量、设定值或传感器信号接入 compare/limit 的动态阈值端口，必须先 add_node_from_schema，再 enable_dynamic_input，最后 connect 到 target_input=1。
@@ -261,6 +264,9 @@ def plan_patch_with_llm(
     max_block_contexts: int = 2,
     max_attempts: int = 2,
     feedback_messages: list[str] | None = None,
+    conversation_context: dict[str, Any] | None = None,
+    target_resolution: dict[str, Any] | None = None,
+    current_project_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """使用 LLM 生成结构化补丁计划，但不执行工程修改。"""
 
@@ -275,6 +281,9 @@ def plan_patch_with_llm(
         template_id=template_id,
         project_type=project_type,
         max_block_contexts=max_block_contexts,
+        conversation_context=conversation_context,
+        target_resolution=target_resolution,
+        current_project_context=current_project_context,
     )
     feedback_history = list(feedback_messages or [])
     schema_errors: list[str] = []
@@ -324,8 +333,15 @@ def _build_planner_context(
     template_id: str | None,
     project_type: str | None,
     max_block_contexts: int,
+    conversation_context: dict[str, Any] | None = None,
+    target_resolution: dict[str, Any] | None = None,
+    current_project_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     nodes = load_project(project_path)
+    current_project = current_project_context or summarize_current_project_for_planner(project_path, max_nodes=80, max_chars=18000)
+    current_project_nodes = search_current_project_nodes(message, project_path=project_path, limit=12)
+    anchor_node_ids = _anchor_node_ids(target_resolution, current_project_nodes)
+    node_neighborhoods = _load_node_neighborhoods(project_path, anchor_node_ids)
     blocks = (
         search_blocks(message, template_id=template_id, project_type=project_type, limit=max_block_contexts)
         if template_id
@@ -346,6 +362,11 @@ def _build_planner_context(
         "template_id": template_id,
         "project_summary": summarize_project(nodes),
         "tabs": [{"id": tab_id, "label": label} for tab_id, label in get_tabs(nodes).items()],
+        "conversation_context": conversation_context or {},
+        "target_resolution": target_resolution,
+        "current_project": current_project,
+        "current_project_nodes": current_project_nodes,
+        "node_neighborhoods": node_neighborhoods,
         "knowledge": search_knowledge(message, limit=3),
         "related_tabs": search_tabs(message, template_id=template_id, limit=3) if template_id else [],
         "related_nodes": search_nodes(message, template_id=template_id, limit=10) if template_id else [],
@@ -377,10 +398,105 @@ def _compact_context_for_prompt(context: dict[str, Any]) -> dict[str, Any]:
         "template_id": context.get("template_id"),
         "project_summary": context.get("project_summary"),
         "tabs": context.get("tabs"),
+        "conversation_context": _compact_conversation_context(context.get("conversation_context")),
+        "target_resolution": _compact_target_resolution(context.get("target_resolution")),
+        "current_project": _compact_current_project(context.get("current_project")),
+        "current_project_nodes": context.get("current_project_nodes"),
+        "node_neighborhoods": context.get("node_neighborhoods"),
         "knowledge": context.get("knowledge"),
         "related_tabs": context.get("related_tabs"),
         "related_nodes": context.get("related_nodes"),
+        "related_blocks": context.get("related_blocks"),
         "block_contexts": context.get("block_contexts"),
+    }
+
+
+def _anchor_node_ids(target_resolution: dict[str, Any] | None, current_project_nodes: list[dict[str, Any]]) -> list[str]:
+    node_ids: list[str] = []
+    if isinstance(target_resolution, dict):
+        selected = target_resolution.get("selected")
+        if isinstance(selected, dict):
+            selector = selected.get("selector")
+            if isinstance(selector, dict) and isinstance(selector.get("id"), str):
+                node_ids.append(selector["id"])
+        for candidate in target_resolution.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            selector = candidate.get("selector")
+            if isinstance(selector, dict) and isinstance(selector.get("id"), str):
+                node_ids.append(selector["id"])
+    for node in current_project_nodes:
+        node_id = node.get("node_id") or node.get("id")
+        if isinstance(node_id, str):
+            node_ids.append(node_id)
+    result: list[str] = []
+    for node_id in node_ids:
+        if node_id not in result:
+            result.append(node_id)
+    return result[:5]
+
+
+def _load_node_neighborhoods(project_path: str, anchor_node_ids: list[str]) -> list[dict[str, Any]]:
+    neighborhoods: list[dict[str, Any]] = []
+    for node_id in anchor_node_ids[:3]:
+        try:
+            neighborhoods.append(load_node_neighborhood(project_path, [node_id], depth=1, max_nodes=32))
+        except RetrievalError:
+            continue
+    return neighborhoods
+
+
+def _compact_conversation_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "summary": value.get("conversation_summary"),
+        "recent_user_intents": value.get("recent_user_intents", [])[-5:] if isinstance(value.get("recent_user_intents"), list) else [],
+        "last_affected_node_ids": value.get("last_affected_node_ids", []),
+        "last_touched_entities": value.get("last_touched_entities", []),
+        "last_patch_summary": value.get("last_patch_summary"),
+    }
+
+
+def _compact_target_resolution(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {
+        "status": value.get("status"),
+        "intent": value.get("intent"),
+        "selected": _compact_candidate(value.get("selected")),
+        "candidates": [_compact_candidate(candidate) for candidate in (value.get("candidates") or []) if isinstance(candidate, dict)],
+        "questions": value.get("questions", []),
+        "target_queries": value.get("target_queries", []),
+        "knowledge_queries": value.get("knowledge_queries", []),
+    }
+
+
+def _compact_candidate(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {
+        "kind": value.get("kind", "node"),
+        "confidence": value.get("confidence"),
+        "selector": value.get("selector"),
+        "display_name": value.get("display_name"),
+        "description": value.get("description"),
+        "reason": value.get("reason"),
+        "tab_label": value.get("tab_label"),
+        "type": value.get("type"),
+        "name": value.get("name"),
+        "key_params": value.get("key_params", {}),
+    }
+
+
+def _compact_current_project(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {
+        "summary": value.get("summary"),
+        "tabs": value.get("tabs"),
+        "nodes": value.get("nodes"),
+        "budget": value.get("budget"),
     }
 
 

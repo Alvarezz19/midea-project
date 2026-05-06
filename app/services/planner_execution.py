@@ -26,6 +26,9 @@ def plan_patch_with_llm_dry_run_feedback(
     project_type: str | None = None,
     provider: str | None = None,
     llm_max_attempts: int = 2,
+    conversation_context: dict[str, Any] | None = None,
+    target_resolution: dict[str, Any] | None = None,
+    current_project_context: dict[str, Any] | None = None,
     planner: PlanPatchWithLLM | None = None,
     dry_runner: DryRunPatchToProject | None = None,
 ) -> dict[str, Any]:
@@ -51,6 +54,11 @@ def plan_patch_with_llm_dry_run_feedback(
             provider=provider,
             max_attempts=llm_max_attempts,
             feedback_messages=feedback_messages,
+            **_optional_context_kwargs(
+                conversation_context=conversation_context,
+                target_resolution=target_resolution,
+                current_project_context=current_project_context,
+            ),
         )
         pending_patch = planner_result.get("pending_patch")
         planner_attempts.append(
@@ -131,3 +139,19 @@ def _operation_count(patch: Any) -> int:
     if patch.get("op"):
         return 1
     return 0
+
+
+def _optional_context_kwargs(
+    *,
+    conversation_context: dict[str, Any] | None,
+    target_resolution: dict[str, Any] | None,
+    current_project_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if conversation_context is not None:
+        result["conversation_context"] = conversation_context
+    if target_resolution is not None:
+        result["target_resolution"] = target_resolution
+    if current_project_context is not None:
+        result["current_project_context"] = current_project_context
+    return result

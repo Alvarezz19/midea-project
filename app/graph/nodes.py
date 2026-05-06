@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -412,13 +413,17 @@ def _should_ask_semantic_candidate_selection(location: dict[str, Any]) -> bool:
 
 def _plan_patch_with_llm_node(state: AgentState, project_path: str, *, rule_result: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
-        result = plan_patch_with_llm_dry_run_feedback(
+        result = _call_llm_dry_run_feedback(
             _last_user_content(state),
-            project_path=project_path,
-            template_id=state.get("selected_template_id"),
-            project_type=state.get("project_type"),
-            provider=state.get("llm_provider"),
-            llm_max_attempts=int(state.get("llm_max_attempts") or 2),
+            {
+                "project_path": project_path,
+                "template_id": state.get("selected_template_id"),
+                "project_type": state.get("project_type"),
+                "provider": state.get("llm_provider"),
+                "llm_max_attempts": int(state.get("llm_max_attempts") or 2),
+                "conversation_context": _planner_conversation_context(state),
+                "target_resolution": rule_result.get("target_resolution") if isinstance(rule_result, dict) else None,
+            },
         )
     except LLMPlannerError as exc:
         question = _llm_fallback_question(str(exc), rule_result=rule_result)
@@ -496,6 +501,25 @@ def _plan_patch_with_llm_node(state: AgentState, project_path: str, *, rule_resu
         "status": "awaiting_patch_clarification",
         "next_action": "clarify_patch",
     }
+
+
+def _call_llm_dry_run_feedback(message: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    supported = _supported_keyword_arguments(plan_patch_with_llm_dry_run_feedback)
+    if supported is None:
+        return plan_patch_with_llm_dry_run_feedback(message, **kwargs)
+    filtered = {key: value for key, value in kwargs.items() if key in supported}
+    return plan_patch_with_llm_dry_run_feedback(message, **filtered)
+
+
+def _supported_keyword_arguments(func: Any) -> set[str] | None:
+    signature = inspect.signature(func)
+    supported: set[str] = set()
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return None
+        if parameter.kind in {inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}:
+            supported.add(parameter.name)
+    return supported
 
 
 def _llm_fallback_question(error: str, *, rule_result: dict[str, Any] | None) -> str:

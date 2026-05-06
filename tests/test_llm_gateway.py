@@ -187,6 +187,71 @@ def test_llm_planner_accepts_replace_constant_operation(monkeypatch: pytest.Monk
     }
 
 
+def test_llm_planner_uses_context_aware_project_semantics(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_context_project", version_id="v_context", versions_dir=tmp_path)
+    captured_prompt: dict[str, Any] = {}
+    target_resolution = {
+        "status": "resolved",
+        "intent": "rename_node",
+        "selected": {
+            "kind": "node",
+            "selector": {"id": "3a4c97e"},
+            "display_name": "水泵控制 / 比较判断 / 比较判断 (Compare)",
+            "description": "tripPoint=0",
+            "confidence": 0.92,
+        },
+        "candidates": [],
+        "questions": [],
+    }
+    conversation_context = {
+        "conversation_summary": {"current_goal": "修改水泵控制"},
+        "recent_user_intents": [{"message": "把水泵控制里的比较判断改名"}],
+        "last_affected_node_ids": ["3a4c97e"],
+        "last_touched_entities": [{"display_name": "水泵控制 / 比较判断"}],
+    }
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del provider
+        captured_prompt["system"] = messages[0]["content"]
+        captured_prompt["user"] = messages[1]["content"]
+        assert "禁止要求用户提供节点 ID" in messages[0]["content"]
+        assert "target_resolution" in messages[1]["content"]
+        assert "current_project_nodes" in messages[1]["content"]
+        assert "node_neighborhoods" in messages[1]["content"]
+        assert "last_affected_node_ids" in messages[1]["content"]
+        assert "3a4c97e" in messages[1]["content"]
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "按语义定位结果改名。",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [],
+            "operations": [{"op": "rename_node", "node_selector": {"id": "3a4c97e"}, "new_name": "上下文LLM-比较节点"}],
+            "validation_expectations": ["目标节点唯一"],
+            "questions": [],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+
+    result = plan_patch_with_llm(
+        "把水泵控制里的比较判断改名为 上下文LLM-比较节点",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+        conversation_context=conversation_context,
+        target_resolution=target_resolution,
+    )
+
+    assert result["status"] == "planned"
+    assert result["context"]["target_resolution"] == target_resolution
+    assert result["context"]["conversation_context"] == conversation_context
+    assert result["context"]["current_project_nodes"][0]["node_id"] == "3a4c97e"
+    assert result["context"]["node_neighborhoods"]
+    assert result["pending_patch"]["operations"][0]["node_selector"] == {"id": "3a4c97e"}
+    assert captured_prompt["user"]
+
+
 def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_dynamic", versions_dir=tmp_path)
 
