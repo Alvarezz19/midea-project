@@ -59,6 +59,7 @@ export interface SessionState {
   last_touched_entities?: Array<Record<string, unknown>>;
   last_patch_summary?: Record<string, unknown> | null;
   semantic_target_candidates?: SemanticTargetCandidate[];
+  user_intent_route?: Record<string, unknown> | null;
   advisory_result?: AdvisoryResult | null;
   pending_advice?: PendingAdvice | null;
   advice_history?: PendingAdvice[];

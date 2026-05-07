@@ -9,6 +9,7 @@ from langgraph.types import Command
 
 from app.graph.checkpointing import get_checkpointer
 from app.graph.nodes import (
+    advisory_chat_node,
     apply_pending_patch_node,
     classify_project_type,
     confirm_patch_interrupt_node,
@@ -18,12 +19,14 @@ from app.graph.nodes import (
     plan_patch_node,
     route_after_patch_application,
     route_after_patch_confirmation,
+    route_after_user_intent,
     retrieve_template_candidates,
     route_after_requirements,
     route_after_patch_planning,
     route_after_project_version,
     route_after_template_confirmation,
     route_after_template_selection,
+    route_user_intent_node,
     select_or_wait_template,
     summarize_result_node,
     validate_current_project_node,
@@ -42,6 +45,8 @@ def build_workflow(*, checkpointer: Any | None = None):
     graph.add_node("select_or_wait_template", select_or_wait_template)
     graph.add_node("confirm_template_interrupt", confirm_template_interrupt_node)
     graph.add_node("create_project_version", create_project_version_node)
+    graph.add_node("route_user_intent", route_user_intent_node)
+    graph.add_node("advisory_chat", advisory_chat_node)
     graph.add_node("plan_patch", plan_patch_node)
     graph.add_node("apply_pending_patch", apply_pending_patch_node)
     graph.add_node("confirm_patch_interrupt", confirm_patch_interrupt_node)
@@ -83,9 +88,20 @@ def build_workflow(*, checkpointer: Any | None = None):
         {
             "apply_pending_patch": "apply_pending_patch",
             "plan_patch": "plan_patch",
+            "route_user_intent": "route_user_intent",
             "validate_current_project": "validate_current_project",
         },
     )
+    graph.add_conditional_edges(
+        "route_user_intent",
+        route_after_user_intent,
+        {
+            "advisory_chat": "advisory_chat",
+            "plan_patch": "plan_patch",
+            "summarize_result": "summarize_result",
+        },
+    )
+    graph.add_edge("advisory_chat", "summarize_result")
     graph.add_conditional_edges(
         "plan_patch",
         route_after_patch_planning,

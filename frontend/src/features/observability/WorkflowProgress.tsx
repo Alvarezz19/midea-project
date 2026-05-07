@@ -5,12 +5,13 @@ import panelStyles from '../../styles/panel.module.css';
 
 const { Text } = Typography;
 
-type StepKey = 'requirement' | 'template' | 'template_confirmation' | 'planning' | 'dry_run' | 'risk_confirmation' | 'commit' | 'validation' | 'export';
+type StepKey = 'requirement' | 'template' | 'template_confirmation' | 'advisory' | 'planning' | 'dry_run' | 'risk_confirmation' | 'commit' | 'validation' | 'export';
 
 const workflowSteps: Array<{ key: StepKey; title: string; aliases: string[] }> = [
   { key: 'requirement', title: '需求分析', aliases: ['create_session', 'receive_message', 'analyze_requirement', 'requirement_analysis'] },
   { key: 'template', title: '模板检索', aliases: ['template_search', 'select_template', 'retrieve_template'] },
   { key: 'template_confirmation', title: '模板确认', aliases: ['template_confirmation'] },
+  { key: 'advisory', title: '建议', aliases: ['intent_routing', 'advisory_chat', 'advisory'] },
   { key: 'planning', title: '规划', aliases: ['plan_change', 'invoke_workflow', 'llm_planner'] },
   { key: 'dry_run', title: 'dry-run', aliases: ['dry_run', 'patch_dry_run'] },
   { key: 'risk_confirmation', title: '风险确认', aliases: ['risk_confirmation'] },

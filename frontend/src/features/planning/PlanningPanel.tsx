@@ -2,7 +2,7 @@ import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, 
 import { BulbOutlined, CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { confirmPatch, confirmTemplate, formatApiError, sendMessage } from '../../api/client';
-import type { AdvisoryResult, DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
+import type { AdvisoryResult, CandidateRequirement, DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -91,7 +91,7 @@ export function PlanningPanel() {
         {advisory || pendingAdvice || candidateRequirements.length ? (
           <AdvisoryView
             advisory={advisory ?? pendingAdvice}
-            candidateRequirementCount={candidateRequirements.length}
+            candidateRequirements={candidateRequirements}
             onAction={(message) => adviceActionMutation.mutate(message)}
             actionLoading={adviceActionMutation.isPending}
             disabled={!threadId}
@@ -172,13 +172,13 @@ export function PlanningPanel() {
 
 function AdvisoryView({
   advisory,
-  candidateRequirementCount,
+  candidateRequirements,
   onAction,
   actionLoading,
   disabled
 }: {
   advisory?: AdvisoryResult | null;
-  candidateRequirementCount: number;
+  candidateRequirements: CandidateRequirement[];
   onAction: (message: string) => void;
   actionLoading: boolean;
   disabled: boolean;
@@ -211,9 +211,7 @@ function AdvisoryView({
       <BriefTags title="前提" items={advisory?.assumptions ?? []} color="cyan" />
       <BriefTags title="风险" items={advisory?.risks ?? []} color="orange" />
       <BriefTags title="缺失" items={advisory?.missing_info ?? []} color="warning" />
-      {advisory?.candidate_requirements?.length || candidateRequirementCount ? (
-        <Text type="secondary">候选需求：{advisory?.candidate_requirements?.length ?? 0} 项，本会话累计 {candidateRequirementCount} 项。</Text>
-      ) : null}
+      <CandidateRequirementsView current={advisory?.candidate_requirements ?? []} accumulated={candidateRequirements} />
       <Space className={panelStyles.adviceActions} wrap>
         <Button
           type="primary"
@@ -232,6 +230,37 @@ function AdvisoryView({
         </Button>
       </Space>
       {adoptable?.reason ? <Text type="secondary">{adoptable.reason}</Text> : null}
+    </div>
+  );
+}
+
+function CandidateRequirementsView({
+  current,
+  accumulated
+}: {
+  current: CandidateRequirement[];
+  accumulated: CandidateRequirement[];
+}) {
+  const rows = mergeCandidateRequirements(current, accumulated);
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <div className={panelStyles.candidateRequirementBox}>
+      <div className={panelStyles.sectionHeading}>
+        <Text type="secondary">候选需求</Text>
+        <Tag color="blue">累计 {accumulated.length || rows.length}</Tag>
+      </div>
+      <List
+        size="small"
+        dataSource={rows.slice(0, 5)}
+        renderItem={(item) => (
+          <List.Item className={panelStyles.requirementItem}>
+            <Tag color={candidateRequirementColor(item.status)}>{candidateRequirementStatus(item.status)}</Tag>
+            <Text>{item.content ?? '未命名候选需求'}</Text>
+          </List.Item>
+        )}
+      />
     </div>
   );
 }
@@ -532,6 +561,37 @@ function recommendationText(value: Record<string, unknown>): string {
   const main = [value.value, value.unit].filter((item) => item !== undefined && item !== null && item !== '').join('');
   const range = value.range ? `范围 ${String(value.range)}` : '';
   return [main || '-', range].filter(Boolean).join(' · ');
+}
+
+function mergeCandidateRequirements(current: CandidateRequirement[], accumulated: CandidateRequirement[]): CandidateRequirement[] {
+  const result: CandidateRequirement[] = [];
+  const seen = new Set<string>();
+  [...current, ...accumulated].forEach((item) => {
+    const content = String(item.content ?? '').trim();
+    if (!content || seen.has(content)) {
+      return;
+    }
+    seen.add(content);
+    result.push(item);
+  });
+  return result;
+}
+
+function candidateRequirementStatus(status?: string): string {
+  const labels: Record<string, string> = {
+    observed: '提及',
+    candidate: '候选',
+    confirmed: '确认',
+    rejected: '拒绝'
+  };
+  return labels[status ?? ''] ?? '候选';
+}
+
+function candidateRequirementColor(status?: string): string {
+  if (status === 'confirmed') return 'success';
+  if (status === 'rejected') return 'default';
+  if (status === 'observed') return 'processing';
+  return 'cyan';
 }
 
 function normalizeOperations(patch: Record<string, unknown>): Array<Record<string, unknown>> {

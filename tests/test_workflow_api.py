@@ -80,6 +80,8 @@ def test_workflow_routes_advisory_question_without_patch(tmp_path: Path) -> None
     assert result["next_action"] == "review_advice"
     assert result["pending_patch"] is None
     assert result["planner_result"] is None
+    assert result["user_intent_route"]["route"] == "advisory_chat"
+    assert result["user_intent_route"]["intent_result"]["intent"] == "advisory_intent"
     assert result["advisory_result"]["answer"]
     assert result["advisory_result"]["basis"]
     assert result["pending_advice"]["adoptable_patch_intent"]["executable"] is True
@@ -133,6 +135,22 @@ def test_workflow_out_of_scope_question_does_not_plan_patch(tmp_path: Path) -> N
     assert result["planner_result"] is None
     assert result["advisory_result"]["status"] == "out_of_scope"
     assert result["candidate_requirements"] == []
+
+
+def test_workflow_high_risk_advisory_returns_unsafe_request(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和防冻保护", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "防冻保护能不能删掉？"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "advisory_unsafe_request"
+    assert result["pending_patch"] is None
+    assert result["advisory_result"]["status"] == "unsafe_request"
+    assert result["advisory_result"]["adoptable_patch_intent"]["executable"] is False
+    assert "防冻保护" in result["advisory_result"]["answer"]
+    assert result["advisory_result"]["risks"]
 
 
 def test_workflow_interrupts_and_resumes_template_confirmation(tmp_path: Path) -> None:
@@ -1101,6 +1119,40 @@ def test_api_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     export_after_rollback = client.get(f"/api/projects/{state['current_project_id']}/export")
     assert export_after_rollback.status_code == 200
     assert export_after_rollback.content == export.content
+
+
+def test_api_records_advisory_observability_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.state, "session_store", FileSessionStore(tmp_path / "sessions"))
+    client = TestClient(app)
+
+    created = client.post("/api/sessions", json={"auto_confirm_template": True, "versions_dir": str(tmp_path)})
+    assert created.status_code == 200
+    thread_id = created.json()["thread_id"]
+
+    initial = client.post(
+        f"/api/sessions/{thread_id}/message",
+        json={"message": "我要做 AHU 程序，需要送风温度控制和 Modbus 通讯"},
+    )
+    assert initial.status_code == 200
+    advice = client.post(
+        f"/api/sessions/{thread_id}/message",
+        json={"message": "把送风温度设定值改为多少比较好？"},
+    )
+    assert advice.status_code == 200
+    assert advice.json()["state"]["status"] == "advisory_answered"
+
+    events = client.get(f"/api/sessions/{thread_id}/events")
+    assert events.status_code == 200
+    assert "workflow.advisory.intent_classified" in events.text
+    assert "workflow.advisory.context_retrieved" in events.text
+
+    trace = client.get(f"/api/traces/{advice.json()['trace_id']}")
+    assert trace.status_code == 200
+    trace_events = trace.json()["events"]
+    event_types = [item["event_type"] for item in trace_events]
+    assert "workflow.advisory.intent_classified" in event_types
+    assert "workflow.advisory.context_retrieved" in event_types
+    assert any(item["step"] == "intent_routing" for item in trace_events)
 
 
 def test_api_confirms_or_cancels_medium_risk_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -395,6 +395,134 @@ def _route_advisory_before_patch(state: AgentState, user_message: str, *, projec
     return {"handled": False, "message": user_message, "update": {}}
 
 
+def route_user_intent_node(state: AgentState) -> dict[str, Any]:
+    project_path = state.get("current_project_path")
+    if not project_path:
+        return {
+            "user_intent_route": {"route": "summarize_result", "intent_result": {"intent": "uncertain"}},
+            "status": "error",
+            "error": "无法识别用户意图：current_project_path 为空。",
+            "next_action": "fix_project_version",
+        }
+
+    user_message = _last_user_content(state)
+    candidate_selection = _candidate_selection_from_state(state, user_message)
+    if candidate_selection:
+        source_message = str(candidate_selection.get("source_message") or user_message)
+        return {
+            "user_intent_route": {
+                "route": "plan_patch",
+                "intent": "patch_intent",
+                "intent_result": {
+                    "intent": "patch_intent",
+                    "relevance": "current_project",
+                    "confidence": 0.96,
+                    "topic": "语义候选选择",
+                    "reason": "用户选择了上一轮语义定位候选，继续执行原始修改意图。",
+                    "should_collect_candidate_requirement": False,
+                },
+                "original_message": user_message,
+                "patch_message": source_message,
+                "selected_candidate_id": candidate_selection.get("selected_candidate_id"),
+                "created_at": _utc_now_iso(),
+            },
+            "advisory_result": None,
+            "status": "user_intent_classified",
+            "next_action": None,
+            "error": None,
+        }
+    intent_result = classify_advisory_intent(
+        user_message,
+        pending_advice=state.get("pending_advice"),
+        project_path=str(project_path),
+        project_type=state.get("project_type"),
+        provider=state.get("llm_provider"),
+    )
+    intent = str(intent_result.get("intent") or "uncertain")
+    route: dict[str, Any] = {
+        "route": "plan_patch",
+        "intent": intent,
+        "intent_result": intent_result,
+        "original_message": user_message,
+        "created_at": _utc_now_iso(),
+    }
+
+    if intent == "advice_acceptance":
+        patch_message = _patch_message_from_pending_advice(state.get("pending_advice"))
+        if patch_message:
+            route["patch_message"] = patch_message
+            return {
+                "user_intent_route": route,
+                **_accepted_advice_update(state, intent_result, patch_message),
+            }
+        return {
+            "user_intent_route": {**route, "route": "summarize_result"},
+            "planner_result": {
+                "status": "needs_clarification",
+                "questions": ["上一轮建议还没有可执行的修改意图，请说明要采用的具体参数、目标页面或点位。"],
+                "intent_result": intent_result,
+            },
+            "pending_patch": None,
+            "status": "awaiting_patch_clarification",
+            "next_action": "clarify_patch",
+        }
+
+    if intent == "advice_override":
+        patch_message = str(intent_result.get("override_message") or "").strip()
+        if patch_message:
+            route["patch_message"] = patch_message
+            return {
+                "user_intent_route": route,
+                **_accepted_advice_update(state, intent_result, patch_message, override=True),
+            }
+        return {
+            "user_intent_route": {**route, "route": "summarize_result"},
+            "planner_result": {
+                "status": "needs_clarification",
+                "questions": ["请说明要覆盖采用的具体值或工程目标。"],
+                "intent_result": intent_result,
+            },
+            "pending_patch": None,
+            "status": "awaiting_patch_clarification",
+            "next_action": "clarify_patch",
+        }
+
+    if intent == "advice_rejection":
+        return {
+            "user_intent_route": {**route, "route": "summarize_result"},
+            **_rejected_advice_update(state, intent_result),
+        }
+
+    if intent in ADVISORY_INTENTS:
+        return {
+            "user_intent_route": {**route, "route": "advisory_chat"},
+            "status": "user_intent_classified",
+            "next_action": None,
+            "error": None,
+        }
+
+    return {
+        "user_intent_route": route,
+        "advisory_result": None,
+        "status": "user_intent_classified",
+        "next_action": None,
+        "error": None,
+    }
+
+
+def advisory_chat_node(state: AgentState) -> dict[str, Any]:
+    route = state.get("user_intent_route") if isinstance(state.get("user_intent_route"), dict) else {}
+    intent_result = route.get("intent_result") if isinstance(route.get("intent_result"), dict) else None
+    if intent_result is None:
+        intent_result = classify_advisory_intent_by_rules(
+            _last_user_content(state),
+            pending_advice=state.get("pending_advice"),
+            project_path=state.get("current_project_path"),
+            project_type=state.get("project_type"),
+        )
+    return _advisory_chat_update(state, str(route.get("original_message") or _last_user_content(state)), intent_result)
+
+
 def _advisory_chat_update(state: AgentState, user_message: str, intent_result: dict[str, Any]) -> dict[str, Any]:
     result = answer_advisory_question(
         user_message,
@@ -418,6 +546,12 @@ def _advisory_chat_update(state: AgentState, user_message: str, intent_result: d
         status = "advisory_needs_more_info"
     return {
         "advisory_result": result,
+        "user_intent_route": {
+            **(state.get("user_intent_route") if isinstance(state.get("user_intent_route"), dict) else {}),
+            "route": "advisory_chat",
+            "intent_result": intent_result,
+            "context_used": result.get("context_used"),
+        },
         "pending_advice": pending_advice,
         "advice_history": history,
         "advice_context_summary": update_advice_context_summary(state, result),
@@ -562,19 +696,24 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
     if not project_path:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
-    user_message = _last_user_content(state)
-    advisory_route = _route_advisory_before_patch(state, user_message, project_path=str(project_path))
-    if advisory_route.get("handled"):
-        update = dict(advisory_route.get("update") or {})
-        update.pop("handled", None)
-        return update
-    advisory_updates = dict(advisory_route.get("update") or {})
-    user_message = str(advisory_route.get("message") or user_message)
-    candidate_selection = _candidate_selection_from_state(state, user_message)
+    raw_user_message = _last_user_content(state)
+    route = state.get("user_intent_route") if isinstance(state.get("user_intent_route"), dict) else None
+    advisory_updates: dict[str, Any] = {}
+    if route is None:
+        advisory_route = _route_advisory_before_patch(state, raw_user_message, project_path=str(project_path))
+        if advisory_route.get("handled"):
+            update = dict(advisory_route.get("update") or {})
+            update.pop("handled", None)
+            return update
+        advisory_updates = dict(advisory_route.get("update") or {})
+        user_message = str(advisory_route.get("message") or raw_user_message)
+    else:
+        user_message = str(route.get("patch_message") or raw_user_message)
+    candidate_selection = _candidate_selection_from_state(state, raw_user_message)
     message = str(candidate_selection.get("source_message") or user_message) if candidate_selection else user_message
     memory_update = {
         **advisory_updates,
-        **_conversation_memory_update(state, user_message, effective_message=message, candidate_selection=candidate_selection),
+        **_conversation_memory_update(state, raw_user_message, effective_message=message, candidate_selection=candidate_selection),
     }
     if candidate_selection:
         semantic_location = _semantic_location_from_candidate_selection(candidate_selection)
@@ -999,8 +1138,18 @@ def route_after_project_version(state: AgentState) -> str:
     if state.get("pending_patch"):
         return "apply_pending_patch"
     if state.get("current_project_path") and not state.get("project_created_in_current_run"):
-        return "plan_patch"
+        return "route_user_intent"
     return "validate_current_project"
+
+
+def route_after_user_intent(state: AgentState) -> str:
+    route = state.get("user_intent_route") if isinstance(state.get("user_intent_route"), dict) else {}
+    target = route.get("route")
+    if target == "advisory_chat":
+        return "advisory_chat"
+    if target == "plan_patch":
+        return "plan_patch"
+    return "summarize_result"
 
 
 def route_after_patch_planning(state: AgentState) -> str:

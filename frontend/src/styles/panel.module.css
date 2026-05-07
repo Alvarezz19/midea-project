@@ -205,6 +205,28 @@
   margin-bottom: 6px;
 }
 
+.candidateRequirementBox {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 152, 209, 0.2);
+  border-radius: 8px;
+  background: #f6fbfd;
+}
+
+.requirementItem {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start !important;
+  padding: 5px 0 !important;
+}
+
+.requirementItem :global(.ant-typography) {
+  overflow-wrap: anywhere;
+}
+
 .compactDescriptions {
   margin-top: 10px;
 }
@@ -752,6 +774,10 @@
   }
 
   .operationItem {
+    grid-template-columns: 1fr;
+  }
+
+  .requirementItem {
     grid-template-columns: 1fr;
   }
 

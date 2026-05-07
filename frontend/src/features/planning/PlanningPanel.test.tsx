@@ -280,6 +280,8 @@ describe('PlanningPanel', () => {
     expect(screen.getByText('设计建议')).toBeInTheDocument();
     expect(screen.getByText(/当前不会修改工程/)).toBeInTheDocument();
     expect(screen.getByText(/送风温度控制以送风温度为反馈/)).toBeInTheDocument();
+    expect(screen.getByText('候选需求')).toBeInTheDocument();
+    expect(screen.getByText('送风温度设定值按 24°C 考虑')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /采纳并生成修改计划/ }));
 

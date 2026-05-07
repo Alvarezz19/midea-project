@@ -12,6 +12,14 @@ from app.services.retrieval import RetrievalError, load_node_neighborhood
 from app.services.semantic_locator import locate_semantic_targets, public_semantic_candidates
 
 
+SOURCE_WEIGHTS = {
+    "knowledge/AHU控制策略.md": 1.25,
+    "knowledge/机房群控控制策略.md": 1.2,
+    "knowledge/工程规范.md": 1.15,
+    "knowledge/补丁配方.md": 0.9,
+}
+
+
 def answer_advisory_question(
     message: str,
     *,
@@ -89,6 +97,8 @@ def build_advisory_queries(message: str, *, intent_result: dict[str, Any], proje
     if "防冻" in text:
         _append_unique(queries, "AHU 防冻保护 联锁 新风阀 热水阀 风机")
         _append_unique(queries, "工程规范 不可默认删除的保护逻辑")
+    if any(keyword in text for keyword in ("保护", "联锁", "旁路", "删除", "删掉", "取消", "去掉")):
+        _append_unique(queries, "工程规范 保护逻辑 联锁 禁止旁路 高风险")
     if any(keyword in text for keyword in ("机房", "水泵", "冷机", "冷却塔", "旁通")):
         _append_unique(queries, f"机房群控 {topic} 控制策略")
     _append_unique(queries, f"工程规范 {topic} 修改 风险")
@@ -264,6 +274,15 @@ def _deterministic_advisory_result(message: str, *, context: dict[str, Any], int
         missing_info = ["现有防冻输入点", "触发后的联锁动作", "替代保护链路"]
         candidates = [_candidate_requirement("防冻保护应保留，不默认删除")]
         adoptable = {"executable": False, "message": "", "reason": "高风险保护删除不应由咨询建议直接转为补丁。"}
+    elif any(keyword in text for keyword in ("联锁", "保护")) and any(keyword in text for keyword in ("删", "删除", "取消", "去掉", "旁路")):
+        status = "unsafe_request"
+        answer += " 不建议删除或旁路保护、联锁逻辑。此类逻辑通常承担设备安全、故障隔离或防误动作约束，应先确认替代保护链路。"
+        recommendation = {"value": "保留保护联锁", "unit": "", "range": "", "confidence": "high"}
+        assumptions = ["该问题涉及保护或联锁链路。"]
+        risks.extend(["删除或旁路保护联锁可能导致设备损坏、误动作或安全约束失效。", "确需调整时必须按高风险补丁人工确认。"])
+        missing_info = ["现有保护输入点", "联锁动作对象", "替代保护策略"]
+        candidates = [_candidate_requirement("保护和联锁逻辑不默认删除或旁路")]
+        adoptable = {"executable": False, "message": "", "reason": "保护联锁删除属于高风险，不应由咨询建议直接转为补丁。"}
     else:
         answer += " 这个问题与工程设计相关，但当前信息不足以给出唯一参数。建议先明确运行目标、现场点表和已有控制对象，再决定是否转入修改计划。"
 
@@ -361,18 +380,31 @@ def _search_multi_query_knowledge(
     recipe_only: bool = False,
 ) -> list[dict[str, Any]]:
     by_key: dict[str, dict[str, Any]] = {}
-    for query in queries[:8]:
+    for query_index, query in enumerate(queries[:8]):
         for item in search_knowledge(query, limit=4, min_score=0.05):
             is_recipe = item.get("source_path") == "knowledge/补丁配方.md"
             if recipe_only and not is_recipe:
                 continue
             if not include_recipes and is_recipe:
                 continue
+            weighted = _weighted_knowledge_item(item, query_index=query_index)
             key = str(item.get("chunk_id") or f"{item.get('source_path')}#{item.get('title')}")
             previous = by_key.get(key)
-            if previous is None or float(item.get("score") or 0) > float(previous.get("score") or 0):
-                by_key[key] = item
-    return sorted(by_key.values(), key=lambda item: float(item.get("score") or 0), reverse=True)[:limit]
+            if previous is None or float(weighted.get("weighted_score") or 0) > float(previous.get("weighted_score") or 0):
+                by_key[key] = weighted
+    return sorted(by_key.values(), key=lambda item: float(item.get("weighted_score") or item.get("score") or 0), reverse=True)[:limit]
+
+
+def _weighted_knowledge_item(item: dict[str, Any], *, query_index: int) -> dict[str, Any]:
+    source = str(item.get("source_path") or "")
+    score = float(item.get("score") or 0)
+    source_weight = SOURCE_WEIGHTS.get(source, 1.0)
+    query_weight = max(0.72, 1.0 - query_index * 0.04)
+    weighted = dict(item)
+    weighted["source_weight"] = source_weight
+    weighted["query_weight"] = round(query_weight, 3)
+    weighted["weighted_score"] = round(score * source_weight * query_weight, 6)
+    return weighted
 
 
 def _context_used_summary(context: dict[str, Any]) -> dict[str, Any]:
@@ -388,6 +420,8 @@ def _context_used_summary(context: dict[str, Any]) -> dict[str, Any]:
         "queries": context.get("queries", []),
         "patch_support_queries": context.get("patch_support_queries", []),
         "knowledge_sources": sources,
+        "knowledge_item_count": len(knowledge),
+        "top_weighted_score": max((float(item.get("weighted_score") or item.get("score") or 0) for item in knowledge if isinstance(item, dict)), default=0),
         "loaded_project_context": bool(project_context),
         "target_status": (project_context.get("target_resolution") or {}).get("status") if project_context else None,
     }

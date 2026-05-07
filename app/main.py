@@ -1245,6 +1245,7 @@ def _empty_state(
         "last_touched_entities": [],
         "last_patch_summary": None,
         "semantic_target_candidates": [],
+        "user_intent_route": None,
         "advisory_result": None,
         "pending_advice": None,
         "advice_history": [],
@@ -1477,6 +1478,32 @@ def _workflow_update_payload(step: str, update: Any) -> dict[str, Any]:
         payload["error"] = str(update.get("error"))
     if isinstance(update.get("template_candidates"), list):
         payload["template_candidate_count"] = len(update["template_candidates"])
+    if isinstance(update.get("user_intent_route"), dict):
+        route = update["user_intent_route"]
+        intent_result = route.get("intent_result") if isinstance(route.get("intent_result"), dict) else {}
+        payload["intent_route"] = {
+            "route": route.get("route"),
+            "intent": route.get("intent") or intent_result.get("intent"),
+            "relevance": intent_result.get("relevance"),
+            "confidence": intent_result.get("confidence"),
+            "topic": intent_result.get("topic"),
+            "has_patch_message": bool(route.get("patch_message")),
+        }
+    if isinstance(update.get("advisory_result"), dict):
+        advisory = update["advisory_result"]
+        context_used = advisory.get("context_used") if isinstance(advisory.get("context_used"), dict) else {}
+        payload["advisory"] = {
+            "status": advisory.get("status"),
+            "topic": advisory.get("topic"),
+            "basis_count": len(advisory.get("basis") or []),
+            "risk_count": len(advisory.get("risks") or []),
+            "candidate_requirement_count": len(advisory.get("candidate_requirements") or []),
+            "adoptable": bool((advisory.get("adoptable_patch_intent") or {}).get("executable"))
+            if isinstance(advisory.get("adoptable_patch_intent"), dict)
+            else False,
+            "loaded_project_context": context_used.get("loaded_project_context"),
+            "knowledge_sources": context_used.get("knowledge_sources", []),
+        }
     if isinstance(update.get("planner_result"), dict):
         planner_result = update["planner_result"]
         payload["planner"] = {
@@ -1513,6 +1540,84 @@ def _derived_workflow_events(step: str, update: Any) -> list[dict[str, Any]]:
     if not isinstance(update, dict):
         return []
     events: list[dict[str, Any]] = []
+
+    if step == "route_user_intent" and isinstance(update.get("user_intent_route"), dict):
+        route = update["user_intent_route"]
+        intent_result = route.get("intent_result") if isinstance(route.get("intent_result"), dict) else {}
+        intent = str(route.get("intent") or intent_result.get("intent") or "unknown")
+        events.append(
+            {
+                "event_type": "workflow.advisory.intent_classified",
+                "step": "intent_routing",
+                "status": _event_status_from_update(step, update),
+                "message": "咨询/修改意图已分类",
+                "payload": {
+                    "intent": intent,
+                    "route": route.get("route"),
+                    "relevance": intent_result.get("relevance"),
+                    "confidence": intent_result.get("confidence"),
+                    "topic": intent_result.get("topic"),
+                    "should_load_project_context": intent_result.get("should_load_project_context"),
+                    "should_search_domain_knowledge": intent_result.get("should_search_domain_knowledge"),
+                },
+            }
+        )
+        if intent == "advice_acceptance":
+            events.append(
+                {
+                    "event_type": "workflow.advisory.accepted",
+                    "step": "intent_routing",
+                    "status": "completed",
+                    "message": "用户已采纳上一轮设计建议",
+                    "payload": {"patch_message": route.get("patch_message")},
+                }
+            )
+        if intent == "advice_rejection":
+            events.append(
+                {
+                    "event_type": "workflow.advisory.rejected",
+                    "step": "intent_routing",
+                    "status": "completed",
+                    "message": "用户未采纳上一轮设计建议",
+                    "payload": {"pending_advice_status": intent_result.get("pending_advice_status")},
+                }
+            )
+
+    if step == "advisory_chat" and isinstance(update.get("advisory_result"), dict):
+        advisory = update["advisory_result"]
+        context_used = advisory.get("context_used") if isinstance(advisory.get("context_used"), dict) else {}
+        events.append(
+            {
+                "event_type": "workflow.advisory.context_retrieved",
+                "step": "advisory_chat",
+                "status": "completed",
+                "message": "设计建议上下文已检索",
+                "payload": {
+                    "queries": context_used.get("queries", []),
+                    "patch_support_queries": context_used.get("patch_support_queries", []),
+                    "knowledge_sources": context_used.get("knowledge_sources", []),
+                    "loaded_project_context": context_used.get("loaded_project_context"),
+                    "target_status": context_used.get("target_status"),
+                },
+            }
+        )
+        meta = advisory.get("llm_meta") if isinstance(advisory.get("llm_meta"), dict) else None
+        if meta is not None:
+            events.append(
+                {
+                    "event_type": "workflow.advisory.llm.completed",
+                    "step": "advisory_chat",
+                    "status": "completed",
+                    "message": "设计建议 LLM 调用完成",
+                    "payload": {
+                        "provider": meta.get("provider"),
+                        "model": meta.get("model"),
+                        "prompt_name": meta.get("prompt_name"),
+                        "latency_ms": meta.get("latency_ms"),
+                        "usage": _llm_usage_summary(meta.get("usage")),
+                    },
+                }
+            )
 
     if step == "plan_patch" and isinstance(update.get("planner_attempts"), list):
         for item in _planner_attempt_events(update["planner_attempts"]):
@@ -1599,6 +1704,24 @@ def _planner_attempt_events(attempts: list[Any]) -> list[dict[str, Any]]:
 def _record_llm_calls_from_update(trace_id: str, update: Any) -> None:
     if not isinstance(update, dict):
         return
+    if isinstance(update.get("user_intent_route"), dict):
+        intent_result = update["user_intent_route"].get("intent_result")
+        if isinstance(intent_result, dict):
+            _record_llm_call_from_meta(
+                trace_id,
+                intent_result.get("llm_meta") if isinstance(intent_result.get("llm_meta"), dict) else None,
+                attempt=1,
+                status="completed",
+                error=None,
+            )
+    if isinstance(update.get("advisory_result"), dict):
+        _record_llm_call_from_meta(
+            trace_id,
+            update["advisory_result"].get("llm_meta") if isinstance(update["advisory_result"].get("llm_meta"), dict) else None,
+            attempt=1,
+            status="completed",
+            error=None,
+        )
     if isinstance(update.get("planner_attempts"), list):
         for index, attempt in enumerate(update["planner_attempts"], start=1):
             if not isinstance(attempt, dict):
@@ -1823,6 +1946,8 @@ _WORKFLOW_STEP_NAMES = {
     "select_or_wait_template": "template_confirmation",
     "confirm_template_interrupt": "template_confirmation",
     "create_project_version": "submit_version",
+    "route_user_intent": "intent_routing",
+    "advisory_chat": "advisory_chat",
     "plan_patch": "plan_change",
     "apply_pending_patch": "submit_version",
     "confirm_patch_interrupt": "risk_confirmation",
@@ -1838,6 +1963,8 @@ _WORKFLOW_STEP_MESSAGES = {
     "select_or_wait_template": "模板选择状态已更新",
     "confirm_template_interrupt": "模板确认已处理",
     "create_project_version": "工程版本创建步骤已完成",
+    "route_user_intent": "用户意图路由已完成",
+    "advisory_chat": "设计建议已生成",
     "plan_patch": "结构化修改计划已完成",
     "apply_pending_patch": "补丁执行步骤已完成",
     "confirm_patch_interrupt": "风险确认已处理",
@@ -1938,6 +2065,7 @@ def _public_state(state: AgentState) -> dict[str, Any]:
         "last_touched_entities": state.get("last_touched_entities", []),
         "last_patch_summary": state.get("last_patch_summary"),
         "semantic_target_candidates": state.get("semantic_target_candidates", []),
+        "user_intent_route": state.get("user_intent_route"),
         "advisory_result": state.get("advisory_result"),
         "pending_advice": state.get("pending_advice"),
         "advice_history": state.get("advice_history", []),

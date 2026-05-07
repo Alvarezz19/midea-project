@@ -169,6 +169,7 @@ def test_advisory_context_keeps_patch_recipes_out_of_primary_knowledge() -> None
     patch_sources = [item["source_path"] for item in context["patch_support_context"]]
     assert primary_sources
     assert "knowledge/补丁配方.md" not in primary_sources
+    assert all("weighted_score" in item for item in context["knowledge_context"])
     assert patch_sources
     assert set(patch_sources) == {"knowledge/补丁配方.md"}
 
