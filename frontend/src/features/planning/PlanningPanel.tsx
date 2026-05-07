@@ -21,7 +21,7 @@ export function PlanningPanel() {
   const designBrief = state?.design_brief;
   const conformance = state?.conformance_report ?? state?.validation_report?.conformance_report;
   const advisory = state?.advisory_result;
-  const pendingAdvice = state?.pending_advice;
+  const pendingAdvice = state?.pending_advice?.status === 'pending_review' ? state.pending_advice : null;
   const candidateRequirements = state?.candidate_requirements ?? [];
   const semanticCandidates = state?.semantic_target_candidates ?? [];
   const touchedEntities = state?.last_touched_entities ?? [];

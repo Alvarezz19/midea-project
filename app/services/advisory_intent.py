@@ -7,7 +7,7 @@ from typing import Any
 from app.services.llm_gateway import LLMGatewayError, chat_json
 
 
-ADVISORY_INTENTS = {"advisory_intent", "domain_question", "out_of_scope", "uncertain"}
+ADVISORY_INTENTS = {"advisory_intent", "domain_question", "out_of_scope"}
 
 DOMAIN_KEYWORDS = (
     "AHU",

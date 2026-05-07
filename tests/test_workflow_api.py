@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.graph.nodes import plan_patch_node
 from app.graph.state import initial_state
 from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
 from app.main import app
@@ -105,6 +106,53 @@ def test_workflow_accepts_advice_then_enters_planner(tmp_path: Path) -> None:
     assert result["planner_result"] or result["patch_result"] or result["pending_confirmation_patch"]
 
 
+def test_workflow_direct_patch_after_advice_supersedes_pending_advice(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把送风温度设定值改为多少比较好？"}]
+    advised = invoke_workflow(created)
+    assert advised["pending_advice"]["status"] == "pending_review"
+
+    advised["messages"] = list(advised["messages"]) + [{"role": "user", "content": "新增一个 CO2 控制页面"}]
+    result = invoke_workflow(advised)
+
+    assert result["status"] in {"patch_applied", "awaiting_patch_clarification", "awaiting_patch_confirmation"}
+    assert result["pending_advice"] is None
+    assert result["advisory_result"] is None
+    assert result["user_intent_route"]["intent_result"]["intent"] == "patch_intent"
+    assert any(item.get("status") == "superseded" for item in result["advice_history"])
+
+
+def test_plan_patch_node_requires_user_intent_route(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    created["user_intent_route"] = None
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把送风温度设定值改为多少比较好？"}]
+
+    result = plan_patch_node(created)
+
+    assert result["status"] == "error"
+    assert result["next_action"] == "fix_user_intent_route"
+    assert "route_user_intent" in result["error"]
+
+
+def test_workflow_uncertain_message_routes_to_patch_clarification(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "这个怎么处理？"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "awaiting_patch_clarification"
+    assert result["next_action"] == "clarify_patch"
+    assert result["pending_patch"] is None
+    assert result["advisory_result"] is None
+    assert result["user_intent_route"]["intent_result"]["intent"] == "uncertain"
+
+
 def test_workflow_rejects_advice_without_version_change(tmp_path: Path) -> None:
     state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)
@@ -149,6 +197,7 @@ def test_workflow_high_risk_advisory_returns_unsafe_request(tmp_path: Path) -> N
     assert result["pending_patch"] is None
     assert result["advisory_result"]["status"] == "unsafe_request"
     assert result["advisory_result"]["adoptable_patch_intent"]["executable"] is False
+    assert result["pending_advice"] is None
     assert "防冻保护" in result["advisory_result"]["answer"]
     assert result["advisory_result"]["risks"]
 
