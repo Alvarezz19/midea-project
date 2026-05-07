@@ -59,6 +59,11 @@ export interface SessionState {
   last_touched_entities?: Array<Record<string, unknown>>;
   last_patch_summary?: Record<string, unknown> | null;
   semantic_target_candidates?: SemanticTargetCandidate[];
+  advisory_result?: AdvisoryResult | null;
+  pending_advice?: PendingAdvice | null;
+  advice_history?: PendingAdvice[];
+  advice_context_summary?: Record<string, unknown> | null;
+  candidate_requirements?: CandidateRequirement[];
   open_questions?: Array<string | RequirementQuestion>;
   confirmed_requirements?: string[];
   template_candidates?: TemplateCandidate[];
@@ -81,6 +86,44 @@ export interface SessionState {
   next_action?: string | null;
   error?: string | null;
   use_llm_planner?: boolean;
+}
+
+export interface AdvisoryBasis {
+  source?: string;
+  summary?: string;
+}
+
+export interface CandidateRequirement {
+  content?: string;
+  status?: 'observed' | 'candidate' | 'confirmed' | 'rejected' | string;
+  needs_confirmation?: boolean;
+  created_at?: string;
+}
+
+export interface AdoptablePatchIntent {
+  executable?: boolean;
+  message?: string;
+  reason?: string;
+}
+
+export interface AdvisoryResult {
+  status?: 'answered' | 'needs_more_info' | 'out_of_scope' | 'unsafe_request' | string;
+  answer?: string;
+  topic?: string;
+  recommendation?: Record<string, unknown>;
+  basis?: AdvisoryBasis[];
+  assumptions?: string[];
+  risks?: string[];
+  missing_info?: string[];
+  candidate_requirements?: CandidateRequirement[];
+  adoptable_patch_intent?: AdoptablePatchIntent;
+  next_action?: string;
+  context_used?: Record<string, unknown>;
+}
+
+export interface PendingAdvice extends AdvisoryResult {
+  accepted_patch_message?: string;
+  created_at?: string;
 }
 
 export interface SemanticTargetCandidate {

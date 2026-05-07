@@ -1,8 +1,8 @@
 import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, Statistic, Tag, Typography, message as antMessage } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { BulbOutlined, CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
-import { confirmPatch, confirmTemplate, formatApiError } from '../../api/client';
-import type { DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
+import { confirmPatch, confirmTemplate, formatApiError, sendMessage } from '../../api/client';
+import type { AdvisoryResult, DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
 import panelStyles from '../../styles/panel.module.css';
 
@@ -20,6 +20,9 @@ export function PlanningPanel() {
   const visiblePatch = (planner?.pending_patch ?? pendingPatch) as Record<string, unknown> | null | undefined;
   const designBrief = state?.design_brief;
   const conformance = state?.conformance_report ?? state?.validation_report?.conformance_report;
+  const advisory = state?.advisory_result;
+  const pendingAdvice = state?.pending_advice;
+  const candidateRequirements = state?.candidate_requirements ?? [];
   const semanticCandidates = state?.semantic_target_candidates ?? [];
   const touchedEntities = state?.last_touched_entities ?? [];
   const [messageApi, holder] = antMessage.useMessage();
@@ -32,6 +35,12 @@ export function PlanningPanel() {
 
   const patchMutation = useMutation({
     mutationFn: (action: 'approve' | 'cancel') => confirmPatch(threadId!, action),
+    onSuccess: (data) => setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state }),
+    onError: (error) => messageApi.error(formatApiError(error))
+  });
+
+  const adviceActionMutation = useMutation({
+    mutationFn: (message: string) => sendMessage(threadId!, message),
     onSuccess: (data) => setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state }),
     onError: (error) => messageApi.error(formatApiError(error))
   });
@@ -79,6 +88,15 @@ export function PlanningPanel() {
         </div>
 
         {designBrief ? <DesignBriefView brief={designBrief} /> : null}
+        {advisory || pendingAdvice || candidateRequirements.length ? (
+          <AdvisoryView
+            advisory={advisory ?? pendingAdvice}
+            candidateRequirementCount={candidateRequirements.length}
+            onAction={(message) => adviceActionMutation.mutate(message)}
+            actionLoading={adviceActionMutation.isPending}
+            disabled={!threadId}
+          />
+        ) : null}
         {conformance ? <ConformanceReportView report={conformance} /> : null}
         {semanticCandidates.length || touchedEntities.length ? (
           <TargetResolutionView candidates={semanticCandidates} touchedEntities={touchedEntities} />
@@ -149,6 +167,72 @@ export function PlanningPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+function AdvisoryView({
+  advisory,
+  candidateRequirementCount,
+  onAction,
+  actionLoading,
+  disabled
+}: {
+  advisory?: AdvisoryResult | null;
+  candidateRequirementCount: number;
+  onAction: (message: string) => void;
+  actionLoading: boolean;
+  disabled: boolean;
+}) {
+  const adoptable = advisory?.adoptable_patch_intent;
+  const executable = Boolean(adoptable?.executable && adoptable.message);
+  const alertType = advisory?.status === 'unsafe_request' ? 'warning' : advisory?.status === 'out_of_scope' ? 'info' : 'success';
+  return (
+    <div className={panelStyles.section}>
+      <div className={panelStyles.sectionHeading}>
+        <Text strong>
+          <BulbOutlined /> 设计建议
+        </Text>
+        <Tag color={advisory?.status === 'unsafe_request' ? 'orange' : advisory?.status === 'out_of_scope' ? 'default' : 'cyan'}>
+          {advisoryStatusText(advisory?.status)}
+        </Tag>
+      </div>
+      {advisory?.answer ? (
+        <Alert className={panelStyles.inlineAlertTight} type={alertType} showIcon message={advisory.topic || '工程咨询'} description={advisory.answer} />
+      ) : (
+        <Text type="secondary">咨询建议会在这里展示，不会直接写入工程版本。</Text>
+      )}
+      {advisory?.recommendation && Object.keys(advisory.recommendation).length ? (
+        <Descriptions className={panelStyles.compactDescriptions} column={2} size="small" bordered>
+          <Descriptions.Item label="推荐">{recommendationText(advisory.recommendation)}</Descriptions.Item>
+          <Descriptions.Item label="置信度">{String(advisory.recommendation.confidence ?? '-')}</Descriptions.Item>
+        </Descriptions>
+      ) : null}
+      <BriefTags title="依据" items={(advisory?.basis ?? []).map((item) => [item.source, item.summary].filter(Boolean).join('：'))} color="blue" />
+      <BriefTags title="前提" items={advisory?.assumptions ?? []} color="cyan" />
+      <BriefTags title="风险" items={advisory?.risks ?? []} color="orange" />
+      <BriefTags title="缺失" items={advisory?.missing_info ?? []} color="warning" />
+      {advisory?.candidate_requirements?.length || candidateRequirementCount ? (
+        <Text type="secondary">候选需求：{advisory?.candidate_requirements?.length ?? 0} 项，本会话累计 {candidateRequirementCount} 项。</Text>
+      ) : null}
+      <Space className={panelStyles.adviceActions} wrap>
+        <Button
+          type="primary"
+          icon={<CheckCircleOutlined />}
+          disabled={disabled || !executable}
+          loading={actionLoading}
+          onClick={() => onAction('采纳建议')}
+        >
+          采纳并生成修改计划
+        </Button>
+        <Button disabled={disabled} loading={actionLoading} onClick={() => onAction('先不改，但把这个作为需求记录下来')}>
+          纳入候选需求
+        </Button>
+        <Button disabled={disabled} loading={actionLoading} onClick={() => onAction('先不改')}>
+          暂不采用
+        </Button>
+      </Space>
+      {adoptable?.reason ? <Text type="secondary">{adoptable.reason}</Text> : null}
+    </div>
   );
 }
 
@@ -432,6 +516,22 @@ function summaryText(summary?: Record<string, unknown>): string {
     return '-';
   }
   return `${String(summary.added_count ?? 0)}/${String(summary.removed_count ?? 0)}/${String(summary.modified_count ?? 0)}`;
+}
+
+function advisoryStatusText(status?: string): string {
+  const labels: Record<string, string> = {
+    answered: '已回答',
+    needs_more_info: '需补充',
+    out_of_scope: '范围外',
+    unsafe_request: '高风险'
+  };
+  return labels[status ?? ''] ?? '建议';
+}
+
+function recommendationText(value: Record<string, unknown>): string {
+  const main = [value.value, value.unit].filter((item) => item !== undefined && item !== null && item !== '').join('');
+  const range = value.range ? `范围 ${String(value.range)}` : '';
+  return [main || '-', range].filter(Boolean).join(' · ');
 }
 
 function normalizeOperations(patch: Record<string, unknown>): Array<Record<string, unknown>> {

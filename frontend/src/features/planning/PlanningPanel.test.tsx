@@ -218,6 +218,77 @@ describe('PlanningPanel', () => {
     expect(screen.getByText('需改造或复核')).toBeInTheDocument();
   });
 
+  it('renders advisory result and accepts it through the message API', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/sessions/thread_1/message' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            thread_id: 'thread_1',
+            trace_id: 'trace_5',
+            state: {
+              messages: [],
+              project_type: 'ahu',
+              status: 'awaiting_patch_clarification',
+              next_action: 'clarify_patch',
+              advisory_result: null,
+              pending_advice: {
+                status: 'accepted',
+                accepted_patch_message: '把送风温度设定值改为 24°C'
+              }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'ahu',
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'advisory_answered',
+        next_action: 'review_advice',
+        advisory_result: {
+          status: 'answered',
+          topic: '送风温度设定值',
+          answer: '这是设计建议问题，当前不会修改工程。送风温度设定值可先按 24°C 考虑。',
+          recommendation: { value: 24, unit: '°C', range: '22-26°C', confidence: 'medium' },
+          basis: [{ source: 'knowledge/AHU控制策略.md', summary: '送风温度控制以送风温度为反馈。' }],
+          assumptions: ['常规 AHU 舒适性控制'],
+          risks: ['设定过低会增加能耗。'],
+          missing_info: ['是否节能优先'],
+          candidate_requirements: [{ content: '送风温度设定值按 24°C 考虑', status: 'candidate', needs_confirmation: true }],
+          adoptable_patch_intent: {
+            executable: true,
+            message: '把送风温度设定值改为 24°C',
+            reason: '建议值明确，可进入现有补丁规划链路。'
+          }
+        },
+        candidate_requirements: [{ content: '送风温度设定值按 24°C 考虑', status: 'candidate', needs_confirmation: true }]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <PlanningPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByText('设计建议')).toBeInTheDocument();
+    expect(screen.getByText(/当前不会修改工程/)).toBeInTheDocument();
+    expect(screen.getByText(/送风温度控制以送风温度为反馈/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /采纳并生成修改计划/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/sessions/thread_1/message', expect.any(Object)));
+    const messageCall = fetchMock.mock.calls.find((call) => call[0] === '/api/sessions/thread_1/message') as [string, RequestInit] | undefined;
+    expect(messageCall?.[1].body).toBe(JSON.stringify({ message: '采纳建议' }));
+    expect(useWorkbenchStore.getState().state?.pending_advice?.accepted_patch_message).toBe('把送风温度设定值改为 24°C');
+  });
+
   it('renders semantic target candidates and touched entities in user-readable form', () => {
     useWorkbenchStore.setState({
       threadId: 'thread_1',

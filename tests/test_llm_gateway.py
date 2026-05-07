@@ -10,6 +10,7 @@ import app.services.llm_gateway as llm_gateway
 from app.core.config import Settings
 from app.main import app
 from app.services.json_project import create_project_version
+from app.services.advisory import answer_advisory_question, build_advisory_context
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
 from app.services.planner_execution import plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_extractor import extract_requirement_with_llm
@@ -103,6 +104,94 @@ def test_requirement_extract_api(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 200
     assert response.json()["project_type"] == "ahu"
     assert response.json()["llm_meta"]["provider"] == "deepseek"
+
+
+def test_advisory_repairs_llm_execution_confusion_without_overwriting_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_prompt: dict[str, str] = {}
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del provider, kwargs
+        captured_prompt["system"] = messages[0]["content"]
+        captured_prompt["user"] = messages[1]["content"]
+        return {
+            "status": "needs_more_info",
+            "answer": "典型范围可按 22-26°C 讨论，但当前缺少目标节点位置。",
+            "topic": "送风温度设定值",
+            "recommendation": {"value": None, "unit": "°C", "range": "22-26°C", "confidence": "low"},
+            "basis": [{"source": "knowledge/AHU控制策略.md", "summary": "送风温度控制以设定温度为目标。"}],
+            "assumptions": ["常规 AHU"],
+            "risks": ["设定过低会增加能耗。"],
+            "missing_info": ["当前工程中送风温度设定节点的具体位置。"],
+            "candidate_requirements": [],
+            "adoptable_patch_intent": {
+                "executable": False,
+                "message": "",
+                "reason": "缺少目标节点，不能生成补丁。",
+            },
+            "_llm_meta": {"provider": "deepseek", "model": "fake", "prompt_name": "advisory_chat"},
+        }
+
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+    result = answer_advisory_question(
+        "把送风温度设定值改为多少比较好？",
+        state={"project_type": "ahu"},
+        intent_result={
+            "intent": "advisory_intent",
+            "topic": "送风温度设定值",
+            "should_search_domain_knowledge": True,
+            "should_load_project_context": False,
+        },
+        provider="deepseek",
+    )
+
+    assert "咨询是否可回答" in captured_prompt["system"]
+    assert "patch_support_context" in captured_prompt["user"]
+    assert result["status"] == "answered"
+    assert "典型范围可按 22-26°C" in result["answer"]
+    assert result["basis"][0]["source"] == "knowledge/AHU控制策略.md"
+    assert result["adoptable_patch_intent"]["message"] == "把送风温度设定值改为 24°C"
+    assert result["llm_meta"]["provider"] == "deepseek"
+
+
+def test_advisory_context_keeps_patch_recipes_out_of_primary_knowledge() -> None:
+    context = build_advisory_context(
+        "把送风温度设定值改为多少比较好？",
+        state={"project_type": "ahu"},
+        intent_result={
+            "intent": "advisory_intent",
+            "topic": "送风温度设定值",
+            "should_search_domain_knowledge": True,
+            "should_load_project_context": False,
+        },
+    )
+
+    primary_sources = [item["source_path"] for item in context["knowledge_context"]]
+    patch_sources = [item["source_path"] for item in context["patch_support_context"]]
+    assert primary_sources
+    assert "knowledge/补丁配方.md" not in primary_sources
+    assert patch_sources
+    assert set(patch_sources) == {"knowledge/补丁配方.md"}
+
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_INTEGRATION") != "1", reason="需要显式开启真实 LLM 集成验收。")
+def test_advisory_real_deepseek_answers_typical_design_question() -> None:
+    result = answer_advisory_question(
+        "把送风温度设定值改为多少比较好？",
+        state={"project_type": "ahu"},
+        intent_result={
+            "intent": "advisory_intent",
+            "topic": "送风温度设定值",
+            "should_search_domain_knowledge": True,
+            "should_load_project_context": False,
+        },
+        provider="deepseek",
+    )
+
+    assert result["status"] == "answered"
+    assert result["answer"]
+    assert result["basis"]
+    assert result["adoptable_patch_intent"]["message"]
+    assert result["llm_meta"]["provider"] == "deepseek"
 
 
 def test_llm_planner_validates_structured_patch_plan(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

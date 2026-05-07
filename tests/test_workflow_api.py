@@ -66,6 +66,75 @@ def test_workflow_can_create_project_version(tmp_path: Path) -> None:
     assert '"requirement_slots"' in metadata
 
 
+def test_workflow_routes_advisory_question_without_patch(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    original_version_id = created["current_project_version_id"]
+    original_path = created["current_project_path"]
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把送风温度设定值改为多少比较好？"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "advisory_answered"
+    assert result["next_action"] == "review_advice"
+    assert result["pending_patch"] is None
+    assert result["planner_result"] is None
+    assert result["advisory_result"]["answer"]
+    assert result["advisory_result"]["basis"]
+    assert result["pending_advice"]["adoptable_patch_intent"]["executable"] is True
+    assert result["current_project_version_id"] == original_version_id
+    assert result["current_project_path"] == original_path
+
+
+def test_workflow_accepts_advice_then_enters_planner(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把送风温度设定值改为多少比较好？"}]
+    advised = invoke_workflow(created)
+
+    advised["messages"] = list(advised["messages"]) + [{"role": "user", "content": "就按你说的改"}]
+    result = invoke_workflow(advised)
+
+    assert result["status"] in {"patch_applied", "awaiting_patch_clarification", "awaiting_patch_confirmation"}
+    assert result["pending_advice"]["status"] == "accepted"
+    assert result["pending_advice"]["accepted_patch_message"] == "把送风温度设定值改为 24°C"
+    assert result["planner_result"] or result["patch_result"] or result["pending_confirmation_patch"]
+
+
+def test_workflow_rejects_advice_without_version_change(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    original_version_id = created["current_project_version_id"]
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把送风温度设定值改为多少比较好？"}]
+    advised = invoke_workflow(created)
+
+    advised["messages"] = list(advised["messages"]) + [{"role": "user", "content": "先不改"}]
+    result = invoke_workflow(advised)
+
+    assert result["status"] == "advisory_rejected"
+    assert result["pending_advice"] is None
+    assert result["pending_patch"] is None
+    assert result["current_project_version_id"] == original_version_id
+
+
+def test_workflow_out_of_scope_question_does_not_plan_patch(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "Python 怎么写爬虫？"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "advisory_out_of_scope"
+    assert result["pending_patch"] is None
+    assert result["planner_result"] is None
+    assert result["advisory_result"]["status"] == "out_of_scope"
+    assert result["candidate_requirements"] == []
+
+
 def test_workflow_interrupts_and_resumes_template_confirmation(tmp_path: Path) -> None:
     thread_id = f"pytest-template-interrupt-{uuid.uuid4().hex}"
     state = initial_state("我要做 AHU 程序，需要直膨机、排风机和 Modbus 通讯")

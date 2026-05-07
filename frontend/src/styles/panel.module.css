@@ -200,6 +200,11 @@
   gap: 4px;
 }
 
+.adviceActions {
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
 .compactDescriptions {
   margin-top: 10px;
 }

@@ -16,6 +16,11 @@ class AgentState(TypedDict):
     last_touched_entities: list[dict[str, Any]]
     last_patch_summary: dict[str, Any] | None
     semantic_target_candidates: list[dict[str, Any]]
+    advisory_result: dict[str, Any] | None
+    pending_advice: dict[str, Any] | None
+    advice_history: list[dict[str, Any]]
+    advice_context_summary: dict[str, Any] | None
+    candidate_requirements: list[dict[str, Any]]
     open_questions: list[dict[str, Any]]
     confirmed_requirements: list[str]
     template_candidates: list[dict[str, Any]]
@@ -57,6 +62,11 @@ def initial_state(message: str, *, project_type: str | None = None, auto_confirm
         "last_touched_entities": [],
         "last_patch_summary": None,
         "semantic_target_candidates": [],
+        "advisory_result": None,
+        "pending_advice": None,
+        "advice_history": [],
+        "advice_context_summary": None,
+        "candidate_requirements": [],
         "open_questions": [],
         "confirmed_requirements": [],
         "template_candidates": [],

@@ -10,6 +10,8 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.graph.state import AgentState
+from app.services.advisory import answer_advisory_question, update_advice_context_summary
+from app.services.advisory_intent import ADVISORY_INTENTS, classify_advisory_intent, classify_advisory_intent_by_rules
 from app.services.design_brief import build_design_brief, selected_design_brief_for_state
 from app.services.json_project import create_project_version, create_project_version_from_nodes, load_project
 from app.services.patch_engine import PatchEngineError, dry_run_patch
@@ -40,6 +42,11 @@ def classify_project_type(state: AgentState) -> dict[str, Any]:
 
 def collect_requirements(state: AgentState) -> dict[str, Any]:
     user_text = _last_user_content(state)
+    if state.get("current_project_path") and _should_skip_requirement_collection_for_advisory(state, user_text):
+        return {
+            "status": "requirements_collected",
+            "next_action": None,
+        }
     rule_summary = analyze_requirement(
         user_text,
         existing=state.get("requirement_summary"),
@@ -75,6 +82,16 @@ def _try_extract_requirement_with_llm(message: str, *, provider: str | None) -> 
         return extract_requirement_with_llm(message, provider=provider)
     except RequirementExtractionError:
         return None
+
+
+def _should_skip_requirement_collection_for_advisory(state: AgentState, message: str) -> bool:
+    intent = classify_advisory_intent_by_rules(
+        message,
+        pending_advice=state.get("pending_advice"),
+        project_path=state.get("current_project_path"),
+        project_type=state.get("project_type"),
+    )
+    return intent.get("intent") in ADVISORY_INTENTS | {"advice_acceptance", "advice_override", "advice_rejection"}
 
 
 def retrieve_template_candidates(state: AgentState) -> dict[str, Any]:
@@ -333,15 +350,232 @@ def create_project_version_node(state: AgentState) -> dict[str, Any]:
     }
 
 
+def _route_advisory_before_patch(state: AgentState, user_message: str, *, project_path: str) -> dict[str, Any]:
+    intent_result = classify_advisory_intent(
+        user_message,
+        pending_advice=state.get("pending_advice"),
+        project_path=project_path,
+        project_type=state.get("project_type"),
+        provider=state.get("llm_provider"),
+    )
+    intent = intent_result.get("intent")
+    if intent == "advice_acceptance":
+        patch_message = _patch_message_from_pending_advice(state.get("pending_advice"))
+        if patch_message:
+            return {
+                "handled": False,
+                "message": patch_message,
+                "update": _accepted_advice_update(state, intent_result, patch_message),
+            }
+        return {
+            "handled": True,
+            "update": {
+                "planner_result": {
+                    "status": "needs_clarification",
+                    "questions": ["上一轮建议还没有可执行的修改意图，请说明要采用的具体参数、目标页面或点位。"],
+                    "intent_result": intent_result,
+                },
+                "pending_patch": None,
+                "status": "awaiting_patch_clarification",
+                "next_action": "clarify_patch",
+            },
+        }
+    if intent == "advice_override":
+        patch_message = str(intent_result.get("override_message") or "").strip()
+        if patch_message:
+            return {
+                "handled": False,
+                "message": patch_message,
+                "update": _accepted_advice_update(state, intent_result, patch_message, override=True),
+            }
+    if intent == "advice_rejection":
+        return {"handled": True, "update": _rejected_advice_update(state, intent_result)}
+    if intent in ADVISORY_INTENTS:
+        return {"handled": True, "update": _advisory_chat_update(state, user_message, intent_result)}
+    return {"handled": False, "message": user_message, "update": {}}
+
+
+def _advisory_chat_update(state: AgentState, user_message: str, intent_result: dict[str, Any]) -> dict[str, Any]:
+    result = answer_advisory_question(
+        user_message,
+        state=state,
+        intent_result=intent_result,
+        provider=state.get("llm_provider"),
+    )
+    history = _next_advice_history(state, result)
+    candidate_requirements = _merge_candidate_requirements(
+        state.get("candidate_requirements", []),
+        result.get("candidate_requirements") if intent_result.get("should_collect_candidate_requirement") else [],
+    )
+    pending_advice = _pending_advice_from_result(result)
+    status = "advisory_answered"
+    if result.get("status") == "out_of_scope":
+        status = "advisory_out_of_scope"
+        pending_advice = None
+    elif result.get("status") == "unsafe_request":
+        status = "advisory_unsafe_request"
+    elif result.get("status") == "needs_more_info":
+        status = "advisory_needs_more_info"
+    return {
+        "advisory_result": result,
+        "pending_advice": pending_advice,
+        "advice_history": history,
+        "advice_context_summary": update_advice_context_summary(state, result),
+        "candidate_requirements": candidate_requirements,
+        "pending_patch": None,
+        "pending_confirmation_patch": None,
+        "planner_result": None,
+        "planner_dry_run": None,
+        "risk_assessment": None,
+        "status": status,
+        "next_action": "review_advice" if status != "advisory_out_of_scope" else "send_message",
+        "error": None,
+    }
+
+
+def _accepted_advice_update(
+    state: AgentState,
+    intent_result: dict[str, Any],
+    patch_message: str,
+    *,
+    override: bool = False,
+) -> dict[str, Any]:
+    pending = dict(state.get("pending_advice") or {})
+    pending["status"] = "overridden" if override else "accepted"
+    pending["accepted_patch_message"] = patch_message
+    pending["accepted_at"] = _utc_now_iso()
+    pending["intent_result"] = intent_result
+    return {
+        "pending_advice": pending,
+        "advice_history": _next_advice_history(state, pending),
+        "advisory_result": None,
+        "planner_result": None,
+        "planner_dry_run": None,
+        "pending_patch": None,
+        "pending_confirmation_patch": None,
+    }
+
+
+def _rejected_advice_update(state: AgentState, intent_result: dict[str, Any]) -> dict[str, Any]:
+    pending = dict(state.get("pending_advice") or {})
+    pending["status"] = str(intent_result.get("pending_advice_status") or "rejected")
+    pending["rejected_at"] = _utc_now_iso()
+    pending["intent_result"] = intent_result
+    candidates = state.get("candidate_requirements", [])
+    if pending["status"] == "candidate" and isinstance(pending.get("candidate_requirements"), list):
+        candidates = _merge_candidate_requirements(candidates, pending["candidate_requirements"])
+    return {
+        "advisory_result": {
+            "status": "answered",
+            "answer": "已记录你的选择：当前不会修改工程。",
+            "topic": pending.get("topic") or intent_result.get("topic"),
+            "recommendation": pending.get("recommendation") if isinstance(pending.get("recommendation"), dict) else {},
+            "basis": [],
+            "assumptions": [],
+            "risks": [],
+            "missing_info": [],
+            "candidate_requirements": pending.get("candidate_requirements", []) if pending["status"] == "candidate" else [],
+            "adoptable_patch_intent": {"executable": False, "message": "", "reason": "用户暂不采纳。"},
+            "next_action": "send_message",
+        },
+        "pending_advice": None,
+        "advice_history": _next_advice_history(state, pending),
+        "candidate_requirements": candidates,
+        "pending_patch": None,
+        "pending_confirmation_patch": None,
+        "planner_result": None,
+        "planner_dry_run": None,
+        "risk_assessment": None,
+        "status": "advisory_rejected",
+        "next_action": "send_message",
+        "error": None,
+    }
+
+
+def _patch_message_from_pending_advice(pending_advice: Any) -> str | None:
+    if not isinstance(pending_advice, dict):
+        return None
+    patch_intent = pending_advice.get("adoptable_patch_intent")
+    if not isinstance(patch_intent, dict) or not patch_intent.get("executable"):
+        return None
+    message = str(patch_intent.get("message") or "").strip()
+    return message or None
+
+
+def _pending_advice_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    patch_intent = result.get("adoptable_patch_intent")
+    candidates = result.get("candidate_requirements")
+    if not isinstance(patch_intent, dict) and not isinstance(candidates, list):
+        return None
+    return {
+        "status": "pending_review",
+        "topic": result.get("topic"),
+        "answer": result.get("answer"),
+        "recommendation": result.get("recommendation"),
+        "candidate_requirements": candidates if isinstance(candidates, list) else [],
+        "adoptable_patch_intent": patch_intent if isinstance(patch_intent, dict) else {"executable": False, "message": "", "reason": ""},
+        "created_at": result.get("created_at") or _utc_now_iso(),
+    }
+
+
+def _next_advice_history(state: AgentState, item: dict[str, Any]) -> list[dict[str, Any]]:
+    history = list(state.get("advice_history") or [])
+    history.append(_compact_advice_history_item(item))
+    return history[-10:]
+
+
+def _compact_advice_history_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": item.get("status"),
+        "topic": item.get("topic"),
+        "recommendation": item.get("recommendation"),
+        "adoptable_patch_intent": item.get("adoptable_patch_intent"),
+        "created_at": item.get("created_at") or item.get("accepted_at") or item.get("rejected_at") or _utc_now_iso(),
+    }
+
+
+def _merge_candidate_requirements(existing: Any, new_items: Any) -> list[dict[str, Any]]:
+    result = [item for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
+    seen = {str(item.get("content")) for item in result if isinstance(item, dict) and item.get("content")}
+    if not isinstance(new_items, list):
+        return result
+    for item in new_items:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        result.append(
+            {
+                "content": content,
+                "status": str(item.get("status") or "candidate"),
+                "needs_confirmation": bool(item.get("needs_confirmation", True)),
+                "created_at": item.get("created_at") or _utc_now_iso(),
+            }
+        )
+    return result[-20:]
+
+
 def plan_patch_node(state: AgentState) -> dict[str, Any]:
     project_path = state.get("current_project_path")
     if not project_path:
         return {"status": "error", "error": "无法规划补丁：current_project_path 为空。", "next_action": "fix_project_version"}
 
     user_message = _last_user_content(state)
+    advisory_route = _route_advisory_before_patch(state, user_message, project_path=str(project_path))
+    if advisory_route.get("handled"):
+        update = dict(advisory_route.get("update") or {})
+        update.pop("handled", None)
+        return update
+    advisory_updates = dict(advisory_route.get("update") or {})
+    user_message = str(advisory_route.get("message") or user_message)
     candidate_selection = _candidate_selection_from_state(state, user_message)
     message = str(candidate_selection.get("source_message") or user_message) if candidate_selection else user_message
-    memory_update = _conversation_memory_update(state, user_message, effective_message=message, candidate_selection=candidate_selection)
+    memory_update = {
+        **advisory_updates,
+        **_conversation_memory_update(state, user_message, effective_message=message, candidate_selection=candidate_selection),
+    }
     if candidate_selection:
         semantic_location = _semantic_location_from_candidate_selection(candidate_selection)
     else:
@@ -388,7 +622,7 @@ def plan_patch_node(state: AgentState) -> dict[str, Any]:
         return {
             **memory_update,
             "semantic_target_candidates": semantic_candidates,
-            **_plan_patch_with_llm_node({**state, **memory_update}, project_path, rule_result=result),
+            **_plan_patch_with_llm_node({**state, **memory_update}, project_path, rule_result=result, message=message),
         }
     if semantic_location.get("status") in {"candidates", "needs_clarification"} and semantic_location.get("questions"):
         result = {
@@ -417,10 +651,16 @@ def _should_ask_semantic_candidate_selection(location: dict[str, Any]) -> bool:
     return intent in {"rename_node", "update_param", "disconnect", "set_io_point"}
 
 
-def _plan_patch_with_llm_node(state: AgentState, project_path: str, *, rule_result: dict[str, Any] | None = None) -> dict[str, Any]:
+def _plan_patch_with_llm_node(
+    state: AgentState,
+    project_path: str,
+    *,
+    rule_result: dict[str, Any] | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
     try:
         result = _call_llm_dry_run_feedback(
-            _last_user_content(state),
+            message or _last_user_content(state),
             {
                 "project_path": project_path,
                 "template_id": state.get("selected_template_id"),
@@ -848,6 +1088,9 @@ def _planner_conversation_context(state: AgentState) -> dict[str, Any]:
         "last_patch_summary": state.get("last_patch_summary"),
         "semantic_target_candidates": state.get("semantic_target_candidates", []),
         "requirement_slots": state.get("requirement_slots", {}),
+        "pending_advice": state.get("pending_advice"),
+        "advice_context_summary": state.get("advice_context_summary"),
+        "candidate_requirements": state.get("candidate_requirements", []),
     }
 
 
@@ -969,6 +1212,14 @@ def _build_assistant_summary(state: AgentState) -> str:
         planner_result = state.get("planner_result") or {}
         questions = planner_result.get("questions") or ["请补充修改目标。"]
         return "需要补充信息：" + "；".join(str(question) for question in questions)
+    if status in {"advisory_answered", "advisory_needs_more_info", "advisory_unsafe_request", "advisory_out_of_scope", "advisory_rejected"}:
+        advisory = state.get("advisory_result") or {}
+        answer = str(advisory.get("answer") or "").strip()
+        if answer:
+            return answer
+        if status == "advisory_rejected":
+            return "已记录你的选择，当前工程版本未变化。"
+        return "这是设计建议问题，当前不会修改工程。"
     if status == "awaiting_patch_confirmation":
         planner_result = state.get("planner_result") or {}
         risk_assessment = state.get("risk_assessment") or {}
