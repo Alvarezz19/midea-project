@@ -1,0 +1,64 @@
+{
+    "id": "",
+    "module_type": "moisture",
+    "category": "应用/含湿量",
+    "name": "含湿量 (Moisture Content)",
+    "description": "含湿量模块依据输入的干球温度(℃)和相对湿度(%RH)，计算空气的绝对含湿量(g/kg)。它表示每千克干空气中含有的水蒸气质量。",
+    "keywords": [
+        "含湿量",
+        "干球温度",
+        "湿度",
+        "绝对湿度",
+        "加湿",
+        "除湿"
+    ],
+    "usage_guides": [
+        "输入1：干球温度 (℃)。",
+        "输入2：相对湿度 (%)。",
+        "输出：含湿量 (g/kg)。",
+        "在精密加湿或除湿控制中，相比相对湿度，含湿量是更绝对的物理量。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "干球温度",
+            "type": "number",
+            "description": "单位为℃。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "相对湿度",
+            "type": "number",
+            "description": "单位为%RH。",
+            "condition": "always"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "number",
+            "description": "输出含湿量的计算结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "moisture",
+            "name": "含湿量",
+            "inputs": 2,
+            "outputs": 1,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

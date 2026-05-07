@@ -1,0 +1,95 @@
+    {
+        "id": "",
+        "module_type": "hwInput",
+        "category": "变量模块/物理输入",
+        "name": "物理输入 (Physical Input)",
+        "description": "物理输入模块用于创建控制器以及控制器KONG总线接入的IO扩展模块上具有输入功能的端口，实现对其进行配置并调用。",
+        "keywords": [ "采集", "读取", "传感器", "探头", "开关状态", "DI", "温度监测", "湿度监测", "CO2浓度", "模拟量输入", "通用输入", "电压信号", "电流信号", "热敏电阻", "铂电阻", "镍电阻", "BACnet", "线性变换", "线阻补偿", "内部状态监测"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "hwExpander": {
+            "type": "integer",
+            "description": "总线上的扩展模块地址。0 代表控制器本身 IO，1-31 代表总线上扩展IO模块地址。",
+            "minimum": 0,
+            "maximum": 31,
+            "default": 0
+            },
+            "hwChannelIndex": {
+            "type": "integer",
+            "description": "IO通道的地址编号。",
+            "minimum": 1,
+            "maximum": 32,
+            "default": 0
+            },
+            "user_defined_name": {
+            "type": "string",
+            "description": "实例名称",
+            "default": "物理输入"
+            }
+
+        },
+
+        "ports_definition": {
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"实例的值;信号为开关输入时,输出为布尔值;信号不为开关输出时,输出为数值",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "hwExpander": "{{hwExpander}}",
+        "hwChannelIndex": "{{hwChannelIndex}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 0,
+        "outputs": 1,
+        "type": "hwInput",
+        "hwChannelType": "Universal Input",
+        "hwInputMode": "DI",
+        "hwInputDefault": 0,
+        "hwInputResolution": 0.1,
+        "hwInputConvert": "none",
+        "hwInputConvertLowLimit": 0,
+        "hwInputConvertHightLimit": 100,
+        "bacnetVisible": false,
+        "bacnetObjectType": "OBJECT_DISABLED",
+        "bacnetObjectInstanceAuto": true,
+        "bacnetObjectInstance": 1,
+        "bacnetObjectPrefix": "",
+        "bacnetObjectDescription": "",
+        "bacnetObjectUnits": "No Units",
+        "bacnetObjectPolarity": 0,
+        "bacnetObjectCOV": false,
+        "bacnetObjectCOVInscreace": 0.1,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "modbusSlaveEnable": false,
+        "modbusSlaveRegAddr": 0,
+        "modbusSlaveRegType": "0",
+        "modbusSlaveRtuConvert": "none",
+        "modbusSlaveRtuConvertScale": 1,
+        "modbusSlave2Enable": false,
+        "modbusSlave2RegAddr": 0,
+        "modbusSlave2RegType": "0",
+        "modbusSlave2RtuConvert": "none",
+        "modbusSlave2RtuConvertScale": 1,
+        "modbusTcpSlaveEnable": false,
+        "modbusTcpSlaveRegAddr": 0,
+        "modbusTcpSlaveRegType": "0",
+        "modbusSlaveTcpConvert": "none",
+        "modbusSlaveTcpConvertScale": 1,
+        "hwInputResComp": 0
+
+    }
+}

@@ -1,0 +1,112 @@
+{
+    "id": "",
+    "module_type": "seq",
+    "category": "应用/通用电加热加减载逻辑",
+    "name": "通用电加热加减载逻辑 (Heating Sequencer)",
+    "description": "通用电加热加减载模块，是用于对多级电加热的开关控制的逻辑模块，根据输入的加热需求百分比的值，控制各级电加热的开关，不同级数的开关均有回差控制。支持设置各级功率权重和级间启动延时。",
+    "keywords": [
+        "电加热",
+        "加减载",
+        "顺序控制",
+        "分级控制"
+    ],
+    "usage_guides": [
+        "输入：加热需求 (0-100)。",
+        "配置'级数'(stages)和'各级占比'(stagesProportion)，定义加热器的分级逻辑。",
+        "设置'级间延时'(mutilOnDelay)，各级电加热按延时时间依次开启，防止瞬时电流过大。",
+        "需要关闭时，则多级电加热可以同时关闭。",
+        "假设电加热采用3级加热，加热功率比为1: x: y，加热器控制采用顺序启停模式，即按1、1+x、1+x+y依次启停"
+    ],
+    "parameters_schema": {
+        "mutilOnDelay": {
+            "type": "integer",
+            "description": "多级开启时的级间延时时间（秒）。",
+            "minimum": 1,
+            "default": 60
+        },
+        "mutilOnDelayFromInput": {
+            "type": "boolean",
+            "description": "级间延时是否由外部输入决定。",
+            "default": false
+        },
+        "stages": {
+            "type": "integer",
+            "description": "电加热的总级数。（最小为2，最大为16）",
+            "minimum": 2,
+            "maximum": 16,
+            "default": 2
+        },
+        "stagesProportion": {
+            "type": "array",
+            "description": "各级加热器功率占比（如[1, 1]表示两级功率相等）。",
+            "default": [
+                1,
+                1
+            ]
+        },
+        "inputsCount": {
+            "type": "integer",
+            "description": "动态输入时输入端口数量（范围 1~2）。",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "输入",
+            "type": "number",
+            "description": "加热需求百分比，输入信号（%），范围0~100。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "开启延时(s)",
+            "type": "integer",
+            "description": "多级需要同时开启时，各级分别延时的开启时间。",
+            "condition": "mutilOnDelayFromInput == true"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "integer",
+            "description": "输出信号为二进制组合。输出值的位0表示级数1的电加热的开关，位1表示级数2的电加热的开关，依次类推，0表示关，1表示开。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "seq",
+            "name": "通用电加热加减载逻辑",
+            "inputs": "{{inputsCount}}",
+            "outputs": 1,
+            "mutilOnDelay": "{{mutilOnDelay}}",
+            "mutilOnDelayFromInput": "{{mutilOnDelayFromInput}}",
+            "stages": "{{stages}}",
+            "stagesProportion": "{{stagesProportion}}",
+            "stagesProportionchanged": 1,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "debugView": [
+                {
+                    "n": "O1: ",
+                    "v": ""
+                },
+                {
+                    "n": "left:",
+                    "v": ""
+                }
+            ],
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

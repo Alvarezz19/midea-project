@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Midea JSON Agent Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>工程 JSON 智能体工作台</h1>
+          <p id="threadLabel">未创建会话</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="createSessionBtn" type="button">新建会话</button>
+          <button id="validateBtn" type="button" disabled>校验</button>
+          <button id="exportBtn" type="button" disabled>导出</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="panel conversation-panel">
+          <div class="panel-header">
+            <h2>会话</h2>
+            <span id="sessionStatus" class="status-pill">idle</span>
+          </div>
+
+          <div class="controls-grid">
+            <label>
+              项目类型
+              <select id="projectTypeSelect">
+                <option value="">自动判断</option>
+                <option value="plant_room">机房群控程序</option>
+                <option value="ahu">AHU 程序</option>
+              </select>
+            </label>
+            <div class="type-buttons" aria-label="项目类型快捷选择">
+              <button id="plantRoomTypeBtn" class="secondary" type="button">机房群控程序</button>
+              <button id="ahuTypeBtn" class="secondary" type="button">AHU 程序</button>
+            </div>
+            <label class="checkbox-row">
+              <input id="autoConfirmInput" type="checkbox" />
+              自动确认首个模板
+            </label>
+          </div>
+
+          <section class="requirement-card">
+            <div class="card-title-row">
+              <h3>结构化需求</h3>
+              <span id="requirementReady" class="mini-pill">未开始</span>
+            </div>
+            <div id="confirmedRequirements" class="chip-list"></div>
+            <div id="openQuestions" class="question-list"></div>
+          </section>
+
+          <div id="messages" class="messages" aria-live="polite"></div>
+
+          <form id="messageForm" class="composer">
+            <textarea id="messageInput" rows="4" placeholder="输入需求或修改指令"></textarea>
+            <div class="composer-actions">
+              <button id="sendMessageBtn" type="submit" disabled>发送</button>
+              <button id="planBtn" type="button" disabled>规划</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel template-panel">
+          <div class="panel-header">
+            <h2>模板候选</h2>
+            <span id="candidateCount" class="muted">0</span>
+          </div>
+          <div id="templateList" class="template-list"></div>
+        </section>
+
+        <section class="panel project-panel">
+          <div class="panel-header">
+            <h2>工程状态</h2>
+            <span id="projectStatus" class="status-pill">none</span>
+          </div>
+
+          <dl class="meta-list">
+            <div>
+              <dt>项目</dt>
+              <dd id="projectId">-</dd>
+            </div>
+            <div>
+              <dt>版本</dt>
+              <dd id="versionId">-</dd>
+            </div>
+            <div>
+              <dt>文件</dt>
+              <dd id="projectPath">-</dd>
+            </div>
+          </dl>
+
+          <div class="tabs">
+            <button class="tab-btn active" type="button" data-tab="summary">摘要</button>
+            <button class="tab-btn" type="button" data-tab="patch">补丁</button>
+            <button class="tab-btn" type="button" data-tab="validation">校验</button>
+          </div>
+
+          <div id="summaryTab" class="tab-page active">
+            <pre id="stateSummary" class="json-view">{}</pre>
+          </div>
+
+          <div id="patchTab" class="tab-page">
+            <div id="confirmationPanel" class="confirmation-panel" hidden>
+              <div>
+                <strong>待确认补丁</strong>
+                <p id="confirmationText">dry-run 已通过，需要确认后应用。</p>
+              </div>
+              <div class="confirmation-actions">
+                <button id="approvePatchBtn" type="button">确认应用</button>
+                <button id="cancelPatchBtn" class="secondary danger-text" type="button">取消</button>
+              </div>
+            </div>
+            <textarea id="patchInput" rows="10" spellcheck="false" placeholder='{"op":"rename_node","node_selector":{"id":"..."},"new_name":"..."}'></textarea>
+            <div class="composer-actions">
+              <button id="applyPatchBtn" type="button" disabled>应用补丁</button>
+              <button id="formatPatchBtn" type="button">格式化</button>
+            </div>
+            <pre id="patchResult" class="json-view">{}</pre>
+          </div>
+
+          <div id="validationTab" class="tab-page">
+            <pre id="validationResult" class="json-view">{}</pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

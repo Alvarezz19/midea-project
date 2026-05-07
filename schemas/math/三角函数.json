@@ -1,0 +1,89 @@
+{
+  "id": "",
+  "module_type": "circular",
+  "category": "运算模块/数学运算",
+  "name": "三角函数运算",
+  "description": "三角函数运算模块对输入信号进行三角函数运算。支持三种三角函数模式:正弦、余弦、正切。输入端口数值为弧度制(非角度制)。典型应用场景包括:周期信号处理、波形生成、振动分析、角度计算、运动控制、物理建模等。输入信号必须是数值类型。",
+  "keywords": [
+    "三角函数",
+    "正弦",
+    "余弦",
+    "正切",
+    "sin",
+    "cos",
+    "tan",
+    "sine",
+    "cosine",
+    "tangent",
+    "trigonometric",
+    "三角运算",
+    "弧度",
+    "周期函数",
+    "波形",
+    "三角函数运算",
+    "数学函数",
+    "周期信号",
+    "trigonometry"
+  ],
+  "usage_guides": [
+    "正弦模式(mode=sine): 对输入弧度值计算正弦值。运算公式: sin(输入) = 输出。示例: sin(π/2) = 1, sin(π) = 0。",
+    "余弦模式(mode=cosine): 对输入弧度值计算余弦值。运算公式: cos(输入) = 输出。示例: cos(π/2) = 0, cos(0) = 1。",
+    "正切模式(mode=tangent): 对输入弧度值计算正切值。运算公式: tan(输入) = 输出。示例: tan(π) = 0, tan(π/4) = 1。",
+    "重要说明: 输入端口数值必须为弧度制,而非角度制。如需将角度转换为弧度,公式为: 弧度 = 角度 × π / 180。",
+    "模式选择: 在参数配置中设置mode字段,可选值为sine(正弦)、cosine(余弦)、tangent(正切),默认值为sine。",
+    "应用场景1: 压缩机振动分析-分析压缩机、风机、水泵等旋转设备的振动信号,通过三角函数识别振动频率,诊断设备不平衡、不对中、松动等故障。",
+    "应用场景2: 交流电信号处理-处理电压、电流等交流电信号的正弦波形,计算有效值(RMS)、有功功率、功率因数等电力参数,监测电机运行状态。",
+    "应用场景3: 往复运动分析-分析活塞式压缩机、往复泵等设备的运动特性,通过正弦函数模拟活塞位移、速度、加速度的变化规律。",
+    "wires连接: wires数组包含1个空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 输入信号必须是数值类型;输入必须是弧度值,不是角度值;正切函数在π/2 + kπ(k为整数)处无定义,应避免这些输入值。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "mode": {
+      "type": "string",
+      "description": "三角函数模式。sine为正弦,cosine为余弦,tangent为正切。输入值为弧度制。",
+      "enum": ["sine", "cosine", "tangent"],
+      "default": "sine"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "弧度值",
+        "type": "number",
+        "description": "需要进行三角函数运算的弧度值(非角度制)",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "三角函数值",
+        "type": "number",
+        "description": "三角函数运算结果(正弦/余弦/正切值)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "circular",
+    "name": "{{user_defined_name}}",
+    "inputs": 1,
+    "outputs": 1,
+    "mode": "{{mode}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

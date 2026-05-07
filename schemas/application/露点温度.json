@@ -1,0 +1,63 @@
+{
+    "id": "",
+    "module_type": "dewpointT",
+    "category": "应用/露点温度",
+    "name": "露点温度 (Dew Point Temperature)",
+    "description": "露点温度模块依据输入的干球温度(℃)和相对湿度(%RH)，计算空气的露点温度(℃)。",
+    "keywords": [
+        "露点温度",
+        "干球温度",
+        "湿度",
+        "结露",
+        "除湿"
+    ],
+    "usage_guides": [
+        "输入1：干球温度 (℃)。",
+        "输入2：相对湿度 (%)。",
+        "输出：露点温度 (℃)。",
+        "露点温度是判断结露风险的关键指标，常用于冷辐射吊顶防结露控制、机房精密空调除湿控制等。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "干球温度",
+            "type": "number",
+            "description": "单位为℃。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "相对湿度",
+            "type": "number",
+            "description": "单位为%RH。",
+            "condition": "always"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "number",
+            "description": "输出露点温度的计算结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "dewpointT",
+            "name": "露点温度",
+            "inputs": 2,
+            "outputs": 1,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

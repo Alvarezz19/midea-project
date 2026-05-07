@@ -1,0 +1,2 @@
+# Python 依赖以 pyproject.toml 为准；此文件提供给习惯使用 pip -r 的环境。
+-e .[dev]

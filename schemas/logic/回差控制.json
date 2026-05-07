@@ -1,0 +1,102 @@
+{
+    "id": "",
+    "module_type": "hysteresis",
+    "category": "控制模块/回差控制",
+    "name": "回差控制 (Hysteresis)",
+    "description": "回差控制模块用于根据输入信号的上下阈值控制输出状态。开阀值和关阀值可以选择固定值或动态输入。",
+    "keywords": [
+      "回差",
+      "阈值控制",
+      "开关控制",
+      "动态输入",
+      "控制模块"
+    ],
+    "usage_guides": [
+      "当输入信号上升超过开阀值时，输出切换为高电平；当输入信号下降低于关阀值时，输出切换为低电平。",
+      "开阀值和关阀值可以独立设置为固定值或连接外部信号作为动态输入。",
+      "在开阀值大于关阀值时，模块可形成典型回差行为，防止输出因输入信号波动而频繁切换。",
+      "动态输入模式适用于需要实时调整阈值的场景，静态输入模式适用于阈值固定的控制逻辑。"
+    ],
+    "parameters_schema": {
+      "onThresholdDynamic": {
+        "type": "boolean",
+        "description": "开阀值是否动态输入。决定端口 2 是否激活。",
+        "default": false
+      },
+      "offThresholdDynamic": {
+        "type": "boolean",
+        "description": "关阀值是否动态输入。决定端口 3 是否激活。",
+        "default": false
+      },
+      "onThreshold": {
+        "type": "number",
+        "description": "开阀值的固定数值（onThresholdDynamic 为 false 时使用）。",
+        "default": 0
+      },
+      "offThreshold": {
+        "type": "number",
+        "description": "关阀值的固定数值（offThresholdDynamic 为 false 时使用）。",
+        "default": 0
+      },
+      "inputsCount": {
+        "type": "integer",
+        "description": "动态端口总数。计算逻辑：1 + (onThresholdDynamic?1:0) + (offThresholdDynamic?1:0)。",
+        "minimum": 1,
+        "maximum": 3,
+        "default": 1
+      }
+    },
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "label": "输入",
+          "type": "number",
+          "description": "进行回差控制的输入对象",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "开阀值",
+          "type": "number",
+          "description": "动态输入的开阀值边界",
+          "condition": "onThresholdDynamic == true"
+        },
+        {
+          "index": 2,
+          "label": "关阀值",
+          "type": "number",
+          "description": "动态输入的关阀值边界",
+          "condition": "offThresholdDynamic == true"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "label": "输出",
+          "type": "boolean",
+          "description": "回差控制结果（布尔值）",
+          "condition": "always"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "hysteresis",
+        "name": "{{user_defined_name}}",
+        "inputs": "{{inputsCount}}",
+        "outputs": 1,
+        "onThreshold": "{{onThreshold}}",
+        "offThreshold": "{{offThreshold}}",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "inputsOption": "{{inputsOptionArray}}",
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}"
+      }
+    ]
+  }
+  

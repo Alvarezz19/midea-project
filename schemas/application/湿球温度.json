@@ -1,0 +1,62 @@
+{
+    "id": "",
+    "module_type": "wetBulbT",
+    "category": "应用/湿球温度",
+    "name": "湿球温度 (Wet Bulb Temperature)",
+    "description": "湿球温度模块依据输入的干球温度(℃)和相对湿度(%RH)，计算空气的湿球温度(℃)。",
+    "keywords": [
+        "湿球温度",
+        "干球温度",
+        "湿度",
+        "冷却"
+    ],
+    "usage_guides": [
+        "输入1：干球温度 (℃)。",
+        "输入2：相对湿度 (%)。",
+        "输出：湿球温度 (℃)。",
+        "湿球温度反映了水分蒸发所能达到的最低温度，是冷却塔控制的关键参考，可判断冷却水可达到的极限温度。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "干球温度",
+            "type": "number",
+            "description": "单位为℃。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "相对湿度",
+            "type": "number",
+            "description": "单位为%RH。",
+            "condition": "always"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "number",
+            "description": "输出湿球温度的计算结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "wetBulbT",
+            "name": "湿球温度",
+            "inputs": 2,
+            "outputs": 1,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

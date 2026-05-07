@@ -1,0 +1,200 @@
+{
+    "id": "",
+    "module_type": "fuzzypid",
+    "category": "应用/自适应PID",
+    "name": "自适应PID (Adaptive PID)",
+    "description": "自适应PID模块，是一种基于模糊控制原理、能够根据反馈值与设定值的误差对PID的比例、积分、微分控制参数进行自适应调节的特殊PID控制模块。该模块解决了普通PID模块的PID参数需要手动设定、调试周期长、控制效果不稳定的问题，可以帮助工程师快速完成工程调试。",
+    "keywords": [
+        "自适应PID",
+        "模糊控制",
+        "参数自整定",
+        "稳定控制",
+        "温度",
+        "温差",
+        "压力",
+        "压差",
+        "CO2浓度"
+    ],
+    "usage_guides": [
+        "选择'控制对象域'(discourseDomain)，如温度或压力，模块将应用内置的优化算法。",
+        "PID参数（P/I/D）主要作为初始参考值，运行过程中算法会进行微调,不支持运行期外部修改PID参数。",
+        "输入端至少包括：使能信号、设定值(SV)、反馈值(PV)。",
+        "当[使能]端口输入为“不使能”（0）时，模块[输出值]根据[禁止时输出]的设定输出相应的值。当[使能]端口输入为“使能”（1）时，模块在上一刻[输出值]的基础上开始运算。",
+        "当[运算方向]为正向时：当 设定值 ＞ 输入+死区 时，“输出”逐渐增大。当 设定值 ＜ 输入-死区 时，“输出”逐渐减少。",
+        "当[运算方向]为反向时：当 设定值 ＞ 输入+死区 时，“输出”逐渐减少。当 设定值 ＜ 输入-死区 时，“输出”逐渐增大。",
+        "“输出”的值限制在[输出下限值 , 输出上限值]范围内。",
+        "可以通过设置inputsOption，开放部分参数的输入引脚。"
+    ],
+    "parameters_schema": {
+        "pidMode": {
+            "type": "string",
+            "description": "PID运算方向。如果对该项启用动态输入，当输入值为 0 表示正向运算，输入值为 非0 表示反向运算。",
+            "default": "direct"
+        },
+        "proportional": {
+            "type": "number",
+            "description": "初始比例增益(P)。",
+            "default": 20
+        },
+        "integral": {
+            "type": "number",
+            "description": "初始积分增益(I)。",
+            "default": 2
+        },
+        "derivative": {
+            "type": "number",
+            "description": "初始微分增益(D)。",
+            "default": 0
+        },
+        "highPidOutLimit": {
+            "type": "number",
+            "description": "PID输出上限。",
+            "default": 0
+        },
+        "lowPidOutLimit": {
+            "type": "number",
+            "description": "PID输出下限。",
+            "default": 0
+        },
+        "interval": {
+            "type": "integer",
+            "description": "PID运算的时间间隔（秒），是一个大于0的整数。",
+            "minimum": 1,
+            "default": 60
+        },
+        "deadBand": {
+            "type": "number",
+            "description": "死区范围。偏差在该范围内时不调整输出，是一个非负整数。",
+            "minimum": 0,
+            "default": 0
+        },
+        "disabledOutValue": {
+            "type": "string",
+            "description": "不使能（禁止）时的输出模式。max: 输出值为[上限值]；min: 输出值为[下限值]；zero: 输出值为0；hold: 输出值为[不使能前一刻的值]。",
+            "enum": ["hold", "max", "min", "zero"],
+            "default": "hold"
+        },
+        "discourseDomain": {
+            "type": "string",
+            "description": "控制对象类型（包括温度、温差、压力、压差、CO2浓度）。",
+            "enum": ["temperature", "temperatureDiff", "pressure", "pressureDiff", "co2density"],
+            "default": "temperature"
+        },
+        "inputsCount": {
+            "type": "integer",
+            "description": "动态输入时输入端口数量（范围 3~9）。",
+            "minimum": 3,
+            "maximum": 9,
+            "default": 3
+        },
+        "inputsOption": {
+            "type": "string array",
+            "description": "选择是否要对某些参数启用外部输入端口，以便在运行期动态修改这些参数。（可以多选）",
+            "enum": ["pidMode", "highPidOutLimit", "lowPidOutLimit", "interval", "deadBand","disabledOutValue"],
+            "default": "[]"
+        }
+    },
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "使能",
+            "type": "boolean",
+            "description": "PID运行的使能控制。0：不使能；1：使能。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "设定值",
+            "type": "number",
+            "description": "目标设定值。",
+            "condition": "always"
+        },
+        {
+            "index": 2,
+            "label": "输入",
+            "type": "number",
+            "description": "受控目标测量反馈值。",
+            "condition": "always"
+        },
+        {
+            "index": 3,
+            "label": "输出上限值",
+            "type": "number",
+            "description": "PID允许输出的上限值。",
+            "condition": "inputsOption 中包含'highPidOutLimit'"
+        },
+        {
+            "index": 4,
+            "label": "输出下限值",
+            "type": "number",
+            "description": "PID允许输出的下限值。",
+            "condition": "inputsOption 中包含'lowPidOutLimit'"
+        },
+        {
+            "index": 5,
+            "label": "运算间隔(S)",
+            "type": "integer",
+            "description": "PID运算的时间间隔，单位秒（s）。最小值为1秒。",
+            "condition": "inputsOption 中包含'interval'"
+        },
+        {
+            "index": 6,
+            "label": "死区",
+            "type": "non_negative_integer",
+            "description": "PID运算的死区DB。",
+            "condition": "inputsOption 中包含'deadBand'"
+        },
+        {
+            "index": 7,
+            "label": "模式",
+            "type": "boolean",
+            "description": "PID的运行模式，对应关系如下：0：正向PID；1：反向PID。",
+            "condition": "inputsOption 中包含'pidMode'"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "number",
+            "description": "运算结果。执行单元调节目标值。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "fuzzypid",
+            "name": "自适应PID",
+            "inputs": "{{inputsCount}}",
+            "outputs": 1,
+            "pidMode": "{{pidMode}}",
+            "proportional": "{{proportional}}",
+            "integral": "{{integral}}",
+            "derivative": "{{derivative}}",
+            "highPidOutLimit": "{{highPidOutLimit}}",
+            "lowPidOutLimit": "{{lowPidOutLimit}}",
+            "interval": "{{interval}}",
+            "deadBand": "{{deadBand}}",
+            "disabledOutValue": "{{disabledOutValue}}",
+            "proportionalChecked": false,
+            "integralChecked": false,
+            "derivativeChecked": false,
+            "highPidOutLimitChecked": false,
+            "lowPidOutLimitChecked": false,
+            "intervalChecked": false,
+            "deadBandChecked": false,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "inputsOption": "{{inputsOptionArray}}",
+            "discourseDomain": "{{discourseDomain}}",
+            "inputsOptionCache": [],
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

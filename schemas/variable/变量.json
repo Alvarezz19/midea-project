@@ -1,0 +1,119 @@
+    {
+        "id": "",
+        "module_type": "swInput",
+        "category": "变量模块/变量",
+        "name": "变量(软件输入)",
+        "description": "变量（软件输入）模块用于在控制系统中定义和管理软件层面的输入数据。这些变量可以是用户自定义的数值、状态或计算结果，用于存储和处理各种类型的数据。常用于存储传感器读数、温度、压力、流量等测量值，或作为公式计算中的输入参数。",
+        "keywords": ["变量", "软件输入", "数据管理", "用户自定义", "数值", "状态", "计算结果", "输入参数", "测量值", "传感器", "温度", "压力", "流量", "湿度", "读数", "设定值", "反馈值", "实际值", "目标值", "公式输入"],
+        "usage_guides": [
+            "作为公式计算的输入变量，如温度、压力、流量等物理量",
+            "存储传感器或仪表的测量值",
+            "接收外部系统传入的数据",
+            "作为控制算法的参数输入"
+        ],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "变量"
+            },
+            "inputCount": {
+            "type": "integer",
+            "description": "输入端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            },
+            "outputCount": {
+            "type": "integer",
+            "description": "输出端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            }
+
+        },
+        "ports_definition": {
+            "inputs":[
+                {
+                    "index": 0,
+                    "label":"输入",
+                    "type":"number",
+                    "description":"实例目标赋值;数据类型为开关值时,输入为布尔值;数据类型为模拟值时,则输入为数值",
+                    "condition":"always"
+                },
+                {
+                    "index": 1,
+                    "label":"使能输入",
+                    "type":"integer",
+                    "description":"使能控制实例对象的赋值;为0时,输入值不赋值至输出;为1或非0数值,把输入的值赋值至输出;端口未连接按1处理",
+                    "condition":"always"
+                }
+
+            ],
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"实例的值;信号为开关输入时,输出为布尔值;信号不为开关输出时,输出为数值",
+                    "condition":"always"
+
+                },
+                {
+                    "index": 1,
+                    "label":"当前优先级",
+                    "type":"unsigned integer",
+                    "description":"BACnet激活时,输出该对象的CurrentPriority,范围0-16;BACnet不激活,隐藏该端口",
+                    "condition":"当bacnetVisible为true时激活"
+
+                }
+            ]
+
+        },
+
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": "{{inputCount}}",
+        "outputs": "{{outputCount}}",
+        "type": "swInput",
+        "swInputType": "analog",
+        "swInputDefault": 0,
+        "swInputPriority": "16",
+        "bacnetVisible": false,
+        "bacnetObjectType": "OBJECT_DISABLED",
+        "bacnetObjectInstanceAuto": true,
+        "bacnetObjectInstance": 1,
+        "bacnetObjectUnits": "No Units",
+        "bacnetObjectPrefix": "",
+        "bacnetObjectDescription": "",
+        "bacnetObjectCOV": false,
+        "bacnetObjectCOVInscreace": 0.1,
+        "bacnetIsLargeAV": false,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "powerDownSave": false,
+        "modbusSlaveEnable": false,
+        "modbusSlaveRegAddr": 0,
+        "modbusSlaveRegType": "0",
+        "modbusSlaveRtuConvert": "none",
+        "modbusSlaveRtuConvertScale": 1,
+        "modbusSlave2Enable": false,
+        "modbusSlave2RegAddr": 0,
+        "modbusSlave2RegType": "0",
+        "modbusSlave2RtuConvert": "none",
+        "modbusSlave2RtuConvertScale": 1,
+        "modbusTcpSlaveEnable": false,
+        "modbusTcpSlaveRegAddr": 0,
+        "modbusTcpSlaveRegType": "0",
+        "modbusSlaveTcpConvert": "none",
+        "modbusSlaveTcpConvertScale": 1
+
+    }
+}
+

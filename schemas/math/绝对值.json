@@ -1,0 +1,77 @@
+{
+  "id": "",
+  "module_type": "absolute",
+  "category": "运算模块/数学运算",
+  "name": "绝对值运算",
+  "description": "绝对值运算模块对输入信号取绝对值,即输出不带符号的数值。无论输入是正数还是负数,输出始终为非负数。典型应用场景包括:计算温差(忽略方向)、测量偏差(忽略正负)、处理可能产生负值的传感器数据、距离计算、信号幅度计算等。输入信号必须是数值类型。",
+  "keywords": [
+    "绝对值",
+    "取绝对值",
+    "绝对值运算",
+    "abs",
+    "absolute",
+    "absolute value",
+    "magnitude",
+    "模",
+    "正值",
+    "非负",
+    "无符号",
+    "absolute operation",
+    "取正",
+    "数值转换",
+    "符号处理"
+  ],
+  "usage_guides": [
+    "基本用法: 连接1个输入信号,模块输出该输入的绝对值。运算公式: |输入| = 输出。",
+    "示例1: 输入为 38.2 时,输出为 38.2。",
+    "示例2: 输入为 -38.2 时,输出为 38.2。",
+    "示例3: 输入为 0 时,输出为 0。",
+    "应用场景1: 计算温差时忽略温差方向(升温或降温),只关注温差大小。",
+    "应用场景2: 处理传感器偏差值,确保偏差始终为正数,便于后续阈值判断。",
+    "应用场景3: 计算物理距离或信号幅度,这些量值本应是非负的。",
+    "wires连接: wires数组包含1个空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 输入信号必须是数值类型;输出始终为非负数;绝对值运算不改变数值大小,只改变符号。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "数值",
+        "type": "number",
+        "description": "需要取绝对值的数值(可为正数或负数)",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "绝对值",
+        "type": "number",
+        "description": "取绝对值后的非负数结果",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "absolute",
+    "name": "{{user_defined_name}}",
+    "inputs": 1,
+    "outputs": 1,
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

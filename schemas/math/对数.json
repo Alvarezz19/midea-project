@@ -1,0 +1,86 @@
+{
+  "id": "",
+  "module_type": "logarithm",
+  "category": "运算模块/数学运算",
+  "name": "对数运算",
+  "description": "对数运算模块对输入信号进行对数运算。支持两种对数模式:自然对数(以e为底)、常用对数(以10为底)。输入信号必须是正数。典型应用场景包括:分贝计算、pH值计算、指数增长分析、数据压缩、比例缩放、声学/光学计算、信息论计算等。输入信号必须为正数。",
+  "keywords": [
+    "对数",
+    "自然对数",
+    "常用对数",
+    "log",
+    "ln",
+    "lg",
+    "logarithm",
+    "对数运算",
+    "以e为底",
+    "以10为底",
+    "logarithmic",
+    "指数反运算",
+    "增长分析",
+    "比例计算",
+    "natural log",
+    "common log",
+    "base-10 log"
+  ],
+  "usage_guides": [
+    "自然对数模式(mode=ln): 以自然常数e(≈2.71828)为底的对数运算。运算公式: ln(输入) = 输出。示例: ln(e) = 1, ln(10) ≈ 2.3026。",
+    "常用对数模式(mode=log): 以10为底的对数运算。运算公式: lg(输入) = 输出。示例: lg(10) = 1, lg(100) = 2。",
+    "模式选择: 在参数配置中设置mode字段,可选值为ln(自然对数)、log(常用对数),默认值为ln。",
+    "输入限制: 输入信号必须是正数(大于0),不能为0或负数。",
+    "应用场景1: 噪音监测-使用常用对数计算环境噪音或设备运行噪音的分贝值,公式: dB = 20 × lg(实测电压/基准电压),用于评估机房、冷却塔等设备的噪音水平。",
+    "应用场景2: 温度变化分析-使用自然对数分析物体的加热或冷却过程,根据牛顿冷却定律计算温度变化速率,预测达到目标温度所需时间,优化启停控制策略。",
+    "应用场景3: 压缩机性能分析-使用自然对数分析压缩机的压缩比,计算多变指数,评估压缩机的热力过程效率和性能衰减情况。",
+    "wires连接: wires数组包含1个空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 输入信号必须是正数(>0);输入为0或负数时运算无定义。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "mode": {
+      "type": "string",
+      "description": "对数模式。ln为自然对数(以e为底),log为常用对数(以10为底)。输入必须为正数。",
+      "enum": ["ln", "log"],
+      "default": "ln"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "正数值",
+        "type": "number",
+        "description": "需要进行对数运算的正数(必须>0)",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "对数值",
+        "type": "number",
+        "description": "对数运算结果(自然对数或常用对数)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "logarithm",
+    "name": "{{user_defined_name}}",
+    "inputs": 1,
+    "outputs": 1,
+    "mode": "{{mode}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

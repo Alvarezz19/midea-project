@@ -1,0 +1,53 @@
+    {
+        "id": "",
+        "module_type": "nodeMonitor",
+        "category": "变量模块/节点监测",
+        "name": "节点监测(node monitor)",
+        "description": "节点监测模块对实例对象进行监测，如通讯不正常、或者配置错误等，均输出1，如监测实例的状态正常（标识为绿色），则输出0。",
+        "keywords": [ "节点监测", "节点状态", "性能监控"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "user_defined_name": {
+            "type": "string",
+            "description": "该模块的名称",
+            "default": "节点监测"
+            },
+            "labelName":{
+            "type": "string",
+            "description": "监测模块的id和名字",
+            "default": "[\"实例对象的节点地址\"] \"模块名字\""
+            }
+
+        },
+
+        "ports_definition": {
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"0表示监测节点正常,1表示监测节点不正常,如通讯故障等",
+                    "condition":"always"
+
+                }
+            ]
+
+        },
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "labelName": "{{labelName}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": 0,
+        "outputs": 1,
+        "type": "nodeMonitor",
+        "labelNameOld": "",
+        "outOfService": 0,
+        "outOfServiceValue": 0
+
+    }
+}
+

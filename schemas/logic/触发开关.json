@@ -1,0 +1,61 @@
+{
+    "id": "",
+    "module_type": "toggle",
+    "category": "逻辑模块/触发开关",
+    "name": "触发开关 (Toggle)",
+    "description": "触发开关模块用于对输入信号进行触发控制，输出保持触发状态直到控制信号变化。常用于事件触发和状态切换。",
+    "keywords": [
+      "触发",
+      "开关",
+      "切换",
+      "状态保持",
+      "事件触发"
+    ],
+    "usage_guides": [
+      "输入信号变化时，根据控制端口触发开关输出。",
+      "可用于实现事件触发逻辑或信号状态切换。",
+      "触发开关模块在检测输入信号有上升沿信号时，输出信号的开关状态发生转换(如1变0,0变1)。",
+      "一旦复位信号置位(为1)时，输出信号复位(为0)。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "name": "输入",
+          "type": "boolean",
+          "description": "输入控制信号"
+        },
+        {
+          "index": 1,
+          "name": "复位",
+          "type": "boolean",
+          "description": "复位信号。"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "name": "输出",
+          "type": "boolean",
+          "description": "输出结果。"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "toggle",
+        "name": "{{user_defined_name}}",
+        "inputs": 2,
+        "outputs": 1,
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": [[], []]
+      }
+    ]
+  }
+  

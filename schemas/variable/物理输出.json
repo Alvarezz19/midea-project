@@ -1,0 +1,140 @@
+    {
+        "id": "",
+        "module_type": "hwOutput",
+        "category": "变量模块/物理输出",
+        "name": "物理输出 (Physical Output)",
+        "description": "物理输出模块用于创建控制器以及控制器 KONG 总线接入的 IO 扩展模块上具有输出功能的端口，实现对其进行配置并调用。",
+        "keywords": [ "控制", "输出", "继电器", "接触器", "指示灯", "电磁阀", "变频器", "调光器", "阀门定位器", "执行机构", "记录仪", "电子膨胀阀", "DO", "模拟量输出", "通用输出", "线性变换", "默认值", "延迟开", "延迟关", "掉电保持"],
+        "usage_guides": [],
+        "parameters_schema": {
+            "hwExpander": {
+            "type": "integer",
+            "description": "总线上的扩展模块地址。0 代表控制器本身 IO，1-31 代表总线上扩展IO模块地址。",
+            "minimum": 0,
+            "maximum": 31,
+            "default": 0
+            },
+            "hwChannelIndex": {
+            "type": "integer",
+            "description": "IO通道的地址编号。",
+            "minimum": 1,
+            "maximum": 31,
+            "default": 1
+            },
+            "user_defined_name": {
+            "type": "string",
+            "description": "实例名称",
+            "default": "物理输出"
+            },
+            "inputCount": {
+            "type": "integer",
+            "description": "输入端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            },
+            "outputCount": {
+            "type": "integer",
+            "description": "输出端口数量",
+            "minimum": 1,
+            "maximum": 2,
+            "default": 1
+            }
+
+
+        },
+
+        "ports_definition": {
+            "inputs":[
+                {
+                    "index": 0,
+                    "label":"输入",
+                    "type":"number",
+                    "description":"实例目标赋值",
+                    "condition":"always"
+                },
+                {
+                    "index": 1,
+                    "label":"使能输入",
+                    "type":"integer",
+                    "description":"使能控制实例对象的赋值;为0时,输入值不赋值至输出;为1或非0数值,把输入的值赋值至输出;端口未连接按1处理",
+                    "condition":"always"
+                }
+
+            ],
+            "outputs":[
+                {
+                    "index": 0,
+                    "label":"输出",
+                    "type":"number",
+                    "description":"实例的值;信号为开关输入时,输出为布尔值;信号不为开关输出时,输出为数值",
+                    "condition":"always"
+
+                },
+                {
+                    "index": 1,
+                    "label":"当前优先级",
+                    "type":"unsigned integer",
+                    "description":"BACnet激活时,输出该对象的CurrentPriority,范围0-16;BACnet不激活,隐藏该端口",
+                    "condition":"当bacnetVisible为true时激活"
+
+                }
+            ]
+
+        },
+
+
+         "template_json": {
+        "id":  "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "name": "{{user_defined_name}}",
+        "hwExpander": "{{hwExpander}}",
+        "hwChannelIndex": "{{hwChannelIndex}}",
+        "x": "{{__POS_X__}}", 
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}",
+        "inputs": "{{inputCount}}",
+        "outputs": "{{outputCount}}",
+        "type": "hwOutput",
+        "hwChannelType": "Universal Output",
+        "hwOutputMode": "DO",
+        "hwOutputDefault": 0,
+        "hwOutputResolution": 0.1,
+        "hwOutputConvert": "none",
+        "hwOutputConvertLowLimit": 0,
+        "hwOutputConvertHightLimit": 100,
+        "hwOutputMinOnTime": 0,
+        "hwOutputMinOfftime": 0,
+        "bacnetVisible": false,
+        "bacnetObjectType": "OBJECT_DISABLED",
+        "bacnetObjectInstanceAuto": true,
+        "bacnetObjectInstance": 1,
+        "bacnetObjectPrefix": "",
+        "bacnetObjectDescription": "",
+        "bacnetObjectUnits": "No Units",
+        "bacnetObjectPolarity": 0,
+        "bacnetObjectCOV": false,
+        "bacnetObjectCOVInscreace": 0.1,
+        "hwOutputPriority": "16",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "powerDownSave": false,
+        "modbusSlaveEnable": false,
+        "modbusSlaveRegAddr": 0,
+        "modbusSlaveRegType": "0",
+        "modbusSlaveRtuConvert": "none",
+        "modbusSlaveRtuConvertScale": 1,
+        "modbusSlave2Enable": false,
+        "modbusSlave2RegAddr": 0,
+        "modbusSlave2RegType": "0",
+        "modbusSlave2RtuConvert": "none",
+        "modbusSlave2RtuConvertScale": 1,
+        "modbusTcpSlaveEnable": false,
+        "modbusTcpSlaveRegAddr": 0,
+        "modbusTcpSlaveRegType": "0",
+        "modbusSlaveTcpConvert": "none",
+        "modbusSlaveTcpConvertScale": 1
+
+    }
+}
+

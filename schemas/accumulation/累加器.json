@@ -1,0 +1,120 @@
+{
+    "id": "",
+    "module_type": "integral",
+    "category": "累计模块/累加器",
+    "name": "累加器 (Integral)",
+    "description": "累加器模块用于按照设定间隔时间累加输入信号，可设置复位值和上下限。复位值可为固定值或动态输入。",
+    "keywords": [
+      "累加器",
+      "积分",
+      "累计",
+      "复位",
+      "限高限低",
+      "时间间隔"
+    ],
+    "usage_guides": [
+      "根据输入信号和设定间隔时间累加数值，输出累积结果。",
+      "复位值可选择固定值或动态输入，动态输入可实时调整累加器的初始值。",
+      "可设置上限和下限限制累加结果范围，防止溢出或超出控制要求。",
+      "间隔时间单位可为秒、分、小时或天，每个单位的数值为整数，大于0。"
+    ],
+    "parameters_schema": {
+      "interval": {
+        "type": "integer",
+        "description": "累加间隔时间（整数，大于0）。",
+        "minimum": 1,
+        "default": 60
+      },
+      "units": {
+        "type": "string",
+        "description": "累加间隔单位。",
+        "enum": ["seconds", "minutes", "hours", "days"],
+        "default": "seconds"
+      },
+      "defaultFromInput": {
+        "type": "boolean",
+        "description": "复复位值是否由动态输入提供。为 true 时，激活第 3 个输入端口。",
+        "default": false
+      },
+      "defaultOutput": {
+        "type": "number",
+        "description": "复位值（静态模式下使用，defaultFromInput == false）。",
+        "default": 0
+      },
+      "highLimit": {
+        "type": "number",
+        "description": "累加器上限值。",
+        "maximum": 16777215,
+        "default": 0
+      },
+      "lowLimit": {
+        "type": "number",
+        "description": "累加器下限值。",
+        "minimum": -16777215,
+        "default": 0
+      },
+      "inputsCount": {
+        "type": "integer",
+        "description": "当前激活的输入端口总数 (2-3)。由 defaultFromInput 决定。",
+        "minimum": 2,
+        "maximum": 3,
+        "default": 2
+      }
+    },
+    "ports_definition": {
+      "inputs": [
+        {
+          "index": 0,
+          "label": "输入",
+          "type": "number",
+          "description": "需要进行累加的输入信号对象",
+          "condition": "always"
+        },
+        {
+          "index": 1,
+          "label": "复位",
+          "type": "boolean",
+          "description": "触发复位动作的信号。当此信号为 True 时，累加器重置为复位值",
+          "condition": "always"
+        },
+        {
+          "index": 2,
+          "label": "复位值",
+          "type": "number",
+          "description": "动态提供的复位目标数值。当 defaultFromInput 为 true 时，此端口激活。",
+          "condition": "defaultFromInput == true"
+        }
+      ],
+      "outputs": [
+        {
+          "index": 0,
+          "label": "输出",
+          "type": "number",
+          "description": "根据设定间隔累计后的数值结果",
+          "condition": "always"
+        }
+      ]
+    },
+    "template_json": [
+      {
+        "id": "{{__GEN_ID__}}",
+        "z": "{{__FLOW_ID__}}",
+        "type": "integral",
+        "name": "{{user_defined_name}}",
+        "inputs": "{{inputsCount}}",
+        "outputs": 1,
+        "interval": "{{interval}}",
+        "units": "{{units}}",
+        "defaultOutput": "{{defaultOutput}}",
+        "highLimit": "{{highLimit}}",
+        "lowLimit": "{{lowLimit}}",
+        "outOfService": 0,
+        "outOfServiceValue": 0,
+        "defaultFromInput": "{{defaultFromInput}}",
+        "x": "{{__POS_X__}}",
+        "y": "{{__POS_Y__}}",
+        "wires": "{{wiresArray}}"
+      }
+    ]
+  }
+  

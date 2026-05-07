@@ -1,0 +1,85 @@
+{
+  "id": "",
+  "module_type": "exponet",
+  "category": "运算模块/数学运算",
+  "name": "幂运算",
+  "description": "幂运算模块对底数进行指数运算,即计算x的y次幂(x^y)。支持两个输入端口:输入1为指数(y),输入2为底数(x)。典型应用场景包括:平方计算、立方计算、指数增长模拟、压力温度关系计算、流体力学计算、热力学计算等。所有输入信号必须是数值类型。",
+  "keywords": [
+    "幂运算",
+    "指数运算",
+    "平方",
+    "立方",
+    "次方",
+    "power",
+    "exponent",
+    "exponential",
+    "x^y",
+    "指数",
+    "乘方",
+    "power function",
+    "底数",
+    "计算幂",
+    "数值运算",
+    "数学幂",
+    "raise to power"
+  ],
+  "usage_guides": [
+    "基本运算: 幂运算计算底数的指数次方。运算公式: (底数)^(指数) = 输出,即 x^y = 输出。",
+    "端口说明: 输入1为指数(y),输入2为底数(x)。示例: 输入1=2,输入2=3,输出=3^2=9; 输入1=3,输入2=2,输出=2^3=8。",
+    "应用场景1: 平方计算-用于计算面积、功率与电压/电流关系(P=I^2×R或P=V^2/R)。例如计算风机或水泵的功率,已知电流和电阻,计算功率消耗。",
+    "应用场景2: 压力温度关系-根据理想气体定律或实际气体状态方程,计算压力与温度的关系,分析压缩机在不同工况下的性能参数。",
+    "应用场景3: 流体力学计算-计算流体流速与压力的关系,根据伯努利方程,流速与压差的平方根成正比,用于管道阻力计算和流量测量。",
+    "特殊计算: 负数指数计算倒数,如 x^(-2) = 1/(x^2); 分数指数计算方根,如 x^(1/2) = √x, x^(1/3) = ³√x。",
+    "wires连接: wires数组包含2个空数组,分别连接指数和底数的输入信号。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 所有输入信号必须是数值类型;注意输入顺序,输入1为指数,输入2为底数;0的负指数无定义;负数的分数指数可能产生复数。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "指数",
+        "type": "number",
+        "description": "幂运算的指数(y),用于计算x^y中的y",
+        "condition": "always"
+      },
+      {
+        "index": 1,
+        "label": "底数",
+        "type": "number",
+        "description": "幂运算的底数(x),用于计算x^y中的x",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "幂值",
+        "type": "number",
+        "description": "幂运算结果,即底数的指数次方(x^y)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "exponet",
+    "name": "{{user_defined_name}}",
+    "inputs": 2,
+    "outputs": 1,
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

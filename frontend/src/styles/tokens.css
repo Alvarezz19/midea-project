@@ -1,0 +1,14 @@
+:root {
+  --midea-blue: #0098d1;
+  --midea-blue-dark: #006a94;
+  --midea-blue-soft: #e7f6fb;
+  --ink: #172026;
+  --muted: #66737c;
+  --line: #d8e0e4;
+  --surface: #ffffff;
+  --canvas: #f4f7f8;
+  --success: #20704a;
+  --warning: #a55c00;
+  --danger: #a53232;
+  --focus: #c97a34;
+}

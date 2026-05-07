@@ -1,0 +1,95 @@
+{
+  "id": "",
+  "module_type": "shift",
+  "category": "运算模块/数学运算",
+  "name": "移位运算",
+  "description": "移位运算模块对输入数值的二进制表示进行左移或右移操作。支持两种移位模式:左移、右移。移位时多余的位被舍弃,空缺位补充0。典型应用场景包括:快速乘除法运算(左移n位等于乘以2^n,右移n位等于除以2^n)、数据通信协议字节序转换、数据编码解码、通信协议字段提取、寄存器值处理等。所有输入信号必须是整型数。",
+  "keywords": [
+    "移位",
+    "左移",
+    "右移",
+    "shift",
+    "left shift",
+    "right shift",
+    "位移",
+    "位左移",
+    "位右移",
+    "二进制移位",
+    "bit shift",
+    "移位运算",
+    "快速乘除",
+    "字节序转换",
+    "endian",
+    "数据编码",
+    "位操作",
+    "bit manipulation"
+  ],
+  "usage_guides": [
+    "左移模式(mode=leftShift): 将输入的二进制位向左移动指定位数,左边超出部分舍弃,右边空缺位补0。运算效果等同于乘以2的n次方。示例: 5 << 2 = 20(二进制101左移2位变为10100,即5×4=20)。",
+    "右移模式(mode=rightShift): 将输入的二进制位向右移动指定位数,右边超出部分舍弃,左边空缺位补0。运算效果等同于整除以2的n次方。示例: 20 >> 2 = 5(二进制10100右移2位变为00101,即20÷4=5)。",
+    "端口说明: 输入1为被移位的整型数,输入2为移位的位数。移位结果为整型数。",
+    "模式选择: 在参数配置中设置mode字段,可选值为leftShift(左移)、rightShift(右移),默认值为leftShift。",
+    "应用场景1: 快速乘除运算-使用移位替代乘除法,左移n位等于乘以2^n,右移n位等于除以2^n。例如计算传感器数据的工程量,左移3位相当于乘以8,右移4位相当于除以16,提高计算效率。",
+    "应用场景2: 通信协议数据处理-在Modbus、BACnet等通信协议中,使用移位操作提取或组合寄存器中的特定字段,处理多字节数据的字节序转换,解析16位或32位数据包。",
+    "应用场景3: 数据编码解码-将多个小范围数值(如温度传感器的高字节和低字节)通过移位和组合操作编码为一个整数,或从一个整数中解码出多个参数,常用于传感器数据校准和设备配置参数打包。",
+    "移位规则: 左移时,高位舍弃,低位补0;右移时,低位舍弃,高位补0(逻辑右移)。移位数为负数时结果未定义,移位数过大时结果为0。",
+    "wires连接: wires数组包含2个空数组,分别连接被移位数值和移位位数。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 所有输入信号必须是整型数;注意移位方向,左移放大数值,右移缩小数值;移位过大可能导致数据丢失;右移相当于向下取整的除法。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "mode": {
+      "type": "string",
+      "description": "移位模式。leftShift为左移,rightShift为右移。",
+      "enum": ["leftShift", "rightShift"],
+      "default": "leftShift"
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "被移位数值",
+        "type": "integer",
+        "description": "需要进行移位操作的整型数",
+        "condition": "always"
+      },
+      {
+        "index": 1,
+        "label": "移位位数",
+        "type": "integer",
+        "description": "移位的位数(左移或右移的位数)",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "移位结果",
+        "type": "integer",
+        "description": "移位运算后的整型数结果",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "shift",
+    "name": "{{user_defined_name}}",
+    "inputs": 2,
+    "outputs": 1,
+    "mode": "{{mode}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}

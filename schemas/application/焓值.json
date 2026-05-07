@@ -1,0 +1,62 @@
+{
+    "id": "",
+    "module_type": "enthalpy",
+    "category": "应用/焓值",
+    "name": "焓值 (Enthalpy)",
+    "description": "焓值模块依据输入的干球温度(℃)和相对湿度(%RH)，计算空气的比焓。计算结果单位为 kJ/kg。",
+    "keywords": [
+        "焓值",
+        "空气热力学",
+        "能量",
+        "psychrometrics"
+    ],
+    "usage_guides": [
+        "输入1：干球温度 (Dry Bulb Temperature, ℃)。",
+        "输入2：相对湿度 (Relative Humidity, %)。",
+        "输出：计算得出的焓值 (kJ/kg)。",
+        "这是暖通空调控制中计算空气热负荷的重要参数，常用于新风机的节能控制（焓值控制）或冷却塔效率评估。"
+    ],
+    "parameters_schema": {},
+    "ports_definition": {
+        "inputs": [
+        {
+            "index": 0,
+            "label": "干球温度",
+            "type": "number",
+            "description": "单位为℃。",
+            "condition": "always"
+        },
+        {
+            "index": 1,
+            "label": "相对湿度",
+            "type": "number",
+            "description": "单位为%RH。",
+            "condition": "always"
+        }
+        ],
+        "outputs": [
+        {
+            "index": 0,
+            "label": "输出",
+            "type": "number",
+            "description": "输出焓值的计算结果。",
+            "condition": "always"
+        }
+        ]
+    },
+    "template_json": [
+        {
+            "id": "{{__GEN_ID__}}",
+            "z": "{{__FLOW_ID__}}",
+            "type": "enthalpy",
+            "name": "焓值",
+            "inputs": 2,
+            "outputs": 1,
+            "outOfService": 0,
+            "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POS_Y__}}",
+            "wires": "{{wiresArray}}"
+        }
+    ]
+}

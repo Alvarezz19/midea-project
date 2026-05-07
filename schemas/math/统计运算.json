@@ -1,0 +1,97 @@
+{
+  "id": "",
+  "module_type": "statistics",
+  "category": "运算模块/数学运算",
+  "name": "统计运算",
+  "description": "统计运算模块对所有输入端口的数值进行统计分析,支持三种统计模式:平均值、最大值、最小值。支持2-16个输入端口。典型应用场景包括:多传感器数据融合、极值监测、数据平滑处理、温度场分析、能耗统计、负载均衡分析等。所有输入信号必须是数值类型。",
+  "keywords": [
+    "统计运算",
+    "平均值",
+    "最大值",
+    "最小值",
+    "statistics",
+    "average",
+    "max",
+    "minimum",
+    "mean",
+    "统计",
+    "求平均",
+    "求极值",
+    "数据分析",
+    "数据融合",
+    "多输入统计",
+    "aggregation",
+    "统计计算",
+    "极值检测",
+    "mean value"
+  ],
+  "usage_guides": [
+    "平均值模式(mode=average): 对所有输入端口数值求平均值。运算公式: (输入1 + 输入2 + ... + 输入n) / n = 输出。常用于多传感器数据融合,减少单个传感器的测量误差,或计算一段时间内的平均值。",
+    "最大值模式(mode=max): 找出所有输入端口中的最大值。运算公式: max(输入1, 输入2, ..., 输入n) = 输出。常用于监测最高温度、最大压力、峰值检测等场景。",
+    "最小值模式(mode=min): 找出所有输入端口中的最小值。运算公式: min(输入1, 输入2, ..., 输入n) = 输出。常用于监测最低温度、最小压力、谷值检测等场景。",
+    "模式选择: 在参数配置中设置mode字段,可选值为average(平均值)、max(最大值)、min(最小值),默认值为average。",
+    "输入数量配置: 可在2-16范围内调整输入端口数量,默认值为2。输入端口数量应根据实际需要统计的信号数量确定。",
+    "端口说明: 输入1到输入n(1≤n≤16)为运算对象,都是数值类型;输出为统计运算结果,也是数值类型。",
+    "应用场景1: 温度场分析-连接多个温度传感器,计算平均温度、最高温度、最低温度,了解温度分布情况。",
+    "应用场景2: 能耗统计-统计多台设备的能耗数据,计算总能耗平均值,或找出能耗最高的设备。",
+    "应用场景3: 负载均衡-监测多个工作单元的负载,找出负载最大和最小的单元,进行负载调整。",
+    "wires连接: wires数组根据输入数量自动生成,包含与输入端口数量相同的空数组,用于连接上游模块的输出。",
+    "停用保护: 默认 outOfService=0(启用状态),可设置为1进入维护模式并输出0。",
+    "注意事项: 所有输入信号必须是数值类型;输入数量最少为2个,最多支持16个;确保所有输入端口都已连接,否则可能导致统计结果不准确。"
+  ],
+  "parameters_schema": {
+    "name": {
+      "type": "string",
+      "description": "模块显示名称,由用户根据实际应用场景定义。",
+      "maxLength": 50,
+      "default": "user_defined_name"
+    },
+    "mode": {
+      "type": "string",
+      "description": "统计模式。average为平均值,max为最大值,min为最小值。",
+      "enum": ["average", "max", "min"],
+      "default": "average"
+    },
+    "inputs": {
+      "type": "integer",
+      "description": "运算输入数量。所有输入端口参与统计运算。",
+      "minimum": 2,
+      "maximum": 16,
+      "default": 2
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "数值1",
+        "type": "number",
+        "description": "参与统计运算的第1个数值",
+        "condition": "always"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "统计结果",
+        "type": "number",
+        "description": "统计运算结果(平均值/最大值/最小值)",
+        "condition": "always"
+      }
+    ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "statistics",
+    "name": "{{user_defined_name}}",
+    "inputs": "{{inputs}}",
+    "outputs": 1,
+    "mode": "{{mode}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+            "x": "{{__POS_X__}}",
+            "y": "{{__POSY__}}",
+    "wires": "{{__WIRES__}}"
+  }
+}
