@@ -1,0 +1,146 @@
+{
+  "schema_version": "advisory-ontology-v1",
+  "updated_at": "2026-05-08",
+  "terms": [
+    {
+      "id": "ahu",
+      "canonical": "AHU",
+      "aliases": ["空调箱", "组合式空调机组", "air handling unit"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "supply_fan",
+      "canonical": "送风机",
+      "aliases": ["送风风机", "SF", "SA fan"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "fresh_air_damper",
+      "canonical": "新风阀",
+      "aliases": ["新风风阀", "OA damper", "fresh damper"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "return_air_damper",
+      "canonical": "回风阀",
+      "aliases": ["回风风阀", "RA damper", "return damper"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "exhaust_fan",
+      "canonical": "排风机",
+      "aliases": ["排风风机", "EF", "exhaust fan"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "supply_air_temperature",
+      "canonical": "送风温度",
+      "aliases": ["送风温度反馈", "SAT", "SA temp"],
+      "entity_type": "point",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "co2",
+      "canonical": "CO2",
+      "aliases": ["二氧化碳", "CO₂", "carbon dioxide"],
+      "entity_type": "point",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "freeze_protection",
+      "canonical": "防冻保护",
+      "aliases": ["防冻开关", "低温保护", "freeze stat"],
+      "entity_type": "protection_chain",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "filter_alarm",
+      "canonical": "过滤网报警",
+      "aliases": ["过滤网压差", "滤网报警", "filter alarm"],
+      "entity_type": "point",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "dx_unit",
+      "canonical": "直膨机",
+      "aliases": ["DX", "直膨段", "直膨空调"],
+      "entity_type": "equipment",
+      "project_types": ["ahu"]
+    },
+    {
+      "id": "chiller",
+      "canonical": "主机",
+      "aliases": ["冷机", "冷水机组", "heat pump", "chiller"],
+      "entity_type": "equipment",
+      "project_types": ["plant_room"]
+    },
+    {
+      "id": "pump",
+      "canonical": "水泵",
+      "aliases": ["冷冻水泵", "冷却水泵", "循环泵", "pump"],
+      "entity_type": "equipment",
+      "project_types": ["plant_room"]
+    },
+    {
+      "id": "cooling_tower",
+      "canonical": "冷却塔",
+      "aliases": ["塔风机", "cooling tower"],
+      "entity_type": "equipment",
+      "project_types": ["plant_room"]
+    },
+    {
+      "id": "bypass_valve",
+      "canonical": "旁通阀",
+      "aliases": ["压差旁通阀", "旁通调节阀", "bypass valve"],
+      "entity_type": "equipment",
+      "project_types": ["plant_room"]
+    },
+    {
+      "id": "differential_pressure",
+      "canonical": "压差",
+      "aliases": ["供回水压差", "DP", "pressure differential"],
+      "entity_type": "point",
+      "project_types": ["plant_room"]
+    },
+    {
+      "id": "setpoint",
+      "canonical": "设定值",
+      "aliases": ["设定", "SP", "目标值", "setpoint"],
+      "entity_type": "parameter",
+      "project_types": ["ahu", "plant_room", "common"]
+    },
+    {
+      "id": "feedback",
+      "canonical": "反馈",
+      "aliases": ["运行反馈", "状态反馈", "到位反馈", "feedback"],
+      "entity_type": "point",
+      "project_types": ["ahu", "plant_room", "common"]
+    },
+    {
+      "id": "command",
+      "canonical": "命令",
+      "aliases": ["输出命令", "启停命令", "command"],
+      "entity_type": "point",
+      "project_types": ["ahu", "plant_room", "common"]
+    },
+    {
+      "id": "modbus",
+      "canonical": "Modbus",
+      "aliases": ["modbusInput", "modbusOutput", "Modbus 点表"],
+      "entity_type": "communication_point",
+      "project_types": ["ahu", "plant_room", "common"]
+    },
+    {
+      "id": "bacnet",
+      "canonical": "BACnet",
+      "aliases": ["bacipInput", "bacipOutput", "BACnet 对象"],
+      "entity_type": "communication_point",
+      "project_types": ["ahu", "plant_room", "common"]
+    }
+  ]
+}

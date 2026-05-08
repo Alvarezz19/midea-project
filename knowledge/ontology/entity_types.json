@@ -1,0 +1,71 @@
+{
+  "schema_version": "advisory-ontology-v1",
+  "updated_at": "2026-05-08",
+  "entity_types": [
+    {
+      "id": "project_template",
+      "label": "项目模板",
+      "description": "programs/ 下可作为工程起点或历史证据的完整 JSON 模板。"
+    },
+    {
+      "id": "tab",
+      "label": "页面",
+      "description": "工程 JSON 中 type=tab 的画布页面。"
+    },
+    {
+      "id": "equipment",
+      "label": "设备",
+      "description": "AHU、风机、阀门、主机、水泵、冷却塔等物理或控制对象。"
+    },
+    {
+      "id": "point",
+      "label": "点位",
+      "description": "传感器、设定值、命令、状态、反馈、报警等工程点位。"
+    },
+    {
+      "id": "control_loop",
+      "label": "控制环",
+      "description": "由反馈、设定、控制算法、限幅和执行器组成的闭环或准闭环逻辑。"
+    },
+    {
+      "id": "protection_chain",
+      "label": "保护链",
+      "description": "保护或联锁信号影响关键执行器、报警或停机命令的链路。"
+    },
+    {
+      "id": "communication_point",
+      "label": "通讯点",
+      "description": "Modbus、BACnet、MQTT 等通讯输入或输出对象。"
+    },
+    {
+      "id": "parameter",
+      "label": "参数",
+      "description": "设定值、回差、延时、限幅、PID 参数等可调工程参数。"
+    },
+    {
+      "id": "patchable_target",
+      "label": "可补丁目标",
+      "description": "可由结构化补丁修改的参数、节点、连线、点位或页面。"
+    },
+    {
+      "id": "subflow_definition",
+      "label": "子流程定义",
+      "description": "工程内定义的可复用模块能力，不代表当前项目已经实例化。"
+    },
+    {
+      "id": "subflow_instance",
+      "label": "子流程实例",
+      "description": "页面中实际挂载的 subflow:<id> 节点及其端口绑定。"
+    },
+    {
+      "id": "subflow_port",
+      "label": "子流程端口",
+      "description": "子流程输入或输出接口，可用于解释实例接线语义。"
+    },
+    {
+      "id": "configuration_model",
+      "label": "配置模型",
+      "description": "影响系统拓扑、设备数量、连接形式或模式切换的配置点集合。"
+    }
+  ]
+}
