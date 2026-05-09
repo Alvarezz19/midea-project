@@ -11,6 +11,7 @@ from app.graph.nodes import plan_patch_node
 from app.graph.state import initial_state
 from app.graph.workflow import get_workflow, invoke_workflow, invoke_workflow_resume
 from app.main import app
+from app.services.advisory_intent import classify_advisory_intent_by_rules
 from app.services.json_project import load_project, save_project
 from app.services.retrieval import search_nodes, search_templates
 from app.services.session_store import FileSessionStore
@@ -31,6 +32,37 @@ def test_workflow_waits_for_project_type(tmp_path: Path) -> None:
 
 def test_workflow_reuses_compiled_graph_singleton() -> None:
     assert get_workflow() is get_workflow()
+
+
+def test_advisory_intent_routes_engineering_inspection_before_patch_markers() -> None:
+    inspection = classify_advisory_intent_by_rules(
+        "当前工程里 CO2 风阀控制是真正实例化并接到新风阀输出了吗，还是只保留了子流程定义或局部节点？请说明证据。",
+        project_path="projects/versions/example.json",
+        project_type="ahu",
+    )
+    assert inspection["intent"] == "advisory_intent"
+    assert inspection["inspection_query"] is True
+
+    where_connected = classify_advisory_intent_by_rules(
+        "这个 CO2 点接到哪里了？请说明链路证据。",
+        project_path="projects/versions/example.json",
+        project_type="ahu",
+    )
+    assert where_connected["intent"] == "advisory_intent"
+
+    explicit_patch = classify_advisory_intent_by_rules(
+        "把 CO2 设定接到新风阀控制",
+        project_path="projects/versions/example.json",
+        project_type="ahu",
+    )
+    assert explicit_patch["intent"] == "patch_intent"
+
+    add_patch = classify_advisory_intent_by_rules(
+        "新增 CO2 浓度设定并接入新风阀控制",
+        project_path="projects/versions/example.json",
+        project_type="ahu",
+    )
+    assert add_patch["intent"] == "patch_intent"
 
 
 def test_workflow_saves_checkpoint_with_thread_id(tmp_path: Path) -> None:
@@ -85,12 +117,12 @@ def test_workflow_routes_advisory_question_without_patch(tmp_path: Path) -> None
     assert result["user_intent_route"]["intent_result"]["intent"] == "advisory_intent"
     assert result["advisory_result"]["answer"]
     assert result["advisory_result"]["basis"]
-    assert result["pending_advice"]["adoptable_patch_intent"]["executable"] is True
+    assert result["pending_advice"]["adoptable_patch_intent"]["executable"] is False
     assert result["current_project_version_id"] == original_version_id
     assert result["current_project_path"] == original_path
 
 
-def test_workflow_accepts_advice_then_enters_planner(tmp_path: Path) -> None:
+def test_workflow_accepts_non_executable_advice_then_asks_for_clarification(tmp_path: Path) -> None:
     state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
     state["versions_dir"] = str(tmp_path)
     created = invoke_workflow(state)
@@ -100,10 +132,10 @@ def test_workflow_accepts_advice_then_enters_planner(tmp_path: Path) -> None:
     advised["messages"] = list(advised["messages"]) + [{"role": "user", "content": "就按你说的改"}]
     result = invoke_workflow(advised)
 
-    assert result["status"] in {"patch_applied", "awaiting_patch_clarification", "awaiting_patch_confirmation"}
-    assert result["pending_advice"]["status"] == "accepted"
-    assert result["pending_advice"]["accepted_patch_message"] == "把送风温度设定值改为 24°C"
-    assert result["planner_result"] or result["patch_result"] or result["pending_confirmation_patch"]
+    assert result["status"] == "awaiting_patch_clarification"
+    assert result["pending_patch"] is None
+    assert result["planner_result"]["status"] == "needs_clarification"
+    assert "还没有可执行的修改意图" in result["planner_result"]["questions"][0]
 
 
 def test_workflow_direct_patch_after_advice_supersedes_pending_advice(tmp_path: Path) -> None:
@@ -183,6 +215,47 @@ def test_workflow_out_of_scope_question_does_not_plan_patch(tmp_path: Path) -> N
     assert result["planner_result"] is None
     assert result["advisory_result"]["status"] == "out_of_scope"
     assert result["candidate_requirements"] == []
+
+
+def test_workflow_routes_connection_inspection_question_to_advisory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del messages, provider, kwargs
+        return {
+            "status": "answered",
+            "answer": "这是设计建议问题，当前不会修改工程。当前工程需要沿 CO2 点位、控制逻辑和新风阀输出链路核查是否完整实例化。",
+            "topic": "CO2 风阀控制链路审查",
+            "recommendation": {"value": None, "unit": None, "range": None, "confidence": "medium"},
+            "basis": [{"source": "current_project", "summary": "使用当前工程上下文审查链路。"}],
+            "assumptions": ["当前问题是工程链路审查。"],
+            "risks": ["不能把链路审查问题直接当成接线修改。"],
+            "missing_info": [],
+            "candidate_requirements": [],
+            "adoptable_patch_intent": {"executable": False, "message": "", "reason": "这是审查问题，不是修改命令。"},
+        }
+
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+    state = initial_state("我要做 AHU 程序，需要 CO2、新风阀和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+
+    created["messages"] = list(created["messages"]) + [
+        {
+            "role": "user",
+            "content": "当前工程里 CO2 风阀控制是真正实例化并接到新风阀输出了吗，还是只保留了子流程定义或局部节点？请说明证据。",
+        }
+    ]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "advisory_answered"
+    assert result["next_action"] == "review_advice"
+    assert result["user_intent_route"]["route"] == "advisory_chat"
+    assert result["user_intent_route"]["intent_result"]["intent"] == "advisory_intent"
+    assert result["pending_patch"] is None
+    assert result["planner_result"] is None
+    assert result["current_project_version_id"] == created["current_project_version_id"]
 
 
 def test_workflow_high_risk_advisory_returns_unsafe_request(tmp_path: Path) -> None:
