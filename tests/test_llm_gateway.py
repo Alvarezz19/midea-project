@@ -149,8 +149,122 @@ def test_advisory_repairs_llm_execution_confusion_without_overwriting_answer(mon
     assert result["status"] == "answered"
     assert "典型范围可按 22-26°C" in result["answer"]
     assert result["basis"][0]["source"] == "knowledge/AHU控制策略.md"
-    assert result["adoptable_patch_intent"]["message"] == "把送风温度设定值改为 24°C"
+    assert result["adoptable_patch_intent"]["executable"] is False
+    assert "24°C" not in result["adoptable_patch_intent"]["message"]
     assert result["llm_meta"]["provider"] == "deepseek"
+
+
+def test_advisory_keeps_patch_intent_consistent_with_final_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del messages, kwargs
+        return {
+            "status": "answered",
+            "answer": "CO2 阈值建议按 600-800 ppm 讨论，当前不会修改工程。",
+            "topic": "CO2 阈值",
+            "recommendation": {"value": 600, "unit": "ppm", "range": "600-800 ppm", "confidence": "medium"},
+            "basis": [{"source": "knowledge/domain/ahu/co2_control.md", "summary": "CO2 控制需要结合新风能力。"}],
+            "assumptions": ["常规 AHU"],
+            "risks": ["阈值过低会增加新风负荷。"],
+            "missing_info": ["人员密度"],
+            "candidate_requirements": [{"content": "CO2 控制阈值按 600 ppm 作为初始建议", "status": "candidate", "needs_confirmation": True}],
+            "adoptable_patch_intent": {
+                "executable": True,
+                "message": "把 CO2 设定值改为 900ppm",
+                "reason": "测试模型错误输出了与推荐值不一致的补丁意图。",
+            },
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake", "prompt_name": "advisory_chat"},
+        }
+
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+    result = answer_advisory_question(
+        "CO2 阈值一般设多少？",
+        state={"project_type": "ahu"},
+        intent_result={
+            "intent": "advisory_intent",
+            "topic": "CO2 阈值",
+            "should_search_domain_knowledge": True,
+            "should_load_project_context": False,
+        },
+        provider="deepseek",
+    )
+
+    assert result["recommendation"]["value"] == 600
+    assert result["adoptable_patch_intent"]["executable"] is False
+    assert result["adoptable_patch_intent"]["message"] == "把 CO2 设定值改为 600ppm"
+    assert all("900" not in item["content"] for item in result["candidate_requirements"])
+
+
+def test_advisory_target_candidates_block_executable_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del messages, provider, kwargs
+        return {
+            "status": "answered",
+            "answer": "CO2 阈值建议 800 ppm，当前不会修改工程。",
+            "topic": "CO2 阈值",
+            "recommendation": {"value": 800, "unit": "ppm", "range": "600-1000 ppm", "confidence": "medium"},
+            "basis": [],
+            "assumptions": [],
+            "risks": [],
+            "missing_info": [],
+            "candidate_requirements": [],
+            "adoptable_patch_intent": {"executable": True, "message": "把 CO2 设定值改为 800ppm", "reason": "建议值明确。"},
+        }
+
+    def fake_load_project_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "target_resolution": {"status": "candidates", "candidates": [{"selector": {"id": "a"}}]},
+            "semantic_candidates": [{"id": "a"}],
+        }
+
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+    monkeypatch.setattr("app.services.advisory._load_project_context", fake_load_project_context)
+    result = answer_advisory_question(
+        "CO2 阈值一般设多少？",
+        state={"project_type": "ahu", "current_project_path": "dummy.json"},
+        intent_result={"intent": "advisory_intent", "topic": "CO2 阈值", "should_load_project_context": True},
+        provider="deepseek",
+    )
+
+    assert result["status"] == "answered"
+    assert result["adoptable_patch_intent"]["executable"] is False
+    assert result["adoptable_patch_intent"]["message"] == "把 CO2 设定值改为 800ppm"
+    assert "未定位到唯一可修改目标" in result["adoptable_patch_intent"]["reason"]
+
+
+def test_supply_air_temperature_does_not_become_room_temperature_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del messages, provider, kwargs
+        return {
+            "status": "answered",
+            "answer": "送风温度需要按工况确认，当前不会修改工程。",
+            "topic": "送风温度设定值",
+            "recommendation": {"value": 24, "unit": "°C", "range": "22-26°C", "confidence": "medium"},
+            "basis": [],
+            "assumptions": [],
+            "risks": [],
+            "missing_info": [],
+            "candidate_requirements": [{"content": "送风温度设定值按 24°C 考虑", "status": "candidate", "needs_confirmation": True}],
+            "adoptable_patch_intent": {"executable": True, "message": "把送风温度设定值改为 24°C", "reason": "建议值明确。"},
+        }
+
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+    result = answer_advisory_question(
+        "送风温度设定值多少比较合适？",
+        state={"project_type": "ahu"},
+        intent_result={
+            "intent": "advisory_intent",
+            "topic": "送风温度设定值",
+            "should_search_domain_knowledge": True,
+            "should_load_project_context": False,
+        },
+        provider="deepseek",
+    )
+
+    assert result["recommendation"]["value"] is None
+    assert result["adoptable_patch_intent"]["executable"] is False
+    assert "24" not in result["adoptable_patch_intent"]["message"]
+    assert all("24" not in item["content"] for item in result["candidate_requirements"])
 
 
 def test_advisory_context_keeps_patch_recipes_out_of_primary_knowledge() -> None:
@@ -191,7 +305,7 @@ def test_advisory_real_deepseek_answers_typical_design_question() -> None:
     assert result["status"] == "answered"
     assert result["answer"]
     assert result["basis"]
-    assert result["adoptable_patch_intent"]["message"]
+    assert result["adoptable_patch_intent"]["executable"] is False
     assert result["llm_meta"]["provider"] == "deepseek"
 
 

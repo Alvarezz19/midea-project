@@ -14,6 +14,7 @@ DOMAIN_KEYWORDS = (
     "ahu",
     "空调箱",
     "新风",
+    "风阀",
     "回风",
     "送风",
     "排风",
@@ -37,6 +38,25 @@ DOMAIN_KEYWORDS = (
     "旁通阀",
     "联锁",
     "保护",
+)
+
+INSPECTION_MARKERS = (
+    "有没有",
+    "是否",
+    "是不是",
+    "在哪",
+    "哪里",
+    "接到哪里",
+    "接入了吗",
+    "接到了吗",
+    "连接了吗",
+    "实例化",
+    "子流程定义",
+    "局部节点",
+    "说明证据",
+    "证据",
+    "链路",
+    "当前工程",
 )
 
 ADVISORY_MARKERS = (
@@ -95,6 +115,20 @@ REJECTION_PATTERNS = (
     r"取消建议",
 )
 
+EXPLICIT_PATCH_PATTERNS = (
+    r"^(?:请|帮我|麻烦)?\s*(?:把|将).*(?:改为|改成|调整为|设为|设置为|替换为|接入|接到|连接|断开)",
+    r"^(?:请|帮我|麻烦)?\s*(?:新增|添加|复制|断开)",
+    r".*(?:改为|改成|调整为|设为|设置为|替换为)\s*[^吗？?]+$",
+)
+
+INSPECTION_PATTERNS = (
+    r"(?:有没有|是否|是不是|是否真正|是不是真正).*(?:接入|接到|连接|实例化)",
+    r"(?:接入|接到|连接).*(?:了吗|了没|没有|哪里|哪|是否|是不是)",
+    r"(?:在哪|哪里).*(?:页面|节点|链路|输出|输入|点位)",
+    r"(?:请)?说明.*(?:证据|链路|依据)",
+    r"(?:只保留|还是).*(?:子流程定义|局部节点)",
+)
+
 
 def classify_advisory_intent(
     message: str,
@@ -139,6 +173,8 @@ def classify_advisory_intent_by_rules(
     domain_related = _contains_any(text, DOMAIN_KEYWORDS)
     advisory_like = _contains_any(text, ADVISORY_MARKERS) or text.endswith(("?", "？"))
     patch_like = _contains_any(text, PATCH_MARKERS)
+    inspection_like = _is_inspection_question(text, domain_related=domain_related)
+    explicit_patch = _is_explicit_patch_command(text)
     out_of_scope = _contains_any(text, OUT_OF_SCOPE_KEYWORDS) and not domain_related
 
     if has_pending and _matches_any(text, REJECTION_PATTERNS):
@@ -183,6 +219,29 @@ def classify_advisory_intent_by_rules(
             should_load_project_context=False,
             should_search_domain_knowledge=False,
             should_collect_candidate_requirement=False,
+        )
+
+    if inspection_like and not explicit_patch:
+        return _result(
+            "advisory_intent" if project_path else "domain_question",
+            relevance="current_project" if project_path else "domain",
+            confidence=0.9,
+            topic=_short_topic(text),
+            reason="用户在询问当前工程结构、链路或证据，属于工程审查咨询，不是落盘修改。",
+            related_entities=_matched_keywords(text, DOMAIN_KEYWORDS),
+            extra={"inspection_query": True},
+        )
+
+    if inspection_like and explicit_patch:
+        return _result(
+            "uncertain",
+            relevance="current_project" if project_path else "domain",
+            confidence=0.62,
+            topic=_short_topic(text),
+            reason="用户输入同时包含工程审查语气和明确修改动作，需要 LLM 进一步判定。",
+            related_entities=_matched_keywords(text, DOMAIN_KEYWORDS),
+            should_collect_candidate_requirement=False,
+            extra={"inspection_query": True, "patch_marker_conflict": True},
         )
 
     if domain_related and advisory_like:
@@ -237,6 +296,8 @@ def _classify_with_llm(
         "intent 只能是 patch_intent、advisory_intent、advice_acceptance、advice_override、"
         "advice_rejection、domain_question、out_of_scope、uncertain。"
         "咨询建议不得路由成补丁；用户明确采纳上一轮建议才是 advice_acceptance。"
+        "区分工程审查疑问和修改命令：'有没有接到/是否接入/接到哪里/是否实例化/请说明证据' 是 advisory_intent；"
+        "'新增/把X接到Y/断开/改为' 这类命令式表达才是 patch_intent。"
     )
     payload = {
         "user_message": message,
@@ -282,6 +343,8 @@ def _merge_rule_and_llm(rule_result: dict[str, Any], llm_result: dict[str, Any])
         "uncertain",
     }:
         intent = rule_result["intent"]
+    if rule_result.get("inspection_query") and intent == "patch_intent" and not rule_result.get("patch_marker_conflict"):
+        intent = "advisory_intent" if rule_result.get("relevance") == "current_project" else "domain_question"
     confidence = _float_between(llm_result.get("confidence"), default=rule_result["confidence"])
     merged = {
         **rule_result,
@@ -371,6 +434,22 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _is_inspection_question(text: str, *, domain_related: bool) -> bool:
+    if not domain_related:
+        return False
+    if _contains_any(text, INSPECTION_MARKERS):
+        return True
+    if _matches_any(text, INSPECTION_PATTERNS):
+        return True
+    return text.endswith(("?", "？")) and any(token in text for token in ("接入", "接到", "连接", "实例化", "证据", "链路"))
+
+
+def _is_explicit_patch_command(text: str) -> bool:
+    if _matches_any(text, EXPLICIT_PATCH_PATTERNS):
+        return True
+    return any(text.startswith(prefix) for prefix in ("新增", "添加", "复制", "断开", "把", "将"))
 
 
 def _matched_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:

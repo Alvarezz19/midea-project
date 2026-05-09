@@ -41,7 +41,7 @@ def answer_advisory_question(
         result = _normalize_advisory_result(llm_answer, message=message, context=context, intent_result=intent_result)
     except LLMGatewayError:
         result = baseline
-    result = _repair_advisory_result(result, baseline)
+    result = _repair_advisory_result(result, baseline, message=message, context=context)
     result["answer"] = _ensure_no_modify_notice(result.get("answer"))
     result["context_used"] = _context_used_summary(context)
     result["created_at"] = _utc_now_iso()
@@ -163,6 +163,7 @@ def _answer_with_llm(message: str, *, context: dict[str, Any], provider: str | N
         "context": context,
         "output_rules": [
             "例：用户问“送风温度设定值多少比较好？”时，应 status=answered，给出条件化建议；若未定位唯一节点，则 adoptable_patch_intent.executable=false。",
+            "送风温度是出风温度，不等同于室温/回风温度舒适性设定；未确认制冷、制热或除湿工况时不要给单一 24°C 作为可执行修改值。",
             "例：用户问“防冻保护能不能删？”时，应 status=unsafe_request，说明不建议删除；adoptable_patch_intent.executable=false。",
             "例：用户问“Python 怎么写爬虫？”时，应 status=out_of_scope，且不生成候选需求。",
             "knowledge_context 是主咨询依据；patch_support_context 只用于判断是否能形成 adoptable_patch_intent，不要让补丁配方主导咨询答案。",
@@ -254,13 +255,17 @@ def _deterministic_advisory_result(message: str, *, context: dict[str, Any], int
         }
 
     if "送风" in text and "温度" in text:
-        answer += " 如果是常规 AHU 舒适性控制，送风温度设定值可先按 24°C 考虑；节能优先可考虑 25-26°C；除湿或快速降温优先可考虑 22-23°C。"
-        recommendation = {"value": 24, "unit": "°C", "range": "22-26°C", "confidence": "medium"}
-        assumptions = ["常规 AHU 舒适性控制", "未提供特殊工艺温度要求", "当前工程存在送风温度或设定值相关控制对象时才可转为补丁计划。"]
-        risks.extend(["设定过低会增加能耗。", "设定过高可能影响舒适性或除湿效果。"])
-        missing_info = ["是否节能优先", "是否除湿优先", "是否有工艺温度要求"]
-        candidates = [_candidate_requirement("送风温度设定值按 24°C 考虑")]
-        adoptable = {"executable": True, "message": "把送风温度设定值改为 24°C", "reason": "建议值明确，可进入现有补丁规划链路。"}
+        answer += (
+            " 送风温度是出风温度，不等同于室温或回风温度舒适性设定。"
+            "常规 AHU 需要先区分制冷、制热、除湿和节能优先级，再结合冷热源能力与现场调试目标确定。"
+            "未确认工况时不建议给单一可执行数值。"
+        )
+        recommendation = {"value": None, "unit": "°C", "range": "需按制冷/制热/除湿工况确认", "confidence": "medium"}
+        assumptions = ["当前问题指向送风出风温度", "未提供制冷、制热或除湿工况", "未提供冷热源能力和现场调试目标。"]
+        risks.extend(["把室温舒适性设定误用为送风温度可能导致控制偏差。", "未确认工况直接改值可能造成能耗、结露或制热不足问题。"])
+        missing_info = ["当前工况是制冷、制热还是除湿", "冷热源类型和能力", "控制对象是送风、回风还是房间温度", "允许波动范围"]
+        candidates = [_candidate_requirement("确认送风温度控制工况和目标范围后，再确定具体设定值")]
+        adoptable = {"executable": False, "message": "", "reason": "送风温度缺少工况和目标范围，不能直接形成可执行修改值。"}
     elif "CO2" in text or "二氧化碳" in text:
         answer += " 常规舒适性通风可先把 CO2 阈值放在 800-1000 ppm 区间；人员密度较高或空气品质优先时偏向 800 ppm，节能优先时可偏向 1000 ppm。"
         recommendation = {"value": 900, "unit": "ppm", "range": "800-1000 ppm", "confidence": "medium"}
@@ -312,9 +317,14 @@ def _deterministic_advisory_result(message: str, *, context: dict[str, Any], int
     }
 
 
-def _repair_advisory_result(result: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+def _repair_advisory_result(
+    result: dict[str, Any],
+    baseline: dict[str, Any],
+    *,
+    message: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
     baseline_patch = baseline.get("adoptable_patch_intent") if isinstance(baseline.get("adoptable_patch_intent"), dict) else {}
-    result_patch = result.get("adoptable_patch_intent") if isinstance(result.get("adoptable_patch_intent"), dict) else {}
     if baseline.get("status") == "out_of_scope":
         return baseline
     if baseline.get("status") not in {"answered", "unsafe_request"}:
@@ -328,8 +338,6 @@ def _repair_advisory_result(result: dict[str, Any], baseline: dict[str, Any]) ->
     if baseline.get("status") == "unsafe_request":
         repaired["status"] = "unsafe_request"
         repaired["adoptable_patch_intent"] = baseline_patch
-    elif bool(baseline_patch.get("executable")) and not result_patch.get("executable"):
-        repaired["adoptable_patch_intent"] = baseline_patch
     repaired["recommendation"] = _merge_recommendation(repaired.get("recommendation"), baseline.get("recommendation"))
     repaired["candidate_requirements"] = _merge_candidate_requirement_lists(
         repaired.get("candidate_requirements"),
@@ -338,6 +346,9 @@ def _repair_advisory_result(result: dict[str, Any], baseline: dict[str, Any]) ->
     repaired["assumptions"] = _merge_string_lists(repaired.get("assumptions"), baseline.get("assumptions"), limit=6)
     repaired["risks"] = _merge_string_lists(repaired.get("risks"), baseline.get("risks"), limit=8)
     repaired["missing_info"] = _merge_string_lists(repaired.get("missing_info"), baseline.get("missing_info"), limit=8)
+    repaired["recommendation"] = _normalize_final_recommendation(repaired.get("recommendation"), message=message)
+    repaired["adoptable_patch_intent"] = _final_patch_intent(repaired, message=message, context=context)
+    repaired["candidate_requirements"] = _align_candidate_requirements(repaired.get("candidate_requirements"), repaired, message=message)
     return repaired
 
 
@@ -524,6 +535,190 @@ def _adoptable_patch_intent(value: Any) -> dict[str, Any]:
         "message": str(value.get("message") or "").strip(),
         "reason": str(value.get("reason") or "").strip(),
     }
+
+
+def _normalize_final_recommendation(value: Any, *, message: str) -> dict[str, Any]:
+    recommendation = dict(value) if isinstance(value, dict) else {}
+    if _is_supply_air_temperature_question(message):
+        numeric_value = _numeric_value(recommendation.get("value"))
+        if numeric_value is not None and 18 <= numeric_value <= 28 and not _mentions_operating_mode(message):
+            recommendation["value"] = None
+            recommendation["range"] = recommendation.get("range") or "需按制冷/制热/除湿工况确认"
+            recommendation["confidence"] = "low"
+    if not _recommendation_value_matches_range(recommendation):
+        recommendation["value"] = None
+        if recommendation.get("confidence") == "high":
+            recommendation["confidence"] = "medium"
+    return recommendation
+
+
+def _final_patch_intent(result: dict[str, Any], *, message: str, context: dict[str, Any]) -> dict[str, Any]:
+    patch = _adoptable_patch_intent(result.get("adoptable_patch_intent"))
+    status = str(result.get("status") or "")
+    if status in {"out_of_scope", "unsafe_request"}:
+        return {"executable": False, "message": "", "reason": patch.get("reason") or "该咨询不允许直接转为补丁。"}
+
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    derived_message = _patch_message_from_recommendation(message, result)
+    target_gate = _patchability_target_gate(context)
+    if target_gate:
+        return {
+            "executable": False,
+            "message": derived_message,
+            "reason": target_gate,
+        }
+
+    if patch.get("executable") and derived_message:
+        return {
+            "executable": True,
+            "message": derived_message,
+            "reason": patch.get("reason") or "最终推荐值明确，且当前工程已定位到唯一可修改目标。",
+        }
+    if patch.get("executable") and not _recommendation_has_concrete_value(recommendation):
+        return {
+            "executable": False,
+            "message": patch.get("message") or "",
+            "reason": "最终建议没有明确单一参数值，不能直接形成可执行补丁。",
+        }
+    return patch
+
+
+def _patchability_target_gate(context: dict[str, Any]) -> str:
+    project_context = context.get("project_context") if isinstance(context.get("project_context"), dict) else {}
+    if not project_context:
+        return "当前没有已创建工程版本或未加载当前工程上下文，不能直接形成可执行补丁。"
+    target_resolution = project_context.get("target_resolution") if isinstance(project_context.get("target_resolution"), dict) else {}
+    target_status = str(target_resolution.get("status") or "")
+    if target_status != "resolved":
+        if target_status in {"candidates", "needs_clarification"}:
+            return "当前未定位到唯一可修改目标，建议可以保留为候选需求，但需先确认目标页面、节点或点位。"
+        return "当前工程目标定位未完成，不能直接形成可执行补丁。"
+    if not isinstance(target_resolution.get("selected"), dict):
+        return "当前工程未返回唯一目标选择，不能直接形成可执行补丁。"
+    return ""
+
+
+def _patch_message_from_recommendation(message: str, result: dict[str, Any]) -> str:
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    value_text = _recommendation_value_text(recommendation)
+    if not value_text:
+        return ""
+    topic_text = f"{message} {result.get('topic') or ''}"
+    if "CO2" in topic_text or "二氧化碳" in topic_text:
+        return f"把 CO2 设定值改为 {value_text}"
+    if "送风" in topic_text and "温度" in topic_text:
+        return f"把送风温度设定值改为 {value_text}"
+    if "压差" in topic_text:
+        return f"把压差设定值改为 {value_text}"
+    if "温度" in topic_text:
+        return f"把温度设定值改为 {value_text}"
+    return ""
+
+
+def _align_candidate_requirements(value: Any, result: dict[str, Any], *, message: str) -> list[dict[str, Any]]:
+    candidates = _candidate_requirements(value)
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    value_text = _recommendation_value_text(recommendation)
+    subject_tokens = _recommendation_subject_tokens(message, result)
+    aligned: list[dict[str, Any]] = []
+    for item in candidates:
+        content = str(item.get("content") or "")
+        if subject_tokens and any(token in content for token in subject_tokens) and _contains_parameter_number(content):
+            if not value_text or not _contains_equivalent_value(content, value_text):
+                continue
+        aligned.append(item)
+    patch = result.get("adoptable_patch_intent") if isinstance(result.get("adoptable_patch_intent"), dict) else {}
+    patch_message = str(patch.get("message") or "").strip()
+    if patch_message and patch.get("executable"):
+        requirement = _candidate_requirement(patch_message)
+        if all(item.get("content") != requirement["content"] for item in aligned):
+            aligned.append(requirement)
+    return aligned
+
+
+def _recommendation_subject_tokens(message: str, result: dict[str, Any]) -> list[str]:
+    text = f"{message} {result.get('topic') or ''}"
+    if "CO2" in text or "二氧化碳" in text:
+        return ["CO2", "二氧化碳"]
+    if "送风" in text and "温度" in text:
+        return ["送风温度"]
+    if "压差" in text:
+        return ["压差"]
+    return []
+
+
+def _recommendation_value_text(recommendation: dict[str, Any]) -> str:
+    value = recommendation.get("value")
+    if value in (None, ""):
+        return ""
+    unit = str(recommendation.get("unit") or "").strip()
+    return f"{_format_scalar(value)}{unit}"
+
+
+def _format_scalar(value: Any) -> str:
+    number = _numeric_value(value)
+    if number is None:
+        return str(value).strip()
+    if number.is_integer():
+        return str(int(number))
+    return str(number).rstrip("0").rstrip(".")
+
+
+def _recommendation_has_concrete_value(recommendation: dict[str, Any]) -> bool:
+    return bool(_recommendation_value_text(recommendation))
+
+
+def _recommendation_value_matches_range(recommendation: dict[str, Any]) -> bool:
+    number = _numeric_value(recommendation.get("value"))
+    if number is None:
+        return True
+    ranges = _numeric_ranges(str(recommendation.get("range") or ""))
+    if not ranges:
+        return True
+    return any(low <= number <= high for low, high in ranges)
+
+
+def _numeric_ranges(text: str) -> list[tuple[float, float]]:
+    ranges: list[tuple[float, float]] = []
+    for match in re.finditer(r"(-?\d+(?:\.\d+)?)\s*(?:-|~|至|到)\s*(-?\d+(?:\.\d+)?)", text):
+        first = float(match.group(1))
+        second = float(match.group(2))
+        ranges.append((min(first, second), max(first, second)))
+    return ranges
+
+
+def _numeric_value(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        if match:
+            return float(match.group(0))
+    return None
+
+
+def _contains_parameter_number(value: str) -> bool:
+    return bool(re.search(r"-?\d+(?:\.\d+)?\s*(?:°?C|℃|ppm|Pa|%)?", value))
+
+
+def _contains_equivalent_value(content: str, value_text: str) -> bool:
+    compact_content = re.sub(r"\s+", "", content).replace("℃", "°C")
+    compact_value = re.sub(r"\s+", "", value_text).replace("℃", "°C")
+    if compact_value and compact_value in compact_content:
+        return True
+    number = _numeric_value(value_text)
+    content_numbers = [_numeric_value(match.group(0)) for match in re.finditer(r"-?\d+(?:\.\d+)?", content)]
+    return number is not None and any(item == number for item in content_numbers if item is not None)
+
+
+def _is_supply_air_temperature_question(message: str) -> bool:
+    return "送风" in message and "温度" in message
+
+
+def _mentions_operating_mode(message: str) -> bool:
+    return any(keyword in message for keyword in ("制冷", "制热", "除湿", "工况", "冬季", "夏季"))
 
 
 def _string_list(value: Any) -> list[str]:
