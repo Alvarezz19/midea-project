@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.advisory_kb.context import build_advisory_kb_context
 from app.services.knowledge import search_knowledge
 from app.services.llm_gateway import LLMGatewayError, chat_json
 from app.services.project_semantic_index import summarize_current_project_for_planner
@@ -65,12 +66,21 @@ def build_advisory_context(message: str, *, state: dict[str, Any], intent_result
             state=state,
             intent_result=intent_result,
         )
+    advisory_kb_context: dict[str, Any] = {}
+    if intent_result.get("should_search_domain_knowledge", True):
+        advisory_kb_context = build_advisory_kb_context(
+            message,
+            state=state,
+            intent_result=intent_result,
+            project_context=project_context,
+        )
     return {
         "queries": queries,
         "patch_support_queries": patch_support_queries,
         "knowledge_context": knowledge_items,
         "patch_support_context": patch_support_items,
         "project_context": project_context,
+        "advisory_kb_context": advisory_kb_context,
         "conversation_context": {
             "requirement_slots": state.get("requirement_slots", {}),
             "design_brief": state.get("design_brief"),
@@ -156,6 +166,7 @@ def _answer_with_llm(message: str, *, context: dict[str, Any], provider: str | N
             "例：用户问“防冻保护能不能删？”时，应 status=unsafe_request，说明不建议删除；adoptable_patch_intent.executable=false。",
             "例：用户问“Python 怎么写爬虫？”时，应 status=out_of_scope，且不生成候选需求。",
             "knowledge_context 是主咨询依据；patch_support_context 只用于判断是否能形成 adoptable_patch_intent，不要让补丁配方主导咨询答案。",
+            "advisory_kb_context 是结构化工程证据，优先使用其中的 current_project_refs、domain_kb、rule、code_kb 和 parameter_stat；generated 知识只能作为待工程师复核的依据，不能包装成已审规范。",
         ],
         "output_schema": {
             "status": "answered | needs_more_info | out_of_scope | unsafe_request",
@@ -410,6 +421,9 @@ def _weighted_knowledge_item(item: dict[str, Any], *, query_index: int) -> dict[
 def _context_used_summary(context: dict[str, Any]) -> dict[str, Any]:
     knowledge = context.get("knowledge_context") if isinstance(context.get("knowledge_context"), list) else []
     project_context = context.get("project_context") if isinstance(context.get("project_context"), dict) else {}
+    advisory_kb_context = context.get("advisory_kb_context") if isinstance(context.get("advisory_kb_context"), dict) else {}
+    advisory_units = advisory_kb_context.get("retrieved_units") if isinstance(advisory_kb_context.get("retrieved_units"), list) else []
+    fusion_summary = advisory_kb_context.get("fusion_summary") if isinstance(advisory_kb_context.get("fusion_summary"), dict) else {}
     sources = []
     for item in knowledge:
         if isinstance(item, dict):
@@ -424,6 +438,10 @@ def _context_used_summary(context: dict[str, Any]) -> dict[str, Any]:
         "top_weighted_score": max((float(item.get("weighted_score") or item.get("score") or 0) for item in knowledge if isinstance(item, dict)), default=0),
         "loaded_project_context": bool(project_context),
         "target_status": (project_context.get("target_resolution") or {}).get("status") if project_context else None,
+        "advisory_kb_unit_count": len(advisory_units),
+        "advisory_kb_sources": fusion_summary.get("source_counts", {}),
+        "advisory_kb_risk_tags": fusion_summary.get("risk_tags", []),
+        "advisory_kb_query_plan": advisory_kb_context.get("query_plan", {}),
     }
 
 
@@ -438,6 +456,15 @@ def _basis_from_context(context: dict[str, Any]) -> list[dict[str, str]]:
         if source:
             basis.append({"source": source, "summary": content[:120]})
     project_context = context.get("project_context") if isinstance(context.get("project_context"), dict) else {}
+    advisory_kb_context = context.get("advisory_kb_context") if isinstance(context.get("advisory_kb_context"), dict) else {}
+    advisory_units = advisory_kb_context.get("retrieved_units") if isinstance(advisory_kb_context.get("retrieved_units"), list) else []
+    for unit in advisory_units[:4]:
+        if not isinstance(unit, dict):
+            continue
+        source = " / ".join(str(part) for part in (unit.get("source_type"), unit.get("title") or unit.get("ref")) if part)
+        summary = re.sub(r"\s+", " ", str(unit.get("summary") or "")).strip()
+        if source and summary:
+            basis.append({"source": source, "summary": summary[:140]})
     if project_context:
         target = project_context.get("target_resolution") if isinstance(project_context.get("target_resolution"), dict) else {}
         basis.append(

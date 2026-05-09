@@ -1,0 +1,72 @@
+{
+  "schema_version": "advisory-ontology-v1",
+  "updated_at": "2026-05-08",
+  "risk_tags": [
+    {
+      "id": "comfort_control",
+      "label": "舒适性控制",
+      "level": "medium",
+      "description": "温度、湿度、CO2、压差等参数会影响舒适性或运行效果。"
+    },
+    {
+      "id": "air_quality_logic",
+      "label": "空气品质逻辑",
+      "level": "medium",
+      "description": "CO2、新风量、最小新风开度等逻辑会影响空气品质。"
+    },
+    {
+      "id": "actuator_logic",
+      "label": "执行器逻辑",
+      "level": "medium",
+      "description": "风机、阀门、直膨机、水泵、主机等执行器控制逻辑。"
+    },
+    {
+      "id": "protection_logic",
+      "label": "保护逻辑",
+      "level": "high",
+      "description": "防冻、故障、水流、急停、联锁等保护链路。"
+    },
+    {
+      "id": "alarm_logic",
+      "label": "报警逻辑",
+      "level": "medium",
+      "description": "过滤网、故障、通讯异常、状态异常等报警逻辑。"
+    },
+    {
+      "id": "io_point_mapping",
+      "label": "IO 点位映射",
+      "level": "high",
+      "description": "硬接输入输出、读写方向、现场点表和通道绑定。"
+    },
+    {
+      "id": "communication_mapping",
+      "label": "通讯映射",
+      "level": "high",
+      "description": "Modbus、BACnet、MQTT 地址、对象号、读写方向和比例换算。"
+    },
+    {
+      "id": "device_sequence",
+      "label": "设备顺控",
+      "level": "high",
+      "description": "主机、水泵、蝶阀、冷却塔、风机等设备动作先后和联动。"
+    },
+    {
+      "id": "device_count_topology",
+      "label": "设备数量和拓扑",
+      "level": "high",
+      "description": "设备数量、连接形式、位映射和配置页驱动的系统拓扑。"
+    },
+    {
+      "id": "rotation_logic",
+      "label": "轮值逻辑",
+      "level": "medium",
+      "description": "运行时间、优先级、故障屏蔽和备用设备选择逻辑。"
+    },
+    {
+      "id": "commissioning",
+      "label": "调试验收",
+      "level": "medium",
+      "description": "需要现场调试、点表复核、动作验证或联锁验证的事项。"
+    }
+  ]
+}

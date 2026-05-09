@@ -1,0 +1,66 @@
+{
+  "schema_version": "advisory-ontology-v1",
+  "updated_at": "2026-05-08",
+  "relationship_types": [
+    {
+      "id": "contains",
+      "label": "包含",
+      "description": "模板包含页面，页面包含节点或功能块。"
+    },
+    {
+      "id": "implements",
+      "label": "实现",
+      "description": "功能块、页面或子流程实现某个控制功能。"
+    },
+    {
+      "id": "has_point",
+      "label": "关联点位",
+      "description": "设备、功能或控制链关联某个输入、输出、设定或状态点。"
+    },
+    {
+      "id": "controls",
+      "label": "控制",
+      "description": "控制逻辑影响执行器、命令或输出点。"
+    },
+    {
+      "id": "measures",
+      "label": "测量",
+      "description": "传感器点位测量温度、湿度、CO2、压差等物理量。"
+    },
+    {
+      "id": "sets_target_for",
+      "label": "设定目标",
+      "description": "设定值作用于比较、PID 或其他控制环。"
+    },
+    {
+      "id": "protects",
+      "label": "保护",
+      "description": "保护信号保护设备、执行器或系统运行边界。"
+    },
+    {
+      "id": "interlocks",
+      "label": "联锁",
+      "description": "信号参与启停、允许、闭锁或故障切换条件。"
+    },
+    {
+      "id": "feeds_signal_to",
+      "label": "信号流向",
+      "description": "节点输出作为下游节点的输入来源。"
+    },
+    {
+      "id": "publishes_to",
+      "label": "发布到通讯",
+      "description": "内部变量、状态或命令发布到通讯输出对象。"
+    },
+    {
+      "id": "references",
+      "label": "引用",
+      "description": "quote、变量或子流程端口引用已有点位或节点。"
+    },
+    {
+      "id": "requires_confirmation",
+      "label": "需要确认",
+      "description": "修改或建议需要人工复核后才能进入补丁链路。"
+    }
+  ]
+}

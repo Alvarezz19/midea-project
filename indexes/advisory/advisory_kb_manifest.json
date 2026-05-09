@@ -1,0 +1,42 @@
+{
+  "schema_version": "advisory-kb-v1",
+  "index_version": "phase-b-code-facts-v1",
+  "source_count": 5,
+  "source_hashes": {
+    "programs/AHU程序/三山经开区/flows_20251210190941.json": "1e8f73a5e0445535a65ed41a73d5f2b8991bc2819da4dd7411b2c1055a46dd56",
+    "programs/AHU程序/云霞县华龙科技/flows_20251229175702.json": "78c1df64555c202d1c5840a4fe110ea099a2505ecbad63c58660e65dc59bb2c4",
+    "programs/AHU程序/泰安宁阳中医院/flows_20260206160555.json": "7fe5b1bd9a592f18ac285ac517ab958d2d548e3a2f75801ccdc397d3c3c8f170",
+    "programs/机房群控程序/20230707_机房群控示例程序{2主机+3冷冻冷却水泵+2冷却塔].json": "fd5b4c87c8f0e9be3618eda7809bcd6f4991693532ca7f00de08a92d355f39f6",
+    "programs/机房群控程序/风冷热泵标准控制程序[风冷涡旋]20240905.json": "62865a9a96126bb8c23b18b7c8ce3b0a59b76010349e557c6e5f695f8a0c35e3"
+  },
+  "row_counts": {
+    "template_profile_index": 5,
+    "tab_role_index": 31,
+    "point_identity_index": 3374,
+    "quote_reference_index": 2349,
+    "point_usage_index": 3318,
+    "subflow_index": 94,
+    "configuration_model_index": 1,
+    "bitmask_mapping_index": 260,
+    "algorithm_role_index": 179,
+    "control_chain_index": 669,
+    "protection_chain_index": 307,
+    "parameter_stat_index": 422,
+    "code_facts": 5342
+  },
+  "outputs": [
+    "algorithm_role_index.jsonl",
+    "bitmask_mapping_index.jsonl",
+    "code_facts.jsonl",
+    "configuration_model_index.jsonl",
+    "control_chain_index.jsonl",
+    "parameter_stat_index.jsonl",
+    "point_identity_index.jsonl",
+    "point_usage_index.jsonl",
+    "protection_chain_index.jsonl",
+    "quote_reference_index.jsonl",
+    "subflow_index.jsonl",
+    "tab_role_index.jsonl",
+    "template_profile_index.jsonl"
+  ]
+}
