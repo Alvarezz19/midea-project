@@ -1,6 +1,7 @@
-import { Alert, Button, Collapse, Descriptions, Empty, List, Popconfirm, Space, Statistic, Tag, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Descriptions, Empty, List, Popconfirm, Space, Statistic, Tag, Typography, message as antMessage } from 'antd';
 import { BulbOutlined, CheckCircleOutlined, CloseCircleOutlined, ForkOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { confirmPatch, confirmTemplate, formatApiError, sendMessage } from '../../api/client';
 import type { AdvisoryResult, CandidateRequirement, DesignBrief, RequirementConformanceReport, SemanticTargetCandidate, TemplateCandidate } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
@@ -40,7 +41,8 @@ export function PlanningPanel() {
   });
 
   const adviceActionMutation = useMutation({
-    mutationFn: (message: string) => sendMessage(threadId!, message),
+    mutationFn: (payload: { message: string; selectedCandidateRequirementIds?: string[] }) =>
+      sendMessage(threadId!, payload.message, undefined, { selectedCandidateRequirementIds: payload.selectedCandidateRequirementIds }),
     onSuccess: (data) => setSession({ threadId: data.thread_id, traceId: data.trace_id, state: data.state }),
     onError: (error) => messageApi.error(formatApiError(error))
   });
@@ -92,7 +94,7 @@ export function PlanningPanel() {
           <AdvisoryView
             advisory={advisory ?? pendingAdvice}
             candidateRequirements={candidateRequirements}
-            onAction={(message) => adviceActionMutation.mutate(message)}
+            onAction={(message, selectedCandidateRequirementIds) => adviceActionMutation.mutate({ message, selectedCandidateRequirementIds })}
             actionLoading={adviceActionMutation.isPending}
             disabled={!threadId}
           />
@@ -179,13 +181,24 @@ function AdvisoryView({
 }: {
   advisory?: AdvisoryResult | null;
   candidateRequirements: CandidateRequirement[];
-  onAction: (message: string) => void;
+  onAction: (message: string, selectedCandidateRequirementIds?: string[]) => void;
   actionLoading: boolean;
   disabled: boolean;
 }) {
   const adoptable = advisory?.adoptable_patch_intent;
   const executable = Boolean(adoptable?.executable && adoptable.message);
   const alertType = advisory?.status === 'unsafe_request' ? 'warning' : advisory?.status === 'out_of_scope' ? 'info' : 'success';
+  const currentCandidates = useMemo(() => uniqueCandidateRequirements(advisory?.candidate_requirements ?? []), [advisory?.candidate_requirements]);
+  const currentCandidateKey = currentCandidates.map(candidateRequirementKey).join('|');
+  const [selectedRequirementIds, setSelectedRequirementIds] = useState<string[]>([]);
+  useEffect(() => {
+    setSelectedRequirementIds([]);
+  }, [currentCandidateKey]);
+  const toggleRequirement = (candidate: CandidateRequirement, checked: boolean) => {
+    const id = candidateRequirementKey(candidate);
+    setSelectedRequirementIds((current) => (checked ? Array.from(new Set([...current, id])) : current.filter((item) => item !== id)));
+  };
+  const hasCurrentCandidates = currentCandidates.length > 0;
   return (
     <div className={panelStyles.section}>
       <div className={panelStyles.sectionHeading}>
@@ -211,7 +224,12 @@ function AdvisoryView({
       <BriefTags title="前提" items={advisory?.assumptions ?? []} color="cyan" />
       <BriefTags title="风险" items={advisory?.risks ?? []} color="orange" />
       <BriefTags title="缺失" items={advisory?.missing_info ?? []} color="warning" />
-      <CandidateRequirementsView current={advisory?.candidate_requirements ?? []} accumulated={candidateRequirements} />
+      <CandidateRequirementsView
+        current={currentCandidates}
+        accumulated={candidateRequirements}
+        selectedIds={selectedRequirementIds}
+        onToggle={toggleRequirement}
+      />
       <Space className={panelStyles.adviceActions} wrap>
         <Button
           type="primary"
@@ -222,8 +240,12 @@ function AdvisoryView({
         >
           采纳并生成修改计划
         </Button>
-        <Button disabled={disabled} loading={actionLoading} onClick={() => onAction('先不改，但把这个作为需求记录下来')}>
-          纳入候选需求
+        <Button
+          disabled={disabled || !hasCurrentCandidates || !selectedRequirementIds.length}
+          loading={actionLoading}
+          onClick={() => onAction('先不改，但把选中的候选需求记录下来', selectedRequirementIds)}
+        >
+          纳入选中 {selectedRequirementIds.length}
         </Button>
         <Button disabled={disabled} loading={actionLoading} onClick={() => onAction('先不改')}>
           暂不采用
@@ -236,31 +258,61 @@ function AdvisoryView({
 
 function CandidateRequirementsView({
   current,
-  accumulated
+  accumulated,
+  selectedIds,
+  onToggle
 }: {
   current: CandidateRequirement[];
   accumulated: CandidateRequirement[];
+  selectedIds: string[];
+  onToggle: (item: CandidateRequirement, checked: boolean) => void;
 }) {
-  const rows = mergeCandidateRequirements(current, accumulated);
-  if (!rows.length) {
+  const accumulatedRows = uniqueCandidateRequirements(accumulated);
+  if (!current.length && !accumulatedRows.length) {
     return null;
   }
   return (
     <div className={panelStyles.candidateRequirementBox}>
-      <div className={panelStyles.sectionHeading}>
-        <Text type="secondary">候选需求</Text>
-        <Tag color="blue">累计 {accumulated.length || rows.length}</Tag>
-      </div>
-      <List
-        size="small"
-        dataSource={rows.slice(0, 5)}
-        renderItem={(item) => (
-          <List.Item className={panelStyles.requirementItem}>
-            <Tag color={candidateRequirementColor(item.status)}>{candidateRequirementStatus(item.status)}</Tag>
-            <Text>{item.content ?? '未命名候选需求'}</Text>
-          </List.Item>
-        )}
-      />
+      {current.length ? (
+        <>
+          <div className={panelStyles.sectionHeading}>
+            <Text type="secondary">本轮候选需求</Text>
+            <Tag color="cyan">待选择 {current.length}</Tag>
+          </div>
+          <List
+            size="small"
+            dataSource={current}
+            renderItem={(item) => {
+              const id = candidateRequirementKey(item);
+              return (
+                <List.Item className={panelStyles.requirementChoiceItem}>
+                  <Checkbox checked={selectedIds.includes(id)} onChange={(event) => onToggle(item, event.target.checked)}>
+                    <span className={panelStyles.requirementText}>{item.content ?? '未命名候选需求'}</span>
+                  </Checkbox>
+                </List.Item>
+              );
+            }}
+          />
+        </>
+      ) : null}
+      {accumulatedRows.length ? (
+        <>
+          <div className={panelStyles.sectionHeading}>
+            <Text type="secondary">已纳入候选需求</Text>
+            <Tag color="blue">累计 {accumulatedRows.length}</Tag>
+          </div>
+          <List
+            size="small"
+            dataSource={accumulatedRows}
+            renderItem={(item) => (
+              <List.Item className={panelStyles.requirementItem}>
+                <Tag color={candidateRequirementColor(item.status)}>{candidateRequirementStatus(item.status)}</Tag>
+                <Text>{item.content ?? '未命名候选需求'}</Text>
+              </List.Item>
+            )}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -563,10 +615,10 @@ function recommendationText(value: Record<string, unknown>): string {
   return [main || '-', range].filter(Boolean).join(' · ');
 }
 
-function mergeCandidateRequirements(current: CandidateRequirement[], accumulated: CandidateRequirement[]): CandidateRequirement[] {
+function uniqueCandidateRequirements(items: CandidateRequirement[]): CandidateRequirement[] {
   const result: CandidateRequirement[] = [];
   const seen = new Set<string>();
-  [...current, ...accumulated].forEach((item) => {
+  items.forEach((item) => {
     const content = String(item.content ?? '').trim();
     if (!content || seen.has(content)) {
       return;
@@ -575,6 +627,10 @@ function mergeCandidateRequirements(current: CandidateRequirement[], accumulated
     result.push(item);
   });
   return result;
+}
+
+function candidateRequirementKey(item: CandidateRequirement): string {
+  return String(item.candidate_id ?? item.content ?? '').trim();
 }
 
 function candidateRequirementStatus(status?: string): string {

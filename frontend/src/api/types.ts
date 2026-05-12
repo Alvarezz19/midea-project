@@ -95,6 +95,7 @@ export interface AdvisoryBasis {
 }
 
 export interface CandidateRequirement {
+  candidate_id?: string;
   content?: string;
   status?: 'observed' | 'candidate' | 'confirmed' | 'rejected' | string;
   needs_confirmation?: boolean;
