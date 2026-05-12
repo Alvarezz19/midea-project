@@ -33,7 +33,10 @@ def build_react_flow(
         focus_ids.insert(0, center_node_id)
 
     tabs = get_tabs(nodes)
+    if tab_id and tab_id not in tabs:
+        raise FlowGraphError(f"页面不存在: {tab_id}")
     candidate_ids = _candidate_node_ids(nodes, center_node_id=center_node_id, focus_node_ids=focus_ids, tab_id=tab_id, max_nodes=max_nodes)
+    eligible_node_ids = _eligible_node_ids(nodes, tab_id=tab_id)
     included = set(candidate_ids)
     flow_nodes = [_flow_node(node_by_id[node_id], tabs) for node_id in candidate_ids]
     flow_edges = _flow_edges(nodes, included, max_edges=max_edges)
@@ -48,7 +51,7 @@ def build_react_flow(
             "max_chars": max_chars,
             "node_count": len(flow_nodes),
             "edge_count": len(flow_edges),
-            "truncated": len(_non_tab_node_ids(nodes)) > len(flow_nodes) or len(flow_edges) >= max_edges,
+            "truncated": len(eligible_node_ids) > len(flow_nodes) or len(flow_edges) >= max_edges,
         },
     }
     while len(json.dumps(result, ensure_ascii=False)) > max_chars and result["nodes"]:
@@ -69,13 +72,16 @@ def _candidate_node_ids(
     tab_id: str | None,
     max_nodes: int,
 ) -> list[str]:
-    all_ids = _non_tab_node_ids(nodes)
+    all_ids = _eligible_node_ids(nodes, tab_id=tab_id)
     node_by_id = {str(node["id"]): node for node in nodes if isinstance(node.get("id"), str)}
     selected: list[str] = []
     selected_set: set[str] = set()
+    allowed_ids = set(all_ids)
+    if tab_id:
+        focus_node_ids = [node_id for node_id in focus_node_ids if node_id in allowed_ids]
 
     def add(node_id: str | None) -> bool:
-        if not node_id or node_id in selected_set or node_id not in node_by_id:
+        if not node_id or node_id in selected_set or node_id not in node_by_id or node_id not in allowed_ids:
             return len(selected) >= max_nodes
         if node_by_id[node_id].get("type") == "tab":
             return len(selected) >= max_nodes
@@ -104,17 +110,18 @@ def _candidate_node_ids(
             if add(node_id):
                 return selected
 
-    preferred_tab_ids = _preferred_tab_ids(node_by_id, focus_ids, tab_id)
+    preferred_tab_ids = _preferred_tab_ids(node_by_id, focus_ids, None)
     for node_id in all_ids:
         node = node_by_id[node_id]
-        if preferred_tab_ids and node.get("z") not in preferred_tab_ids:
+        if not tab_id and preferred_tab_ids and node.get("z") not in preferred_tab_ids:
             continue
         if add(node_id):
             return selected
 
-    for node_id in all_ids:
-        if add(node_id):
-            break
+    if not tab_id:
+        for node_id in all_ids:
+            if add(node_id):
+                break
     return selected
 
 
@@ -128,8 +135,14 @@ def _preferred_tab_ids(node_by_id: dict[str, dict[str, Any]], focus_node_ids: li
     return result
 
 
-def _non_tab_node_ids(nodes: list[dict[str, Any]]) -> list[str]:
-    return [str(node["id"]) for node in nodes if isinstance(node.get("id"), str) and node.get("type") != "tab"]
+def _eligible_node_ids(nodes: list[dict[str, Any]], *, tab_id: str | None) -> list[str]:
+    return [
+        str(node["id"])
+        for node in nodes
+        if isinstance(node.get("id"), str)
+        and node.get("type") != "tab"
+        and (not tab_id or node.get("z") == tab_id)
+    ]
 
 
 def _flow_node(node: dict[str, Any], tabs: dict[str, str]) -> dict[str, Any]:

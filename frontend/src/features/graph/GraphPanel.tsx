@@ -55,9 +55,11 @@ export function GraphPanel() {
   const diffKindByNodeId = useMemo(() => buildDiffKindMap(diff), [diff]);
   const riskNodeIds = useMemo(() => buildRiskNodeIds(state?.pending_confirmation_patch ?? state?.planner_result, state?.planner_dry_run), [state?.pending_confirmation_patch, state?.planner_result, state?.planner_dry_run]);
   const centerNodeId = selectedNodeId ?? affectedNodeIds[0];
+  const requestCenterNodeId = activeTabId ? undefined : centerNodeId;
+  const requestFocusNodeIds = activeTabId ? [] : affectedNodeIds.slice(0, 32);
   const flowQuery = useQuery({
-    queryKey: ['project-flow', projectId, versionId, centerNodeId, affectedNodeIds.join(','), activeTabId],
-    queryFn: () => getProjectFlow(projectId!, versionId!, { centerNodeId, focusNodeIds: affectedNodeIds.slice(0, 32), tabId: activeTabId }),
+    queryKey: ['project-flow', projectId, versionId, requestCenterNodeId, requestFocusNodeIds.join(','), activeTabId],
+    queryFn: () => getProjectFlow(projectId!, versionId!, { centerNodeId: requestCenterNodeId, focusNodeIds: requestFocusNodeIds, tabId: activeTabId }),
     enabled: Boolean(projectId && versionId),
     retry: false
   });
@@ -68,16 +70,16 @@ export function GraphPanel() {
     () =>
       [
         ...(flowQuery.data?.flow?.nodes ?? []).map((node) => toFlowNode(node, activeNodeId, affectedNodeIds, diffKindByNodeId, riskNodeIds, viewMode)),
-        ...syntheticDiffNodes(diff, graphNodeIds, activeNodeId, riskNodeIds, viewMode)
+        ...(activeTabId ? [] : syntheticDiffNodes(diff, graphNodeIds, activeNodeId, riskNodeIds, viewMode))
       ],
-    [activeNodeId, affectedNodeIds, diff, diffKindByNodeId, flowQuery.data?.flow?.nodes, graphNodeIds, riskNodeIds, viewMode]
+    [activeNodeId, activeTabId, affectedNodeIds, diff, diffKindByNodeId, flowQuery.data?.flow?.nodes, graphNodeIds, riskNodeIds, viewMode]
   );
   const flowEdges = useMemo(
     () => [
       ...(flowQuery.data?.flow?.edges ?? []).map((edge) => toFlowEdge(edge, diffKindByNodeId, riskNodeIds)),
-      ...syntheticDiffEdges(state?.planner_dry_run, graphNodeIds, viewMode)
+      ...(activeTabId ? [] : syntheticDiffEdges(state?.planner_dry_run, graphNodeIds, viewMode))
     ],
-    [diffKindByNodeId, flowQuery.data?.flow?.edges, graphNodeIds, riskNodeIds, state?.planner_dry_run, viewMode]
+    [activeTabId, diffKindByNodeId, flowQuery.data?.flow?.edges, graphNodeIds, riskNodeIds, state?.planner_dry_run, viewMode]
   );
   const selectedNode = flowNodes.find((node) => node.id === activeNodeId);
   const boundaryPreview = useMemo(() => findCopyBlockBoundaryPreview(state?.planner_dry_run), [state?.planner_dry_run]);
@@ -139,7 +141,10 @@ export function GraphPanel() {
                 key={tab.id}
                 className={activeTabId === tab.id ? panelStyles.flowTabActive : undefined}
                 type="button"
-                onClick={() => setActiveTabId(tab.id)}
+                onClick={() => {
+                  setActiveTabId(tab.id);
+                  selectNode(undefined);
+                }}
               >
                 {tab.label || tab.id}
               </button>
