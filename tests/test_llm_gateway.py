@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -230,6 +231,108 @@ def test_advisory_target_candidates_block_executable_patch(monkeypatch: pytest.M
     assert result["adoptable_patch_intent"]["executable"] is False
     assert result["adoptable_patch_intent"]["message"] == "把 CO2 设定值改为 800ppm"
     assert "未定位到唯一可修改目标" in result["adoptable_patch_intent"]["reason"]
+
+
+def test_advisory_chat_prompt_drops_duplicate_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_load_project_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        candidate = {
+            "candidate_id": "candidate_1",
+            "kind": "node",
+            "display_name": "CO2 设定值",
+            "description": "tripPoint=900",
+            "confidence": 0.8,
+            "selector": {"id": "node_co2"},
+            "tab_label": "控制",
+            "type": "constInput",
+            "key_params": {"name": "CO2 设定值", "value": 900},
+            "node": {"id": "node_co2", "large_duplicate": "不应进入 LLM prompt"},
+        }
+        return {
+            "project_type": "ahu",
+            "project_id": "p1",
+            "version_id": "v1",
+            "summary": {"node_count": 10},
+            "tabs": [{"tab_id": "tab_control", "tab_label": "控制"}],
+            "target_resolution": {
+                "status": "candidates",
+                "selected": candidate,
+                "candidates": [candidate],
+                "questions": ["请选择 CO2 设定值。"],
+                "target_queries": ["CO2"],
+                "knowledge_queries": ["AHU CO2"],
+            },
+            "semantic_candidates": [candidate],
+            "node_neighborhood": {"nodes": [{"id": "node_co2"}]},
+            "topic": "CO2 阈值",
+        }
+
+    def fake_build_advisory_kb_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        unit = {
+            "evidence_id": "ahu.co2_control.v1",
+            "source_type": "domain_kb",
+            "source_path": "knowledge/domain/ahu/co2_control.md",
+            "ref": "ahu.co2_control.v1",
+            "title": "AHU CO2 控制建议",
+            "summary": "CO2 阈值应结合空气品质和新风负荷。",
+            "score": 10,
+            "risk_tags": ["air_quality_logic"],
+            "confidence": "medium",
+        }
+        return {
+            "query_plan": {"function_type": "co2_control"},
+            "retrieved_units": [unit],
+            "current_project_refs": [{"kind": "node", "id": "node_co2", "display_name": "CO2 设定值"}],
+            "control_chains": [{"summary": "不应重复进入 LLM prompt"}],
+            "protection_chains": [{"summary": "不应重复进入 LLM prompt"}],
+            "parameter_stats": [{"summary": "不应重复进入 LLM prompt"}],
+            "risk_rules": [{"summary": "不应重复进入 LLM prompt"}],
+            "fusion_summary": {"source_counts": {"domain_kb": 1}, "risk_tags": ["air_quality_logic"]},
+        }
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        del provider, kwargs
+        captured["payload"] = json.loads(messages[1]["content"])
+        return {
+            "status": "answered",
+            "answer": "CO2 阈值建议 900 ppm，当前不会修改工程。",
+            "topic": "CO2 阈值",
+            "recommendation": {"value": 900, "unit": "ppm", "range": "800-1000 ppm", "confidence": "medium"},
+            "basis": [],
+            "assumptions": [],
+            "risks": [],
+            "missing_info": [],
+            "candidate_requirements": [],
+            "adoptable_patch_intent": {"executable": False, "message": "", "reason": "测试。"},
+        }
+
+    monkeypatch.setattr("app.services.advisory._load_project_context", fake_load_project_context)
+    monkeypatch.setattr("app.services.advisory.build_advisory_kb_context", fake_build_advisory_kb_context)
+    monkeypatch.setattr("app.services.advisory.chat_json", fake_chat_json)
+
+    answer_advisory_question(
+        "CO2 阈值多少合适？",
+        state={"project_type": "ahu", "current_project_path": "dummy.json"},
+        intent_result={"intent": "advisory_intent", "topic": "CO2 阈值", "should_load_project_context": True},
+        provider="deepseek",
+    )
+
+    llm_context = captured["payload"]["context"]
+    advisory_kb_context = llm_context["advisory_kb_context"]
+    project_context = llm_context["project_context"]
+
+    assert advisory_kb_context["retrieved_units"]
+    assert advisory_kb_context["current_project_refs"]
+    assert "control_chains" not in advisory_kb_context
+    assert "protection_chains" not in advisory_kb_context
+    assert "parameter_stats" not in advisory_kb_context
+    assert "risk_rules" not in advisory_kb_context
+    assert "candidates" not in project_context["target_resolution"]
+    assert "node" not in project_context["target_resolution"]["selected"]
+    assert "node" not in project_context["semantic_candidates"][0]
 
 
 def test_supply_air_temperature_does_not_become_room_temperature_patch(monkeypatch: pytest.MonkeyPatch) -> None:
