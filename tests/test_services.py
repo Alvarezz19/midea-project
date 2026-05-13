@@ -1541,6 +1541,11 @@ def test_planner_creates_add_tab_patch(tmp_path: Path) -> None:
     assert punctuated["status"] == "planned"
     assert punctuated["pending_patch"] == {"op": "add_tab", "label": "CO2 控制"}
 
+    duplicate = plan_patch_request("新增一个已经存在的水泵控制页面。", project_path=metadata["version_path"])
+    assert duplicate["status"] == "needs_clarification"
+    assert duplicate["pending_patch"] is None
+    assert "页面“水泵控制”已存在" in duplicate["questions"][0]
+
 
 def test_planner_replaces_unique_tab_label_text(tmp_path: Path) -> None:
     metadata = create_project_version(AHU_TEMPLATE, project_id="planner_project", version_id="v_tab_label", versions_dir=tmp_path)

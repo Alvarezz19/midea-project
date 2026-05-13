@@ -447,6 +447,22 @@ def test_workflow_renames_node_by_semantic_description(tmp_path: Path) -> None:
     assert next(item for item in nodes if item.get("id") == "3a4c97e")["name"] == "演示节点"
 
 
+def test_workflow_updates_tab_label_without_node_candidate_clarification(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把水泵控制页面标签改成冷冻水泵控制，节点名字不用改。"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["pending_patch"] == {"op": "update_param", "node_selector": {"id": "73b96a8"}, "params": {"label": "冷冻水泵控制"}}
+    assert result["planner_result"]["target_resolution"]["selected"]["kind"] == "tab"
+    nodes = load_project(result["current_project_path"])
+    assert next(item for item in nodes if item.get("id") == "73b96a8")["label"] == "冷冻水泵控制"
+
+
 def test_workflow_updates_recent_node_by_reference_after_confirmation(tmp_path: Path) -> None:
     thread_id = f"pytest-semantic-reference-{uuid.uuid4().hex}"
     state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)

@@ -320,7 +320,7 @@ def plan_patch_with_llm(
         raise LLMPlannerError("LLM 补丁规划结果不符合 schema: " + " | ".join(schema_errors))
 
     data = plan.model_dump(exclude_none=True)
-    data = _postprocess_planned_data(message, data, context)
+    data = _postprocess_plan_data(message, data, context)
     data["planner"] = "llm"
     data["llm_meta"] = meta
     data["context"] = context
@@ -431,14 +431,32 @@ def _build_user_prompt(message: str, context: dict[str, Any], feedback_messages:
     return prompt
 
 
-def _postprocess_planned_data(message: str, data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+def _postprocess_plan_data(message: str, data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    result = dict(data)
+    if data.get("status") == "needs_clarification":
+        duplicate_tab_question = _duplicate_add_tab_question(message, data.get("operations"), context) or _duplicate_add_tab_question_from_message(message, context)
+        if duplicate_tab_question:
+            result["intent"] = "add_logic"
+            result["summary"] = "新增页面名称与现有页面重复，需要用户确认。"
+            result["risk_level"] = "low"
+            result["operations"] = []
+            result["questions"] = [duplicate_tab_question]
+            return result
+        boundary_question = _copy_block_boundary_question(message, context)
+        if boundary_question:
+            result["intent"] = "add_logic"
+            result["summary"] = "复制功能块的边界接线需要用户确认。"
+            result["risk_level"] = "high"
+            result["operations"] = []
+            result["questions"] = [boundary_question]
+        return result
+
     if data.get("status") != "planned":
-        return data
+        return result
     operations = data.get("operations")
     if not isinstance(operations, list):
-        return data
+        return result
 
-    result = dict(data)
     if _is_simple_dynamic_input_enable_request(message):
         enable_ops = [operation for operation in operations if isinstance(operation, dict) and operation.get("op") == "enable_dynamic_input"]
         if enable_ops and len(enable_ops) != len(operations):
@@ -452,6 +470,15 @@ def _postprocess_planned_data(message: str, data: dict[str, Any], context: dict[
     if _is_input_only_disconnect_request(message):
         result["operations"] = _normalize_input_only_disconnect_operations(message, result.get("operations"))
 
+    duplicate_tab_question = _duplicate_add_tab_question(message, result.get("operations"), context)
+    if duplicate_tab_question:
+        result["status"] = "needs_clarification"
+        result["intent"] = "add_logic"
+        result["summary"] = "新增页面名称与现有页面重复，需要用户确认。"
+        result["risk_level"] = "low"
+        result["operations"] = []
+        result["questions"] = [duplicate_tab_question]
+
     copy_block_question = _copy_block_ambiguity_question(message, result.get("operations"), context)
     if copy_block_question:
         result["status"] = "needs_clarification"
@@ -461,6 +488,89 @@ def _postprocess_planned_data(message: str, data: dict[str, Any], context: dict[
         result["operations"] = []
         result["questions"] = [copy_block_question]
     return result
+
+
+def _duplicate_add_tab_question(message: str, operations: Any, context: dict[str, Any]) -> str | None:
+    if not isinstance(operations, list):
+        return None
+    add_tab_ops = [operation for operation in operations if isinstance(operation, dict) and operation.get("op") == "add_tab"]
+    if not add_tab_ops:
+        return None
+    existing_labels = {str(tab.get("label") or "") for tab in context.get("tabs") or [] if isinstance(tab, dict)}
+    for operation in add_tab_ops:
+        label = str(operation.get("label") or "").strip()
+        normalized_label = _normalize_requested_tab_label(label)
+        if normalized_label in existing_labels:
+            return f"页面“{normalized_label}”已存在。请确认是使用现有页面继续修改，还是换一个新的页面名称。"
+    requested_label = _requested_tab_label_from_message(message)
+    if requested_label and requested_label in existing_labels:
+        return f"页面“{requested_label}”已存在。请确认是使用现有页面继续修改，还是换一个新的页面名称。"
+    return None
+
+
+def _duplicate_add_tab_question_from_message(message: str, context: dict[str, Any]) -> str | None:
+    requested_label = _requested_tab_label_from_message(message)
+    if not requested_label:
+        return None
+    existing_labels = {str(tab.get("label") or "") for tab in context.get("tabs") or [] if isinstance(tab, dict)}
+    if requested_label not in existing_labels:
+        return None
+    return f"页面“{requested_label}”已存在。请确认是使用现有页面继续修改，还是换一个新的页面名称。"
+
+
+def _normalize_requested_tab_label(label: str) -> str:
+    return re.sub(r"^(?:已经存在的|已存在的|现有的|已有的)", "", label.strip()).strip()
+
+
+def _requested_tab_label_from_message(message: str) -> str | None:
+    patterns = [
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。！？!?]+?)\s*(?:页面|页签|tab|Tab)",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。！？!?]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if not match:
+            continue
+        label = _normalize_requested_tab_label(match.group("label").strip().strip("\"'“”‘’`"))
+        if label:
+            return label
+    return None
+
+
+def _copy_block_boundary_question(message: str, context: dict[str, Any]) -> str | None:
+    block_id = _explicit_block_id(message)
+    if not block_id:
+        return None
+    if not _requests_copy_block_external_connections(message):
+        return None
+    block = _block_from_context(context, block_id)
+    title = str(block.get("title") or block_id) if block else block_id
+    return (
+        f"已确认要复制“{title}”。复制功能块默认只保留内部连线，不能自动接回外部入口或出口。"
+        "请基于边界预览明确每一条入口/出口接线的源节点、目标节点、端口和方向，或确认暂不接外部线。"
+    )
+
+
+def _explicit_block_id(message: str) -> str | None:
+    match = re.search(r"\bblock_[a-fA-F0-9]{6,}\b", message)
+    return match.group(0) if match else None
+
+
+def _requests_copy_block_external_connections(message: str) -> bool:
+    text = message.strip()
+    if not any(keyword in text for keyword in ("复制", "克隆", "copy_block", "功能块")):
+        return False
+    if any(keyword in text for keyword in ("暂不接", "不接外部", "先不要接", "不要接外部")):
+        return False
+    return any(keyword in text for keyword in ("接回", "接入", "接到", "连接", "连线", "入口", "出口", "外部线"))
+
+
+def _block_from_context(context: dict[str, Any], block_id: str) -> dict[str, Any] | None:
+    for key in ("related_blocks", "block_contexts"):
+        for item in context.get(key) or []:
+            if isinstance(item, dict) and str(item.get("block_id") or "") == block_id:
+                return item
+    return None
 
 
 def _is_simple_dynamic_input_enable_request(message: str) -> bool:

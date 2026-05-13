@@ -947,6 +947,108 @@ def test_llm_planner_asks_when_copy_block_candidates_are_ambiguous(
     assert "block_" not in result["questions"][0]
 
 
+def test_llm_planner_keeps_explicit_copy_block_and_asks_boundary_connections(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_copy_block_boundary", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages, provider
+        return {
+            "status": "needs_clarification",
+            "intent": "add_logic",
+            "summary": "复制功能块后接回原入口出口。",
+            "risk_level": "high",
+            "risk_reasons": ["copy_block 需要确认边界接线。"],
+            "required_context": [{"type": "block", "query": "block_3f996bfafceb", "reason": "定位源功能块"}],
+            "operations": [],
+            "validation_expectations": [],
+            "questions": ["请确认要复制哪个功能块。"],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "把旁通阀控制功能块 block_3f996bfafceb 复制一份到旁通阀控制页，前缀用 2号-，复制后接回原来的入口和出口。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["risk_level"] == "high"
+    assert "已确认要复制" in result["questions"][0]
+    assert "边界预览" in result["questions"][0]
+    assert "源节点、目标节点、端口和方向" in result["questions"][0]
+
+
+def test_llm_planner_reports_duplicate_add_tab_before_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_duplicate_tab", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages, provider
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增一个已存在的水泵控制页面。",
+            "risk_level": "low",
+            "risk_reasons": [],
+            "required_context": [{"type": "tab", "query": "水泵控制", "reason": "确认页面是否存在"}],
+            "operations": [{"op": "add_tab", "label": "已经存在的水泵控制"}],
+            "validation_expectations": [],
+            "questions": [],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "新增一个已经存在的水泵控制页面。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["pending_patch"] is None
+    assert "页面“水泵控制”已存在" in result["questions"][0]
+
+
+def test_llm_planner_corrects_duplicate_add_tab_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_duplicate_tab_clarification", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages, provider
+        return {
+            "status": "needs_clarification",
+            "intent": "add_logic",
+            "summary": "需要确认水泵控制功能块。",
+            "risk_level": "medium",
+            "risk_reasons": [],
+            "required_context": [],
+            "operations": [],
+            "validation_expectations": [],
+            "questions": ["请确认要新增哪个水泵控制功能块。"],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "新增一个已经存在的水泵控制页面。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["risk_level"] == "low"
+    assert result["pending_patch"] is None
+    assert "页面“水泵控制”已存在" in result["questions"][0]
+
+
 def test_llm_planner_rejects_unknown_operations(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_bad", versions_dir=tmp_path)
 

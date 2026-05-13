@@ -113,3 +113,17 @@ def test_semantic_locator_treats_page_suffix_as_tab_and_returns_candidates() -> 
     assert result["candidates"]
     assert all(candidate["tab_label"] == "控制" for candidate in result["candidates"])
     assert "节点 id" not in result["questions"][0]
+
+
+def test_semantic_locator_resolves_tab_label_update_to_tab() -> None:
+    result = locate_semantic_targets(
+        "把水泵控制页面标签改成冷冻水泵控制，节点名字不用改。",
+        project_path=PLANT_TEMPLATE,
+        project_type="plant_room",
+        conversation_context={},
+    )
+
+    assert result["status"] == "resolved"
+    assert result["intent"] == "update_param"
+    assert result["selected"]["kind"] == "tab"
+    assert result["selected"]["selector"] == {"id": "73b96a8"}
