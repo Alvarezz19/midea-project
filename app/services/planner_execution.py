@@ -91,6 +91,12 @@ def plan_patch_with_llm_dry_run_feedback(
 
         dry_run.pop("nodes", None)
         if dry_run["valid"]:
+            if dry_run.get("changed") is False:
+                last_error = "补丁 dry-run 未产生任何实际变更。"
+                feedback_messages.append(f"dry-run 未产生变更：{last_error}")
+                planner_attempts[-1]["dry_run_valid"] = False
+                planner_attempts[-1]["validation_error"] = last_error
+                continue
             return {
                 "status": "dry_run_valid",
                 "planner_result": planner_result,

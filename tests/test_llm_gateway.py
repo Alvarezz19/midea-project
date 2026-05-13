@@ -13,7 +13,7 @@ from app.main import app
 from app.services.json_project import create_project_version
 from app.services.advisory import answer_advisory_question, build_advisory_context
 from app.services.llm_planner import LLMPlannerError, plan_patch_with_llm
-from app.services.planner_execution import plan_patch_with_llm_dry_run_feedback
+from app.services.planner_execution import PlannerDryRunFeedbackError, plan_patch_with_llm_dry_run_feedback
 from app.services.requirement_extractor import extract_requirement_with_llm
 
 
@@ -704,6 +704,144 @@ def test_llm_planner_accepts_enable_dynamic_input_operation(monkeypatch: pytest.
     assert result["pending_patch"] == {"operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "f22a5df"}}]}
 
 
+def test_llm_planner_strips_unsolicited_operations_for_simple_dynamic_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_dynamic_guard", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "错误地新增设定并启用动态输入。",
+            "risk_level": "medium",
+            "risk_reasons": ["新增节点并连线"],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "add_node_from_schema",
+                    "module_type": "swInput",
+                    "tab_selector": {"label": "旁通阀控制"},
+                    "params": {"name": "旁通阀压差设定值"},
+                },
+                {"op": "enable_dynamic_input", "node_selector": {"id": "169a370"}},
+                {
+                    "op": "connect",
+                    "source_node_selector": {"type": "swInput", "name": "旁通阀压差设定值"},
+                    "source_output": 0,
+                    "target_node_selector": {"id": "169a370"},
+                    "target_input": 1,
+                },
+            ],
+            "validation_expectations": [],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "启用旁通阀控制页面里的比较判断动态阈值输入。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "planned"
+    assert result["risk_level"] == "medium"
+    assert result["pending_patch"] == {"operations": [{"op": "enable_dynamic_input", "node_selector": {"id": "169a370"}}]}
+    assert "擅自添加" in result["risk_reasons"][-1]
+
+
+def test_llm_planner_ignores_existing_candidates_for_pure_add_node(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_add_node_no_target", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        assert '"status":"not_required"' in messages[1]["content"]
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增水泵台数设定常量。",
+            "risk_level": "medium",
+            "risk_reasons": ["新增节点需要确认后接线。"],
+            "required_context": [{"type": "tab", "query": "水泵控制", "reason": "定位目标页面"}],
+            "operations": [
+                {
+                    "op": "add_node_from_schema",
+                    "module_type": "constInput",
+                    "tab_selector": {"label": "水泵控制"},
+                    "params": {"user_defined_name": "用户评测水泵台数设定", "fixedValue": 9},
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "在水泵控制页面新增一个固定值为 9 的常量，命名为用户评测水泵台数设定。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+        target_resolution={
+            "status": "candidates",
+            "intent": "add_logic",
+            "candidates": [{"selector": {"id": "existing"}, "display_name": "既有常量"}],
+            "questions": ["请选择既有常量"],
+        },
+    )
+
+    assert result["status"] == "planned"
+    assert result["pending_patch"]["operations"][0]["op"] == "add_node_from_schema"
+
+
+def test_llm_planner_drops_guessed_source_for_input_only_disconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_disconnect_input_only", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "modify_existing_logic",
+            "summary": "断开第一个输入。",
+            "risk_level": "medium",
+            "risk_reasons": ["断线需要确认。"],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "disconnect",
+                    "source_node_selector": {"id": "wrong_source"},
+                    "source_output": 0,
+                    "target_node_selector": {"id": "3a4c97e"},
+                    "target_input": 1,
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "断开水泵控制页面里的比较判断第 1 个输入。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["pending_patch"] == {
+        "operations": [{"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 0}]
+    }
+
+
 def test_llm_planner_accepts_add_tab_operation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_add_tab", versions_dir=tmp_path)
 
@@ -759,12 +897,54 @@ def test_llm_planner_accepts_copy_block_operation(monkeypatch: pytest.MonkeyPatc
         }
 
     monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
-    result = plan_patch_with_llm("复制旁通阀控制功能块", project_path=metadata["version_path"])
+    result = plan_patch_with_llm("复制旁通阀控制 - 旁通阀控制功能块", project_path=metadata["version_path"])
 
     assert result["status"] == "planned"
     assert result["risk_level"] == "high"
     assert result["pending_patch"]["operations"][0]["op"] == "copy_block"
     assert result["pending_patch"]["operations"][0]["target_tab_selector"] == {"label": "旁通阀控制"}
+
+
+def test_llm_planner_asks_when_copy_block_candidates_are_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(PLANT_TEMPLATE, project_id="llm_planner_project", version_id="v_copy_block_ambiguous", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages, provider
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "复制旁通阀控制功能块。",
+            "risk_level": "high",
+            "risk_reasons": ["复制局部子图，需要人工确认入口出口。"],
+            "required_context": [{"type": "block", "query": "旁通阀控制", "reason": "定位源功能块"}],
+            "operations": [
+                {
+                    "op": "copy_block",
+                    "block_id": "block_3f996bfafceb",
+                    "target_tab_selector": {"label": "旁通阀控制"},
+                    "x_offset": 80,
+                    "y_offset": 80,
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "复制旁通阀控制页面里的旁通阀控制功能块到旁通阀控制页面，暂不接外部线。",
+        project_path=metadata["version_path"],
+        template_id="plant_room_efb00c114dcb",
+        project_type="plant_room",
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["pending_patch"] is None
+    assert "多个可复制的功能块" in result["questions"][0]
+    assert "block_" not in result["questions"][0]
 
 
 def test_llm_planner_rejects_unknown_operations(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -996,6 +1176,44 @@ def test_llm_dry_run_feedback_normalizes_const_input_param_aliases() -> None:
     assert result["pending_patch"]["operations"][0]["params"] == add_node["params"]
     assert result["dry_run"]["valid"] is True
     assert "nodes" not in result["dry_run"]
+
+
+def test_llm_dry_run_feedback_retries_no_change_patches() -> None:
+    calls: list[list[str] | None] = []
+
+    def fake_planner(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args
+        feedback_messages = kwargs.get("feedback_messages")
+        calls.append(list(feedback_messages or []))
+        return {
+            "status": "planned",
+            "planner": "llm",
+            "risk_level": "medium",
+            "pending_patch": {"op": "disconnect", "target_node_selector": {"id": "3a4c97e"}, "target_input": 1},
+            "questions": [],
+        }
+
+    def fake_dry_runner(project_path: str, pending_patch: dict[str, Any]) -> dict[str, Any]:
+        del project_path, pending_patch
+        return {
+            "saved": False,
+            "valid": True,
+            "changed": False,
+            "validation_report": {"valid": True, "issues": []},
+            "diff": {"summary": {"added_count": 0, "removed_count": 0, "modified_count": 0, "affected_node_count": 0}},
+        }
+
+    with pytest.raises(PlannerDryRunFeedbackError) as exc_info:
+        plan_patch_with_llm_dry_run_feedback(
+            "断开一个不存在的输入",
+            project_path=PLANT_TEMPLATE,
+            llm_max_attempts=1,
+            planner=fake_planner,
+            dry_runner=fake_dry_runner,
+        )
+
+    assert calls == [[]]
+    assert exc_info.value.payload["last_error"] == "补丁 dry-run 未产生任何实际变更。"
 
 
 def test_llm_planner_dry_run_api_retries_patch_engine_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

@@ -1182,6 +1182,17 @@ def test_patch_engine_adds_schema_node_and_updates_explicit_wires() -> None:
     assert {"id": added["node_id"], "port": 0} not in compare_after_disconnect["wires"][1]
     assert validate_project(disconnected["nodes"])["valid"]
 
+    with pytest.raises(PatchEngineError, match="未在目标节点 3a4c97e 上找到来自"):
+        apply_patch(
+            disconnected["nodes"],
+            {
+                "op": "disconnect",
+                "source_node_selector": {"id": added["node_id"]},
+                "target_node_selector": {"id": "3a4c97e"},
+                "target_input": 1,
+            },
+        )
+
 
 def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> None:
     nodes = load_project(AHU_TEMPLATE)
@@ -1525,6 +1536,10 @@ def test_planner_creates_add_tab_patch(tmp_path: Path) -> None:
     dry_run = dry_run_patch(load_project(metadata["version_path"]), result["pending_patch"])
     assert dry_run["valid"]
     assert "CO2 控制" in set(get_tabs(dry_run["nodes"]).values())
+
+    punctuated = plan_patch_request("新增一个 CO2 控制页面。", project_path=metadata["version_path"])
+    assert punctuated["status"] == "planned"
+    assert punctuated["pending_patch"] == {"op": "add_tab", "label": "CO2 控制"}
 
 
 def test_planner_replaces_unique_tab_label_text(tmp_path: Path) -> None:

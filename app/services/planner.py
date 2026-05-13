@@ -643,8 +643,8 @@ def _extract_text_replacement(message: str) -> tuple[str, str] | None:
 
 def _extract_new_tab_label(message: str) -> str | None:
     patterns = [
-        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。]+?)\s*(?:页面|页签|tab|Tab)\s*$",
-        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。]+)$",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。！？!?]+?)\s*(?:页面|页签|tab|Tab)\s*[。！？!?]?\s*$",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。！？!?]+)\s*[。！？!?]?\s*$",
     ]
     for pattern in patterns:
         match = re.search(pattern, message)
