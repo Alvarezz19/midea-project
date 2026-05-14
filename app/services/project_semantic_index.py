@@ -44,6 +44,55 @@ ROLE_HINTS_BY_TYPE = {
     "mqttout": ["mqtt", "communication_point"],
 }
 
+NODE_TYPE_QUERY_ALIASES = {
+    "比较判断": "compare",
+    "比较": "compare",
+    "阈值": "compare",
+    "逻辑运算": "logic",
+    "逻辑模块": "logic",
+    "通道选择": "switch",
+    "开关模块": "switch",
+    "加法运算": "add",
+    "加法模块": "add",
+    "加法": "add",
+    "求和": "add",
+    "减法运算": "subtract",
+    "减法模块": "subtract",
+    "减法": "subtract",
+    "乘法运算": "multiply",
+    "乘法模块": "multiply",
+    "乘法": "multiply",
+    "除法运算": "divide",
+    "除法模块": "divide",
+    "除法": "divide",
+    "取位运算": "bitFetch",
+    "取位模块": "bitFetch",
+    "取位": "bitFetch",
+    "延时开": "delayOn",
+    "延时启动": "delayOn",
+    "延时关": "delayOff",
+    "延时关闭": "delayOff",
+    "常量": "constInput",
+    "常数": "constInput",
+    "设定": "constInput",
+    "软件输入": "swInput",
+    "变量模块": "swInput",
+    "变量": "swInput",
+    "PID控制器": "pid",
+    "pid控制器": "pid",
+    "PID": "pid",
+    "pid": "pid",
+    "物理输入": "hwInput",
+    "硬接输入": "hwInput",
+    "物理输出": "hwOutput",
+    "硬接输出": "hwOutput",
+    "Modbus": "modbusOutput",
+    "modbus": "modbusOutput",
+    "BACnet": "bacipOutput",
+    "BACIP": "bacipOutput",
+    "MQTT": "mqttout",
+}
+
 
 def build_project_semantic_index(project_path: str | Path) -> dict[str, Any]:
     """从当前工程 JSON 构建运行时语义索引。"""
@@ -353,26 +402,7 @@ def _candidate_description(node: dict[str, Any]) -> str:
 
 
 def _node_type_from_query(query: str) -> str | None:
-    aliases = {
-        "比较判断": "compare",
-        "比较": "compare",
-        "阈值": "compare",
-        "常量": "constInput",
-        "设定": "constInput",
-        "软件输入": "swInput",
-        "PID": "pid",
-        "pid": "pid",
-        "物理输入": "hwInput",
-        "硬接输入": "hwInput",
-        "物理输出": "hwOutput",
-        "硬接输出": "hwOutput",
-        "Modbus": "modbusOutput",
-        "modbus": "modbusOutput",
-        "BACnet": "bacipOutput",
-        "BACIP": "bacipOutput",
-        "MQTT": "mqttout",
-    }
-    for keyword, node_type in aliases.items():
+    for keyword, node_type in NODE_TYPE_QUERY_ALIASES.items():
         if keyword in query:
             return node_type
     return None

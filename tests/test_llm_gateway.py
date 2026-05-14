@@ -800,6 +800,86 @@ def test_llm_planner_ignores_existing_candidates_for_pure_add_node(
     assert result["pending_patch"]["operations"][0]["op"] == "add_node_from_schema"
 
 
+def test_llm_planner_strips_unsolicited_add_node_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(AHU_TEMPLATE, project_id="llm_planner_project", version_id="v_add_node_name_guard", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增变量模块。",
+            "risk_level": "medium",
+            "risk_reasons": ["新增节点。"],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "add_node_from_schema",
+                    "module_type": "swInput",
+                    "tab_selector": {"label": "控制"},
+                    "params": {"name": "模型臆造名称"},
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "在控制页面新增一个变量模块。",
+        project_path=metadata["version_path"],
+        template_id="ahu_5e351de94700",
+        project_type="ahu",
+    )
+
+    operation = result["pending_patch"]["operations"][0]
+    assert operation["op"] == "add_node_from_schema"
+    assert "params" not in operation
+
+
+def test_llm_planner_preserves_explicit_add_node_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    metadata = create_project_version(AHU_TEMPLATE, project_id="llm_planner_project", version_id="v_add_node_named", versions_dir=tmp_path)
+
+    def fake_chat_json(messages: list[dict[str, str]], *, provider: str | None = None) -> dict[str, Any]:
+        del messages
+        return {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增变量模块。",
+            "risk_level": "medium",
+            "risk_reasons": ["新增节点。"],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "add_node_from_schema",
+                    "module_type": "swInput",
+                    "tab_selector": {"label": "控制"},
+                    "params": {"name": "测试变量"},
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+            "_llm_meta": {"provider": provider or "deepseek", "model": "fake"},
+        }
+
+    monkeypatch.setattr("app.services.llm_planner.chat_json", fake_chat_json)
+    result = plan_patch_with_llm(
+        "在控制页面新增一个变量模块，命名为测试变量。",
+        project_path=metadata["version_path"],
+        template_id="ahu_5e351de94700",
+        project_type="ahu",
+    )
+
+    assert result["pending_patch"]["operations"][0]["params"] == {"name": "测试变量"}
+
+
 def test_llm_planner_drops_guessed_source_for_input_only_disconnect(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

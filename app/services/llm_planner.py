@@ -58,7 +58,7 @@ class PlannedOperation(BaseModel):
     tab_selector: dict[str, Any] | None = None
     text: str | None = None
     info: str | None = None
-    schema_selector: dict[str, Any] | None = None
+    schema_selector: dict[str, Any] | str | None = None
     module_type: str | None = None
     block_id: str | None = None
     source_block_id: str | None = None
@@ -115,6 +115,15 @@ class PlannedOperation(BaseModel):
             if not _non_empty_string(self.text):
                 raise ValueError("add_comment.text 不能为空。")
         elif self.op == "add_node_from_schema":
+            if isinstance(self.schema_selector, str):
+                selector_text = self.schema_selector.strip()
+                if not selector_text:
+                    raise ValueError("add_node_from_schema.schema_selector 不能为空。")
+                self.schema_selector = (
+                    {"path": selector_text}
+                    if selector_text.endswith(".json") or "/" in selector_text or "\\" in selector_text
+                    else {"name": selector_text}
+                )
             if not isinstance(self.schema_selector, dict) and not _non_empty_string(self.module_type):
                 raise ValueError("add_node_from_schema 需要 schema_selector 或 module_type。")
             _require_dict(self.tab_selector, "add_node_from_schema.tab_selector")
@@ -470,6 +479,8 @@ def _postprocess_plan_data(message: str, data: dict[str, Any], context: dict[str
     if _is_input_only_disconnect_request(message):
         result["operations"] = _normalize_input_only_disconnect_operations(message, result.get("operations"))
 
+    result["operations"] = _normalize_unsolicited_add_node_names(message, result.get("operations"))
+
     duplicate_tab_question = _duplicate_add_tab_question(message, result.get("operations"), context)
     if duplicate_tab_question:
         result["status"] = "needs_clarification"
@@ -488,6 +499,44 @@ def _postprocess_plan_data(message: str, data: dict[str, Any], context: dict[str
         result["operations"] = []
         result["questions"] = [copy_block_question]
     return result
+
+
+def _normalize_unsolicited_add_node_names(message: str, operations: Any) -> list[Any]:
+    if not isinstance(operations, list) or _has_explicit_node_name_request(message):
+        return operations
+    result: list[Any] = []
+    for operation in operations:
+        if not isinstance(operation, dict) or operation.get("op") != "add_node_from_schema":
+            result.append(operation)
+            continue
+        params = operation.get("params")
+        if not isinstance(params, dict):
+            result.append(operation)
+            continue
+        next_params = {
+            key: value
+            for key, value in params.items()
+            if key not in {"user_defined_name", "name", "label"}
+        }
+        next_operation = dict(operation)
+        if next_params:
+            next_operation["params"] = next_params
+        else:
+            next_operation.pop("params", None)
+        result.append(next_operation)
+    return result
+
+
+def _has_explicit_node_name_request(message: str) -> bool:
+    text = message.strip()
+    if not text:
+        return False
+    return bool(
+        re.search(
+            r"(?:命名为|命名成|名称为|名称叫|名为|取名为|叫做|叫)\s*[^，。！？!?]+",
+            text,
+        )
+    )
 
 
 def _duplicate_add_tab_question(message: str, operations: Any, context: dict[str, Any]) -> str | None:

@@ -18,6 +18,7 @@ from app.services.json_project import (
     summarize_project,
 )
 from app.services.knowledge import get_knowledge_context, load_knowledge_chunks, search_knowledge
+from app.services.llm_planner import StructuredPatchPlan
 from app.services.patch_engine import PatchEngineError, apply_patch, dry_run_patch
 from app.services.planner import plan_patch_request
 from app.services.project_diff import ProjectDiffError, diff_project_versions
@@ -1194,6 +1195,83 @@ def test_patch_engine_adds_schema_node_and_updates_explicit_wires() -> None:
         )
 
 
+def test_patch_engine_adds_schema_node_with_template_field_aliases() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+
+    result = apply_patch(
+        nodes,
+        {
+            "op": "add_node_from_schema",
+            "schema_selector": {"name": "变量(软件输入)"},
+            "tab_selector": {"label": "控制"},
+            "params": {"name": "测试变量模块", "outOfServiceValue": 0},
+            "x": 320,
+            "y": 180,
+        },
+    )
+
+    added = find_nodes(result["nodes"], {"id": result["changes"][0]["node_id"]})[0]
+    assert added["type"] == "swInput"
+    assert added["name"] == "测试变量模块"
+    assert added["outOfServiceValue"] == 0
+    assert added["inputs"] == 1
+    assert added["outputs"] == 1
+    assert validate_project(result["nodes"])["valid"]
+
+
+def test_patch_engine_schema_param_aliases_are_generic_for_all_modules() -> None:
+    nodes = load_project(AHU_TEMPLATE)
+
+    result = apply_patch(
+        nodes,
+        {
+            "op": "add_node_from_schema",
+            "module_type": "multiply",
+            "tab_selector": {"label": "控制"},
+            "params": {"name": "测试乘法模块", "inputs": 1, "fixedValue": 2, "outOfServiceValue": 0},
+        },
+    )
+
+    added = find_nodes(result["nodes"], {"id": result["changes"][0]["node_id"]})[0]
+    assert added["type"] == "multiply"
+    assert added["name"] == "测试乘法模块"
+    assert added["inputs"] == 1
+    assert added["fixedValue"] == 2
+    assert added["outOfServiceValue"] == 0
+    assert validate_project(result["nodes"])["valid"]
+
+
+def test_llm_planner_normalizes_string_schema_selector_for_schema_nodes() -> None:
+    plan = StructuredPatchPlan.model_validate(
+        {
+            "status": "planned",
+            "intent": "add_logic",
+            "summary": "新增变量模块。",
+            "risk_level": "medium",
+            "risk_reasons": [],
+            "required_context": [],
+            "operations": [
+                {
+                    "op": "add_node_from_schema",
+                    "schema_selector": "schemas/variable/变量.json",
+                    "tab_selector": {"label": "控制"},
+                    "params": {"name": "字符串路径变量", "outOfServiceValue": 0},
+                }
+            ],
+            "validation_expectations": [],
+            "questions": [],
+        }
+    )
+    operation = plan.operations[0].model_dump(exclude_none=True)
+    assert operation["schema_selector"] == {"path": "schemas/variable/变量.json"}
+
+    result = apply_patch(load_project(AHU_TEMPLATE), {"operations": [operation]})
+    added = find_nodes(result["nodes"], {"id": result["changes"][0]["node_id"]})[0]
+    assert added["type"] == "swInput"
+    assert added["name"] == "字符串路径变量"
+    assert validate_project(result["nodes"])["valid"]
+
+
 def test_patch_engine_copies_block_with_new_ids_and_internal_wires_only() -> None:
     nodes = load_project(AHU_TEMPLATE)
     block = search_blocks("排风机联动", template_id="ahu_5e351de94700", limit=1)[0]
@@ -1372,6 +1450,16 @@ def test_patch_engine_rejects_unsafe_or_ambiguous_changes() -> None:
                 "module_type": "constInput",
                 "tab_selector": {"label": "水泵控制"},
                 "params": {"user_defined_name": "非法节点", "fixedValue": 1, "unknownField": 1},
+            },
+        )
+
+    with pytest.raises(PatchEngineError, match="schema_selector 包含不支持的字段"):
+        apply_patch(
+            nodes,
+            {
+                "op": "add_node_from_schema",
+                "schema_selector": {"display_name": "变量(软件输入)"},
+                "tab_selector": {"label": "水泵控制"},
             },
         )
 

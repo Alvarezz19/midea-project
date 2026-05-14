@@ -11,6 +11,7 @@ from app.services.json_project import ROOT_DIR
 
 
 SCHEMAS_DIR = ROOT_DIR / "schemas"
+SUPPORTED_SCHEMA_SELECTOR_KEYS = {"path", "module_type", "category", "category_contains", "name", "name_contains"}
 
 
 class SchemaLibraryError(ValueError):
@@ -35,6 +36,9 @@ def get_schema(selector: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(selector, dict) or not selector:
         raise SchemaLibraryError("schema_selector 必须是非空对象。")
+    unknown_keys = sorted(set(selector) - SUPPORTED_SCHEMA_SELECTOR_KEYS)
+    if unknown_keys:
+        raise SchemaLibraryError(f"schema_selector 包含不支持的字段: {unknown_keys}")
 
     matches: list[dict[str, Any]] = []
     for item in load_schema_files():
@@ -45,6 +49,10 @@ def get_schema(selector: dict[str, Any]) -> dict[str, Any]:
         if "module_type" in selector and schema.get("module_type") != selector["module_type"]:
             continue
         if "category" in selector and schema.get("category") != selector["category"]:
+            continue
+        if "category_contains" in selector and str(selector["category_contains"]) not in str(schema.get("category", "")):
+            continue
+        if "name" in selector and schema.get("name") != selector["name"]:
             continue
         if "name_contains" in selector and str(selector["name_contains"]) not in str(schema.get("name", "")):
             continue
@@ -109,6 +117,7 @@ def _build_param_values(schema: dict[str, Any], params: dict[str, Any]) -> dict[
     schema_params = schema.get("parameters_schema") or {}
     if not isinstance(schema_params, dict):
         raise SchemaLibraryError("parameters_schema 必须是对象。")
+    params = _normalize_schema_params(schema, params, schema_params)
 
     values: dict[str, Any] = {}
     for name, definition in schema_params.items():
@@ -127,6 +136,119 @@ def _build_param_values(schema: dict[str, Any], params: dict[str, Any]) -> dict[
     if unknown_params:
         raise SchemaLibraryError(f"params 包含 schema 未定义参数: {unknown_params}")
     return values
+
+
+def _normalize_schema_params(
+    schema: dict[str, Any],
+    params: dict[str, Any],
+    schema_params: dict[str, Any],
+) -> dict[str, Any]:
+    """把 template_json 字段别名归一到 parameters_schema 参数名。"""
+
+    alias_map = _template_field_parameter_aliases(schema.get("template_json"), schema_params)
+    static_defaults = _template_static_field_defaults(schema.get("template_json"))
+    normalized: dict[str, Any] = {}
+    unknown_params: list[str] = []
+
+    for raw_name, value in params.items():
+        name = str(raw_name)
+        target_name = name if name in schema_params else alias_map.get(name)
+        if target_name:
+            if target_name in normalized and normalized[target_name] != value:
+                raise SchemaLibraryError(f"参数 {name} 与 {target_name} 同时指定且值不一致。")
+            normalized[target_name] = value
+            continue
+
+        if name in static_defaults and _same_default_value(value, static_defaults[name]):
+            continue
+
+        unknown_params.append(name)
+
+    if unknown_params:
+        raise SchemaLibraryError(f"params 包含 schema 未定义参数: {sorted(unknown_params)}")
+    return normalized
+
+
+def _template_field_parameter_aliases(template: Any, schema_params: dict[str, Any]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    conflicts: set[str] = set()
+    for item in _template_items(template):
+        if not isinstance(item, dict):
+            continue
+        for field, value in item.items():
+            if not isinstance(field, str) or field in schema_params:
+                continue
+            placeholder = _exact_placeholder(value)
+            if not placeholder or placeholder not in schema_params:
+                continue
+            existing = aliases.get(field)
+            if existing is not None and existing != placeholder:
+                conflicts.add(field)
+                continue
+            aliases[field] = placeholder
+    for field in conflicts:
+        aliases.pop(field, None)
+    return aliases
+
+
+def _template_static_field_defaults(template: Any) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    conflicts: set[str] = set()
+    for item in _template_items(template):
+        if not isinstance(item, dict):
+            continue
+        for field, value in item.items():
+            if not isinstance(field, str) or _contains_placeholder(value):
+                continue
+            if field in defaults and defaults[field] != value:
+                conflicts.add(field)
+                continue
+            defaults[field] = value
+    for field in conflicts:
+        defaults.pop(field, None)
+    return defaults
+
+
+def _template_items(template: Any) -> list[Any]:
+    if isinstance(template, list):
+        return template
+    return [template]
+
+
+def _exact_placeholder(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}", value)
+    return match.group(1) if match else None
+
+
+def _contains_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(re.search(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}", value))
+    if isinstance(value, list):
+        return any(_contains_placeholder(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_placeholder(item) for item in value.values())
+    return False
+
+
+def _same_default_value(value: Any, default: Any) -> bool:
+    if value == default:
+        return True
+    if isinstance(default, bool):
+        return isinstance(value, str) and value.strip().lower() in {
+            "true" if default else "false",
+            "1" if default else "0",
+            "yes" if default else "no",
+            "on" if default else "off",
+            "是" if default else "否",
+        }
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        try:
+            return float(value) == float(default)
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def _coerce_and_validate_param(name: str, value: Any, definition: dict[str, Any]) -> Any:
