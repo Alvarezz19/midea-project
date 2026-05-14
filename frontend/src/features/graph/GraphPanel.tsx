@@ -1,9 +1,9 @@
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Alert, Button, Empty, List, Segmented, Space, Tag, Tooltip, Typography } from 'antd';
 import { AimOutlined, BranchesOutlined, InfoCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatApiError, getProjectDiff, getProjectFlow } from '../../api/client';
 import type { DiffNode, FlowNodeData, NodeDiff } from '../../api/types';
 import { useWorkbenchStore } from '../../store/workbenchStore';
@@ -20,6 +20,7 @@ const nodeTypes = {
 };
 
 export function GraphPanel() {
+  const flowInstanceRef = useRef<ReactFlowInstance<EngineeringFlowNode, Edge> | null>(null);
   const state = useWorkbenchStore((store) => store.state);
   const selectedNodeId = useWorkbenchStore((store) => store.selectedNodeId);
   const inspectedVersionId = useWorkbenchStore((store) => store.inspectedVersionId);
@@ -35,11 +36,11 @@ export function GraphPanel() {
   const blockedReasons = state?.validation_summary?.blocked_export_reasons ?? report?.blocked_export_reasons ?? [];
   const issues = report?.issues ?? [];
 
+  const patchResult = state?.patch_result as { diff?: NodeDiff } | undefined;
+  const dryRun = state?.planner_dry_run as { diff?: NodeDiff } | undefined;
   const localDiff = useMemo(() => {
-    const patchResult = state?.patch_result as { diff?: NodeDiff } | undefined;
-    const dryRun = state?.planner_dry_run as { diff?: NodeDiff } | undefined;
     return patchResult?.diff ?? dryRun?.diff;
-  }, [state?.patch_result, state?.planner_dry_run]);
+  }, [dryRun?.diff, patchResult?.diff]);
 
   const diffQuery = useQuery({
     queryKey: ['project-diff', projectId, versionId, inspectedFromVersionId],
@@ -51,12 +52,20 @@ export function GraphPanel() {
   const diff = inspectedVersionId ? diffQuery.data?.diff : localDiff ?? diffQuery.data?.diff;
   const memoryAffectedNodeIds = state?.last_affected_node_ids ?? [];
   const affectedNodeIds = diff?.affected_node_ids?.length ? diff.affected_node_ids : memoryAffectedNodeIds;
+  const previewOnlyAddedNodeIds = useMemo(() => {
+    if (patchResult?.diff || !dryRun?.diff) {
+      return new Set<string>();
+    }
+    return new Set((dryRun.diff.added ?? []).map((item) => item.node_id).filter((id): id is string => Boolean(id)));
+  }, [dryRun?.diff, patchResult?.diff]);
   const touchedEntityByNodeId = useMemo(() => buildTouchedEntityMap(state?.last_touched_entities ?? []), [state?.last_touched_entities]);
   const diffKindByNodeId = useMemo(() => buildDiffKindMap(diff), [diff]);
   const riskNodeIds = useMemo(() => buildRiskNodeIds(state?.pending_confirmation_patch ?? state?.planner_result, state?.planner_dry_run), [state?.pending_confirmation_patch, state?.planner_result, state?.planner_dry_run]);
   const centerNodeId = selectedNodeId ?? affectedNodeIds[0];
-  const requestCenterNodeId = activeTabId ? undefined : centerNodeId;
-  const requestFocusNodeIds = activeTabId ? [] : affectedNodeIds.slice(0, 32);
+  const requestableAffectedNodeIds = affectedNodeIds.filter((nodeId) => !previewOnlyAddedNodeIds.has(nodeId));
+  const requestableSelectedNodeId = selectedNodeId && !previewOnlyAddedNodeIds.has(selectedNodeId) ? selectedNodeId : undefined;
+  const requestCenterNodeId = activeTabId ? requestableSelectedNodeId : requestableSelectedNodeId ?? requestableAffectedNodeIds[0];
+  const requestFocusNodeIds = activeTabId ? (requestableSelectedNodeId ? [requestableSelectedNodeId] : []) : requestableAffectedNodeIds.slice(0, 32);
   const flowQuery = useQuery({
     queryKey: ['project-flow', projectId, versionId, requestCenterNodeId, requestFocusNodeIds.join(','), activeTabId],
     queryFn: () => getProjectFlow(projectId!, versionId!, { centerNodeId: requestCenterNodeId, focusNodeIds: requestFocusNodeIds, tabId: activeTabId }),
@@ -69,17 +78,20 @@ export function GraphPanel() {
   const flowNodes = useMemo(
     () =>
       [
-        ...(flowQuery.data?.flow?.nodes ?? []).map((node) => toFlowNode(node, activeNodeId, affectedNodeIds, diffKindByNodeId, riskNodeIds, viewMode)),
+        ...(flowQuery.data?.flow?.nodes ?? [])
+          .filter((node) => shouldShowNode(diffKindByNodeId.get(node.id), viewMode))
+          .map((node) => toFlowNode(node, activeNodeId, affectedNodeIds, diffKindByNodeId, riskNodeIds, viewMode)),
         ...(activeTabId ? [] : syntheticDiffNodes(diff, graphNodeIds, activeNodeId, riskNodeIds, viewMode))
       ],
     [activeNodeId, activeTabId, affectedNodeIds, diff, diffKindByNodeId, flowQuery.data?.flow?.nodes, graphNodeIds, riskNodeIds, viewMode]
   );
+  const visibleNodeIds = useMemo(() => new Set(flowNodes.map((node) => node.id)), [flowNodes]);
   const flowEdges = useMemo(
     () => [
       ...(flowQuery.data?.flow?.edges ?? []).map((edge) => toFlowEdge(edge, diffKindByNodeId, riskNodeIds)),
       ...(activeTabId ? [] : syntheticDiffEdges(state?.planner_dry_run, graphNodeIds, viewMode))
-    ],
-    [activeTabId, diffKindByNodeId, flowQuery.data?.flow?.edges, graphNodeIds, riskNodeIds, state?.planner_dry_run, viewMode]
+    ].filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)),
+    [activeTabId, diffKindByNodeId, flowQuery.data?.flow?.edges, graphNodeIds, riskNodeIds, state?.planner_dry_run, viewMode, visibleNodeIds]
   );
   const selectedNode = flowNodes.find((node) => node.id === activeNodeId);
   const boundaryPreview = useMemo(() => findCopyBlockBoundaryPreview(state?.planner_dry_run), [state?.planner_dry_run]);
@@ -91,6 +103,19 @@ export function GraphPanel() {
     }
     selectNode(nodeId);
   };
+
+  useEffect(() => {
+    if (!selectedNode || !flowInstanceRef.current) {
+      return;
+    }
+    const width = Number(selectedNode.measured?.width ?? selectedNode.width ?? 180);
+    const height = Number(selectedNode.measured?.height ?? selectedNode.height ?? 72);
+    const x = selectedNode.position.x + width / 2;
+    const y = selectedNode.position.y + height / 2;
+    window.requestAnimationFrame(() => {
+      void flowInstanceRef.current?.setCenter(x, y, { zoom: 0.95, duration: 350 });
+    });
+  }, [selectedNode?.id, selectedNode?.position.x, selectedNode?.position.y, flowQuery.dataUpdatedAt]);
 
   return (
     <section className={panelStyles.panel}>
@@ -161,6 +186,9 @@ export function GraphPanel() {
               fitView
               minZoom={0.2}
               maxZoom={1.5}
+              onInit={(instance) => {
+                flowInstanceRef.current = instance;
+              }}
               onNodeClick={(_, node) => focusNode(node.id)}
             >
               <Background />
@@ -384,6 +412,16 @@ function toFlowNode(
     },
     selected: node.id === selectedNodeId
   };
+}
+
+function shouldShowNode(diffKind: DiffKind | undefined, viewMode: ViewMode): boolean {
+  if (viewMode === 'before') {
+    return diffKind !== 'added';
+  }
+  if (viewMode === 'after') {
+    return diffKind !== 'removed';
+  }
+  return true;
 }
 
 function toFlowEdge(edge: ProjectFlowEdge, diffKindByNodeId: Map<string, DiffKind>, riskNodeIds: Set<string>): Edge {

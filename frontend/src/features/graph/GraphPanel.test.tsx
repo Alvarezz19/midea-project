@@ -274,10 +274,42 @@ describe('GraphPanel', () => {
     );
 
     expect((await screen.findAllByText('CO2 设定')).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const url = String(input);
+          return url.includes('center_node_id=added_1');
+        })
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('radio', { name: '修改前' }));
+    await waitFor(() => expect(screen.queryByText('CO2 设定')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('radio', { name: 'diff 高亮' }));
+    expect((await screen.findAllByText('CO2 设定')).length).toBeGreaterThan(0);
     expect(screen.getByText('自动定位 added_1')).toBeInTheDocument();
     expect(screen.getByText(/target_1 · channel_selector · 字段 modbusAddress/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '控制' }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const url = String(input);
+          return url === '/api/projects/project_1/versions/v_2/flow?max_nodes=120&max_edges=260&max_chars=160000&tab_id=tab_control';
+        })
+      ).toBe(true)
+    );
     fireEvent.click(screen.getByRole('button', { name: '定位 target_1' }));
     await waitFor(() => expect(useWorkbenchStore.getState().selectedNodeId).toBe('target_1'));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const url = String(input);
+          return (
+            url ===
+            '/api/projects/project_1/versions/v_2/flow?max_nodes=120&max_edges=260&max_chars=160000&center_node_id=target_1&focus_node_ids=target_1&tab_id=tab_control'
+          );
+        })
+      ).toBe(true)
+    );
   });
 
   it('uses last affected nodes to focus the local graph when no diff is available yet', async () => {
