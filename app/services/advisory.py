@@ -160,7 +160,7 @@ def _answer_with_llm(message: str, *, context: dict[str, Any], provider: str | N
     )
     payload = {
         "user_message": message,
-        "context": context,
+        "context": _llm_context_without_duplicates(context),
         "output_rules": [
             "例：用户问“送风温度设定值多少比较好？”时，应 status=answered，给出条件化建议；若未定位唯一节点，则 adoptable_patch_intent.executable=false。",
             "送风温度是出风温度，不等同于室温/回风温度舒适性设定；未确认制冷、制热或除湿工况时不要给单一 24°C 作为可执行修改值。",
@@ -197,6 +197,63 @@ def _answer_with_llm(message: str, *, context: dict[str, Any], provider: str | N
         temperature=0.2,
         max_tokens=1800,
     )
+
+
+def _llm_context_without_duplicates(context: dict[str, Any]) -> dict[str, Any]:
+    """生成给咨询 LLM 使用的去重上下文，保留完整 context 供后端判断和观测。"""
+
+    return {
+        "queries": context.get("queries", []),
+        "patch_support_queries": context.get("patch_support_queries", []),
+        "knowledge_context": context.get("knowledge_context", []),
+        "patch_support_context": context.get("patch_support_context", []),
+        "project_context": _llm_project_context(context.get("project_context")),
+        "advisory_kb_context": _llm_advisory_kb_context(context.get("advisory_kb_context")),
+        "conversation_context": context.get("conversation_context", {}),
+    }
+
+
+def _llm_project_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not value:
+        return {}
+    target_resolution = value.get("target_resolution") if isinstance(value.get("target_resolution"), dict) else {}
+    compact_target = {
+        key: target_resolution.get(key)
+        for key in ("status", "intent", "selected", "questions", "target_queries", "knowledge_queries")
+        if key in target_resolution
+    }
+    if isinstance(compact_target.get("selected"), dict):
+        compact_target["selected"] = _compact_semantic_candidate(compact_target["selected"])
+    return {
+        "project_type": value.get("project_type"),
+        "project_id": value.get("project_id"),
+        "version_id": value.get("version_id"),
+        "summary": value.get("summary"),
+        "tabs": value.get("tabs", []),
+        "target_resolution": compact_target,
+        "semantic_candidates": [_compact_semantic_candidate(item) for item in value.get("semantic_candidates", []) if isinstance(item, dict)],
+        "node_neighborhood": value.get("node_neighborhood"),
+        "topic": value.get("topic"),
+    }
+
+
+def _llm_advisory_kb_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not value:
+        return {}
+    return {
+        "query_plan": value.get("query_plan", {}),
+        "retrieved_units": value.get("retrieved_units", []),
+        "current_project_refs": value.get("current_project_refs", []),
+        "fusion_summary": value.get("fusion_summary", {}),
+    }
+
+
+def _compact_semantic_candidate(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value.get(key)
+        for key in ("candidate_id", "kind", "display_name", "description", "confidence", "selector", "tab_label", "type", "key_params")
+        if key in value
+    }
 
 
 def _normalize_advisory_result(

@@ -139,7 +139,7 @@ def plan_patch_request(
         "target_resolution": semantic_location,
     }
 
-    tab_label_plan = _plan_update_tab_label(message, nodes)
+    tab_label_plan = _plan_update_tab_label(message, nodes, semantic_location=semantic_location)
     if tab_label_plan:
         return {**tab_label_plan, **context}
 
@@ -210,13 +210,26 @@ def _search_rule_planner_knowledge(message: str, *, semantic_location: dict[str,
     return results
 
 
-def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]], *, semantic_location: dict[str, Any] | None = None) -> dict[str, Any] | None:
     replacement = _extract_text_replacement(message)
     mentions_tab_label = any(keyword in message for keyword in ["页面标签", "页面名称", "页面名", "tab标签", "tab label", "标签"])
     if not replacement:
         return None
 
     old_text, new_text = replacement
+    semantic_tab = _selected_tab_from_semantic_location(semantic_location, nodes)
+    if semantic_tab and mentions_tab_label:
+        tab_id, old_label = semantic_tab
+        if old_label == new_text:
+            return None
+        return {
+            "status": "planned",
+            "pending_patch": {"op": "update_param", "node_selector": {"id": tab_id}, "params": {"label": new_text}},
+            "questions": [],
+            "reason": "识别为页面标签修改请求，并使用语义定位选中的 tab，只修改 label 字段。",
+            "target_node": {"id": tab_id, "type": "tab", "label": old_label},
+        }
+
     matched_tabs = [(tab_id, label) for tab_id, label in get_tabs(nodes).items() if old_text in label]
     if not matched_tabs:
         return {
@@ -245,6 +258,24 @@ def _plan_update_tab_label(message: str, nodes: list[dict[str, Any]]) -> dict[st
         "reason": "识别为页面标签替换请求，已唯一确定目标 tab，并只修改 label 字段。",
         "target_node": {"id": tab_id, "type": "tab", "label": old_label},
     }
+
+
+def _selected_tab_from_semantic_location(semantic_location: dict[str, Any] | None, nodes: list[dict[str, Any]]) -> tuple[str, str] | None:
+    if not isinstance(semantic_location, dict):
+        return None
+    selected = semantic_location.get("selected")
+    if not isinstance(selected, dict) or selected.get("kind") != "tab":
+        return None
+    selector = selected.get("selector")
+    if not isinstance(selector, dict):
+        return None
+    tab_id = selector.get("id")
+    if not isinstance(tab_id, str) or not tab_id:
+        return None
+    label = get_tabs(nodes).get(tab_id)
+    if not isinstance(label, str):
+        return None
+    return tab_id, label
 
 
 def _plan_add_comment(message: str, nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -643,8 +674,8 @@ def _extract_text_replacement(message: str) -> tuple[str, str] | None:
 
 def _extract_new_tab_label(message: str) -> str | None:
     patterns = [
-        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。]+?)\s*(?:页面|页签|tab|Tab)\s*$",
-        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。]+)$",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?P<label>[^，。！？!?]+?)\s*(?:页面|页签|tab|Tab)\s*[。！？!?]?\s*$",
+        r"(?:新增|添加|创建|新建)\s*(?:一个|1个)?\s*(?:页面|页签|tab|Tab)\s*[:：]?\s*(?P<label>[^，。！？!?]+)\s*[。！？!?]?\s*$",
     ]
     for pattern in patterns:
         match = re.search(pattern, message)
@@ -652,6 +683,7 @@ def _extract_new_tab_label(message: str) -> str | None:
             continue
         label = _strip_wrapping_quotes(match.group("label").strip())
         label = re.sub(r"^(一个|1个)", "", label).strip()
+        label = re.sub(r"^(已经存在的|已存在的|现有的|已有的)", "", label).strip()
         if label:
             return label
     return None

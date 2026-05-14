@@ -69,6 +69,7 @@ class MessageRequest(BaseModel):
     project_type: str | None = None
     selected_template_id: str | None = None
     selected_candidate_id: str | None = None
+    selected_candidate_requirement_ids: list[str] | None = None
     auto_confirm_template: bool | None = None
     pending_patch: dict[str, Any] | None = None
     use_llm_planner: bool | None = None
@@ -290,6 +291,8 @@ def send_message(thread_id: str, request: MessageRequest) -> dict[str, Any]:
     user_message: dict[str, Any] = {"role": "user", "content": request.message}
     if request.selected_candidate_id is not None:
         user_message["selected_candidate_id"] = request.selected_candidate_id
+    if request.selected_candidate_requirement_ids is not None:
+        user_message["selected_candidate_requirement_ids"] = request.selected_candidate_requirement_ids
     state["messages"] = list(state.get("messages") or []) + [user_message]
     if request.project_type is not None:
         state["project_type"] = request.project_type

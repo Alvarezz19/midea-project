@@ -67,6 +67,18 @@ def locate_semantic_targets(
             "target_queries": target_queries,
             "knowledge_queries": knowledge_queries,
         }
+    tab_label_target = _tab_label_update_target(index, message)
+    if tab_label_target:
+        selected = _candidate_from_tab(tab_label_target, index=1, confidence=0.95, reason="用户明确要求修改页面标签。")
+        return {
+            "status": "resolved",
+            "intent": "update_param",
+            "selected": selected,
+            "candidates": [selected],
+            "questions": [],
+            "target_queries": target_queries,
+            "knowledge_queries": knowledge_queries,
+        }
     tab = _extract_tab(index, message)
     node_type = _infer_node_type(message)
     name_hint = _extract_name_hint(message, tab_label=tab["label"] if tab else None)
@@ -298,6 +310,33 @@ def _candidate_from_touched_entity(entity: dict[str, Any], *, index: int, confid
     }
 
 
+def _candidate_from_tab(tab: dict[str, Any], *, index: int, confidence: float, reason: str) -> dict[str, Any]:
+    return {
+        "candidate_id": f"candidate_{index}",
+        "kind": "tab",
+        "confidence": confidence,
+        "selector": {"id": tab.get("id")},
+        "display_name": f"页面 / {tab.get('label', '')}",
+        "description": "页面标签",
+        "reason": reason,
+        "tab_id": tab.get("id"),
+        "tab_label": tab.get("label"),
+        "type": "tab",
+        "name": None,
+        "label": tab.get("label"),
+        "key_params": {"label": tab.get("label")},
+        "node": {
+            "id": tab.get("id"),
+            "type": "tab",
+            "tab_id": tab.get("id"),
+            "tab_label": tab.get("label"),
+            "name": None,
+            "label": tab.get("label"),
+            "key_params": {"label": tab.get("label")},
+        },
+    }
+
+
 def _candidate_question(candidates: list[dict[str, Any]], *, message: str) -> str:
     del message
     lines = ["我找到了多个可能的目标，请确认要修改哪一个："]
@@ -335,6 +374,14 @@ def _extract_tab(index: dict[str, Any], message: str) -> dict[str, Any] | None:
     return matches[0] if matches else None
 
 
+def _tab_label_update_target(index: dict[str, Any], message: str) -> dict[str, Any] | None:
+    if not any(keyword in message for keyword in ("页面标签", "页面名称", "页面名", "页签标签", "tab标签", "tab label")):
+        return None
+    if not any(keyword in message for keyword in ("改成", "改为", "替换为", "改名为")):
+        return None
+    return _extract_tab(index, message)
+
+
 def _tab_label_matches(label: str, message: str) -> bool:
     if not label:
         return False
@@ -359,7 +406,7 @@ def _infer_intent(message: str) -> str:
         return "add_logic"
     if any(keyword in message for keyword in ("点位", "通道", "地址", "IO", "io", "Modbus", "BACnet")):
         return "set_io_point"
-    if any(keyword in message for keyword in ("阈值", "常量值", "设定值", "改为", "调整为", "设为", "设置为")):
+    if any(keyword in message for keyword in ("阈值", "常量值", "设定值", "改为", "改成", "调整为", "设为", "设置为")):
         return "update_param"
     return "unknown"
 

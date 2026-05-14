@@ -227,6 +227,21 @@
   overflow-wrap: anywhere;
 }
 
+.requirementChoiceItem {
+  padding: 6px 0 !important;
+}
+
+.requirementChoiceItem :global(.ant-checkbox-wrapper) {
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.55;
+}
+
+.requirementText {
+  display: inline-block;
+  overflow-wrap: anywhere;
+}
+
 .compactDescriptions {
   margin-top: 10px;
 }

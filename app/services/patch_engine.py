@@ -1000,6 +1000,11 @@ def _disconnect(nodes: list[dict[str, Any]], operation: dict[str, Any], op_index
             else:
                 kept.append(existing)
         wires[input_index] = kept
+    if not removed:
+        target_id = target.get("id")
+        if source_id is None:
+            raise PatchEngineError(f"disconnect 未在目标节点 {target_id} 上找到可断开的输入连线。")
+        raise PatchEngineError(f"disconnect 未在目标节点 {target_id} 上找到来自 {source_id} 的输入连线。")
     return removed
 
 

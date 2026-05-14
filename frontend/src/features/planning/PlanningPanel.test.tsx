@@ -260,14 +260,14 @@ describe('PlanningPanel', () => {
           assumptions: ['常规 AHU 舒适性控制'],
           risks: ['设定过低会增加能耗。'],
           missing_info: ['是否节能优先'],
-          candidate_requirements: [{ content: '送风温度设定值按 24°C 考虑', status: 'candidate', needs_confirmation: true }],
+          candidate_requirements: [{ candidate_id: 'cr_temp_24', content: '送风温度设定值按 24°C 考虑', status: 'candidate', needs_confirmation: true }],
           adoptable_patch_intent: {
             executable: true,
             message: '把送风温度设定值改为 24°C',
             reason: '建议值明确，可进入现有补丁规划链路。'
           }
         },
-        candidate_requirements: [{ content: '送风温度设定值按 24°C 考虑', status: 'candidate', needs_confirmation: true }]
+        candidate_requirements: []
       }
     });
 
@@ -280,7 +280,7 @@ describe('PlanningPanel', () => {
     expect(screen.getByText('设计建议')).toBeInTheDocument();
     expect(screen.getByText(/当前不会修改工程/)).toBeInTheDocument();
     expect(screen.getByText(/送风温度控制以送风温度为反馈/)).toBeInTheDocument();
-    expect(screen.getByText('候选需求')).toBeInTheDocument();
+    expect(screen.getByText('本轮候选需求')).toBeInTheDocument();
     expect(screen.getByText('送风温度设定值按 24°C 考虑')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /采纳并生成修改计划/ }));
@@ -289,6 +289,75 @@ describe('PlanningPanel', () => {
     const messageCall = fetchMock.mock.calls.find((call) => call[0] === '/api/sessions/thread_1/message') as [string, RequestInit] | undefined;
     expect(messageCall?.[1].body).toBe(JSON.stringify({ message: '采纳建议' }));
     expect(useWorkbenchStore.getState().state?.pending_advice?.accepted_patch_message).toBe('把送风温度设定值改为 24°C');
+  });
+
+  it('records only checked candidate requirements', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/sessions/thread_1/message' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            thread_id: 'thread_1',
+            trace_id: 'trace_6',
+            state: {
+              messages: [],
+              project_type: 'ahu',
+              status: 'advisory_rejected',
+              next_action: 'send_message',
+              advisory_result: {
+                status: 'answered',
+                answer: '已记录你的选择：当前不会修改工程。',
+                candidate_requirements: [{ candidate_id: 'cr_range', content: '确认送风温度控制目标范围', status: 'candidate' }]
+              },
+              candidate_requirements: [{ candidate_id: 'cr_range', content: '确认送风温度控制目标范围', status: 'candidate' }]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkbenchStore.setState({
+      threadId: 'thread_1',
+      projectType: 'ahu',
+      state: {
+        messages: [],
+        project_type: 'ahu',
+        status: 'advisory_answered',
+        next_action: 'review_advice',
+        advisory_result: {
+          status: 'answered',
+          topic: '送风温度设定值',
+          answer: '这是设计建议问题，当前不会修改工程。',
+          candidate_requirements: [
+            { candidate_id: 'cr_range', content: '确认送风温度控制目标范围', status: 'candidate', needs_confirmation: true },
+            { candidate_id: 'cr_fixed', content: '把送风温度设定值按 24°C 固定', status: 'candidate', needs_confirmation: true }
+          ],
+          adoptable_patch_intent: { executable: false, message: '', reason: '需要先确认工况。' }
+        },
+        candidate_requirements: [{ candidate_id: 'cr_existing', content: '保留 Modbus 通讯点表复核', status: 'candidate' }]
+      }
+    });
+
+    render(
+      <AppProviders>
+        <PlanningPanel />
+      </AppProviders>
+    );
+
+    expect(screen.getByRole('button', { name: /纳入选中 0/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: /确认送风温度控制目标范围/ }));
+    await userEvent.click(screen.getByRole('button', { name: /纳入选中 1/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/sessions/thread_1/message', expect.any(Object)));
+    const messageCall = fetchMock.mock.calls.find((call) => call[0] === '/api/sessions/thread_1/message') as [string, RequestInit] | undefined;
+    expect(messageCall?.[1].body).toBe(
+      JSON.stringify({
+        message: '先不改，但把选中的候选需求记录下来',
+        selected_candidate_requirement_ids: ['cr_range']
+      })
+    );
+    expect(useWorkbenchStore.getState().state?.candidate_requirements?.[0]?.content).toBe('确认送风温度控制目标范围');
   });
 
   it('renders semantic target candidates and touched entities in user-readable form', () => {

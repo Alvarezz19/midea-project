@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
+import hashlib
 import inspect
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -502,11 +503,9 @@ def _advisory_chat_update(state: AgentState, user_message: str, intent_result: d
         intent_result=intent_result,
         provider=state.get("llm_provider"),
     )
+    result = _with_candidate_requirement_ids(result)
     history = _next_advice_history(state, result)
-    candidate_requirements = _merge_candidate_requirements(
-        state.get("candidate_requirements", []),
-        result.get("candidate_requirements") if intent_result.get("should_collect_candidate_requirement") else [],
-    )
+    candidate_requirements = state.get("candidate_requirements", [])
     pending_advice = _pending_advice_from_result(result)
     status = "advisory_answered"
     if result.get("status") == "out_of_scope":
@@ -569,8 +568,10 @@ def _rejected_advice_update(state: AgentState, intent_result: dict[str, Any]) ->
     pending["rejected_at"] = _utc_now_iso()
     pending["intent_result"] = intent_result
     candidates = state.get("candidate_requirements", [])
+    selected_ids = _last_user_selected_candidate_requirement_ids(state)
+    selected_candidates = _selected_candidate_requirements(pending.get("candidate_requirements"), selected_ids)
     if pending["status"] == "candidate" and isinstance(pending.get("candidate_requirements"), list):
-        candidates = _merge_candidate_requirements(candidates, pending["candidate_requirements"])
+        candidates = _merge_candidate_requirements(candidates, selected_candidates)
     return {
         "advisory_result": {
             "status": "answered",
@@ -581,7 +582,7 @@ def _rejected_advice_update(state: AgentState, intent_result: dict[str, Any]) ->
             "assumptions": [],
             "risks": [],
             "missing_info": [],
-            "candidate_requirements": pending.get("candidate_requirements", []) if pending["status"] == "candidate" else [],
+            "candidate_requirements": selected_candidates if pending["status"] == "candidate" else [],
             "adoptable_patch_intent": {"executable": False, "message": "", "reason": "用户暂不采纳。"},
             "next_action": "send_message",
         },
@@ -646,6 +647,36 @@ def _pending_advice_from_result(result: dict[str, Any]) -> dict[str, Any] | None
     }
 
 
+def _with_candidate_requirement_ids(result: dict[str, Any]) -> dict[str, Any]:
+    candidates = result.get("candidate_requirements")
+    if not isinstance(candidates, list):
+        return result
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates):
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        normalized.append(
+            {
+                **item,
+                "candidate_id": str(item.get("candidate_id") or _candidate_requirement_id(content, index)),
+                "content": content,
+                "status": str(item.get("status") or "candidate"),
+                "needs_confirmation": bool(item.get("needs_confirmation", True)),
+            }
+        )
+    updated = dict(result)
+    updated["candidate_requirements"] = normalized
+    return updated
+
+
+def _candidate_requirement_id(content: str, index: int) -> str:
+    digest = hashlib.sha1(f"{index}:{content}".encode("utf-8")).hexdigest()[:12]
+    return f"cr_{digest}"
+
+
 def _next_advice_history(state: AgentState, item: dict[str, Any]) -> list[dict[str, Any]]:
     history = list(state.get("advice_history") or [])
     history.append(_compact_advice_history_item(item))
@@ -676,6 +707,7 @@ def _merge_candidate_requirements(existing: Any, new_items: Any) -> list[dict[st
         seen.add(content)
         result.append(
             {
+                "candidate_id": str(item.get("candidate_id") or _candidate_requirement_id(content, len(result))),
                 "content": content,
                 "status": str(item.get("status") or "candidate"),
                 "needs_confirmation": bool(item.get("needs_confirmation", True)),
@@ -683,6 +715,20 @@ def _merge_candidate_requirements(existing: Any, new_items: Any) -> list[dict[st
             }
         )
     return result[-20:]
+
+
+def _selected_candidate_requirements(value: Any, selected_ids: list[str]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    candidates = [item for item in value if isinstance(item, dict)]
+    if not selected_ids:
+        return candidates
+    selected_set = set(selected_ids)
+    return [
+        item
+        for item in candidates
+        if str(item.get("candidate_id") or "") in selected_set or str(item.get("content") or "") in selected_set
+    ]
 
 
 def plan_patch_node(state: AgentState) -> dict[str, Any]:
@@ -962,6 +1008,17 @@ def _last_user_selected_candidate_id(state: AgentState) -> str | None:
         candidate_id = message.get("selected_candidate_id")
         return str(candidate_id) if candidate_id else None
     return None
+
+
+def _last_user_selected_candidate_requirement_ids(state: AgentState) -> list[str]:
+    for message in reversed(state.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        selected = message.get("selected_candidate_requirement_ids")
+        if isinstance(selected, list):
+            return [str(item) for item in selected if str(item)]
+        return []
+    return []
 
 
 def _candidate_id_from_message(message: str) -> str | None:

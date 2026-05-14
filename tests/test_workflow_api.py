@@ -117,6 +117,9 @@ def test_workflow_routes_advisory_question_without_patch(tmp_path: Path) -> None
     assert result["user_intent_route"]["intent_result"]["intent"] == "advisory_intent"
     assert result["advisory_result"]["answer"]
     assert result["advisory_result"]["basis"]
+    assert result["advisory_result"]["candidate_requirements"]
+    assert all(item.get("candidate_id") for item in result["advisory_result"]["candidate_requirements"])
+    assert result["candidate_requirements"] == []
     assert result["pending_advice"]["adoptable_patch_intent"]["executable"] is False
     assert result["current_project_version_id"] == original_version_id
     assert result["current_project_path"] == original_path
@@ -199,7 +202,53 @@ def test_workflow_rejects_advice_without_version_change(tmp_path: Path) -> None:
     assert result["status"] == "advisory_rejected"
     assert result["pending_advice"] is None
     assert result["pending_patch"] is None
+    assert result["candidate_requirements"] == []
     assert result["current_project_version_id"] == original_version_id
+
+    result["messages"] = list(result["messages"]) + [{"role": "user", "content": "CO2 设定值多少比较合适？"}]
+    follow_up = invoke_workflow(result)
+
+    assert follow_up["status"] == "advisory_answered"
+    assert follow_up["candidate_requirements"] == []
+    assert all("送风温度" not in item["content"] for item in follow_up["advisory_result"]["candidate_requirements"])
+
+
+def test_workflow_records_only_selected_candidate_requirements(tmp_path: Path) -> None:
+    state = initial_state("我要做 AHU 程序，需要送风温度控制和 Modbus 通讯", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    created["pending_advice"] = {
+        "status": "pending_review",
+        "topic": "送风温度设定值",
+        "answer": "这是设计建议问题，当前不会修改工程。",
+        "candidate_requirements": [
+            {"candidate_id": "cr_keep", "content": "确认送风温度控制目标范围", "status": "candidate", "needs_confirmation": True},
+            {"candidate_id": "cr_skip", "content": "把送风温度设定值按 24°C 固定", "status": "candidate", "needs_confirmation": True},
+        ],
+        "adoptable_patch_intent": {"executable": False, "message": "", "reason": "需要先确认工况。"},
+    }
+    created["messages"] = list(created["messages"]) + [
+        {
+            "role": "user",
+            "content": "先不改，但把选中的候选需求记录下来",
+            "selected_candidate_requirement_ids": ["cr_keep"],
+        }
+    ]
+
+    result = invoke_workflow(created)
+
+    assert result["status"] == "advisory_rejected"
+    assert result["candidate_requirements"] == [
+        {
+            "candidate_id": "cr_keep",
+            "content": "确认送风温度控制目标范围",
+            "status": "candidate",
+            "needs_confirmation": True,
+            "created_at": result["candidate_requirements"][0]["created_at"],
+        }
+    ]
+    assert result["advisory_result"]["candidate_requirements"][0]["candidate_id"] == "cr_keep"
+    assert all(item["content"] != "把送风温度设定值按 24°C 固定" for item in result["candidate_requirements"])
 
 
 def test_workflow_out_of_scope_question_does_not_plan_patch(tmp_path: Path) -> None:
@@ -396,6 +445,22 @@ def test_workflow_renames_node_by_semantic_description(tmp_path: Path) -> None:
     assert result["last_affected_node_ids"] == ["3a4c97e"]
     nodes = load_project(result["current_project_path"])
     assert next(item for item in nodes if item.get("id") == "3a4c97e")["name"] == "演示节点"
+
+
+def test_workflow_updates_tab_label_without_node_candidate_clarification(tmp_path: Path) -> None:
+    state = initial_state("我要做一个风冷热泵机房群控程序，包含水泵和旁通阀控制", auto_confirm_template=True)
+    state["versions_dir"] = str(tmp_path)
+    created = invoke_workflow(state)
+    assert created["status"] == "project_version_ready"
+
+    created["messages"] = list(created["messages"]) + [{"role": "user", "content": "把水泵控制页面标签改成冷冻水泵控制，节点名字不用改。"}]
+    result = invoke_workflow(created)
+
+    assert result["status"] == "patch_applied"
+    assert result["planner_result"]["pending_patch"] == {"op": "update_param", "node_selector": {"id": "73b96a8"}, "params": {"label": "冷冻水泵控制"}}
+    assert result["planner_result"]["target_resolution"]["selected"]["kind"] == "tab"
+    nodes = load_project(result["current_project_path"])
+    assert next(item for item in nodes if item.get("id") == "73b96a8")["label"] == "冷冻水泵控制"
 
 
 def test_workflow_updates_recent_node_by_reference_after_confirmation(tmp_path: Path) -> None:
