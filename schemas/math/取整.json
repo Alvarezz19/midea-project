@@ -37,16 +37,19 @@
     "注意事项: 输入信号必须是数值类型;选择合适的取整模式对结果影响很大;注意负数的取整方向差异。"
   ],
   "parameters_schema": {
-    "name": {
+    "user_defined_name": {
       "type": "string",
       "description": "模块显示名称,由用户根据实际应用场景定义。",
-      "maxLength": 50,
-      "default": "user_defined_name"
+      "default": "取整运算"
     },
     "mode": {
       "type": "string",
       "description": "取整模式。round45为四舍五入,roundUp为向上取整,roundDown为向下取整。",
-      "enum": ["round45", "roundUp", "roundDown"],
+      "enum": [
+        "round45",
+        "roundUp",
+        "roundDown"
+      ],
       "default": "round45"
     }
   },
@@ -80,8 +83,8 @@
     "mode": "{{mode}}",
     "outOfService": 0,
     "outOfServiceValue": 0,
-            "x": "{{__POS_X__}}",
-            "y": "{{__POSY__}}",
-    "wires": "{{__WIRES__}}"
+    "x": "{{__POS_X__}}",
+    "y": "{{__POS_Y__}}",
+    "wires": "{{wiresArray}}"
   }
 }

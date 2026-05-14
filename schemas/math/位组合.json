@@ -38,11 +38,10 @@
     "注意事项: 所有输入信号必须是布尔值(0或1);注意输入顺序,输入1是最低位;输入数量决定了组合后的数值范围(如8位为0-255,16位为0-65535);理解二进制位权重的概念。"
   ],
   "parameters_schema": {
-    "name": {
+    "user_defined_name": {
       "type": "string",
       "description": "模块显示名称,由用户根据实际应用场景定义。",
-      "maxLength": 50,
-      "default": "user_defined_name"
+      "default": "位组合运算"
     },
     "inputs": {
       "type": "integer",
@@ -81,8 +80,8 @@
     "outputs": 1,
     "outOfService": 0,
     "outOfServiceValue": 0,
-            "x": "{{__POS_X__}}",
-            "y": "{{__POSY__}}",
-    "wires": "{{__WIRES__}}"
+    "x": "{{__POS_X__}}",
+    "y": "{{__POS_Y__}}",
+    "wires": "{{wiresArray}}"
   }
 }

@@ -1,97 +1,287 @@
 {
-    "id": "",
-    "module_type": "sort",
-    "category": "应用/冒泡排序",
-    "name": "冒泡排序 (Bubble Sort)",
-    "description": "冒泡排序模块用于对多个输入数值进行排序。排序方法包括升序、降序、升序-序号、降序-序号。对输入的数值进行排序后，输出排序后的数值或排序后数值对应的输入序号。",
-    "keywords": [
-        "冒泡排序",
-        "排序",
-        "最大值最小值",
-        "索引"
-    ],
-    "usage_guides": [
-        "设置'输入数量'(inputs)，模块将动态生成对应数量的输入和输出引脚。",
-        "选择'排序方式'(lType)，可输出排序后的数值或排序后数值对应的输入序号。",
-        "输入数量最小为2，最大支持到16。"
-    ],
-    "parameters_schema": {
-        "lType": {
-            "type": "string",
-            "description": "排序模式（包括升序、降序、升序-序号、降序-序号）。",
-            "enum": ["ASC", "DES", "ASCIDX", "DESIDX"],
-            "default": "ASC"
-        },
-        "inputs": {
-            "type": "integer",
-            "description": "待排序的输入信号数量。",
-            "minimum": 2,
-            "maximum": 16,
-            "default": 2
-        }
+  "id": "",
+  "module_type": "sort",
+  "category": "应用/冒泡排序",
+  "name": "冒泡排序 (Bubble Sort)",
+  "description": "冒泡排序模块用于对多个输入数值进行排序。排序方法包括升序、降序、升序-序号、降序-序号。对输入的数值进行排序后，输出排序后的数值或排序后数值对应的输入序号。",
+  "keywords": [
+    "冒泡排序",
+    "排序",
+    "最大值最小值",
+    "索引"
+  ],
+  "usage_guides": [
+    "设置'输入数量'(inputs)，模块将动态生成对应数量的输入和输出引脚。",
+    "选择'排序方式'(lType)，可输出排序后的数值或排序后数值对应的输入序号。",
+    "输入数量最小为2，最大支持到16。"
+  ],
+  "parameters_schema": {
+    "user_defined_name": {
+      "type": "string",
+      "description": "模块显示名称，由用户根据实际应用场景定义。",
+      "default": "冒泡排序"
     },
-    "ports_definition": {
-        "inputs": [
-        {
-            "index": 0,
-            "label": "输入1",
-            "type": "number",
-            "description": "排序对象1。",
-            "condition": "always"
-        },
-        {
-            "index": 1,
-            "label": "输入2",
-            "type": "number",
-            "description": "排序对象2。",
-            "condition": "always"
-        },
-        {
-            "index": "{n-1}",
-            "label": "输入n",
-            "type": "number",
-            "description": "排序对象n，n不大于[输入数量]的值。2<=n<=16。",
-            "condition": "inputs >= {n}"
-        }
-        ],
-        "outputs": [
-        {
-            "index": 0,
-            "label": "输出1",
-            "type": "number",
-            "description": "排序后的输出1。",
-            "condition": "always"
-        },
-        {
-            "index": 1,
-            "label": "输出2",
-            "type": "number",
-            "description": "排序后的输出2。",
-            "condition": "always"
-        },
-        {
-            "index": "{n-1}",
-            "label": "输出n",
-            "type": "number",
-            "description": "排序后的输出n，n不大于[输入数量]的值。2<=n<=16。",
-            "condition": "inputs >= {n}"
-        }
-        ]
+    "lType": {
+      "type": "string",
+      "description": "排序模式（包括升序、降序、升序-序号、降序-序号）。",
+      "enum": [
+        "ASC",
+        "DES",
+        "ASCIDX",
+        "DESIDX"
+      ],
+      "default": "ASC"
     },
-    "template_json": [
-        {
-            "id": "{{__GEN_ID__}}",
-            "z": "{{__FLOW_ID__}}",
-            "type": "sort",
-            "name": "冒泡排序",
-            "inputs": "{{inputs}}",
-            "outputs": "{{inputs}}",
-            "lType": "{{lType}}",
-            "outOfService": 0,
-            "outOfServiceValue": 0,
-            "x": "{{__POS_X__}}",
-            "y": "{{__POS_Y__}}",
-            "wires": "{{wiresArray}}"
-        }
+    "inputs": {
+      "type": "integer",
+      "description": "待排序的输入信号数量。",
+      "minimum": 2,
+      "maximum": 16,
+      "default": 2
+    }
+  },
+  "ports_definition": {
+    "inputs": [
+      {
+        "index": 0,
+        "label": "输入1",
+        "type": "number",
+        "description": "排序对象1。",
+        "condition": "always"
+      },
+      {
+        "index": 1,
+        "label": "输入2",
+        "type": "number",
+        "description": "排序对象2。",
+        "condition": "always"
+      },
+      {
+        "index": 2,
+        "label": "输入3",
+        "type": "number",
+        "description": "排序对象3。",
+        "condition": "inputs >= 3"
+      },
+      {
+        "index": 3,
+        "label": "输入4",
+        "type": "number",
+        "description": "排序对象4。",
+        "condition": "inputs >= 4"
+      },
+      {
+        "index": 4,
+        "label": "输入5",
+        "type": "number",
+        "description": "排序对象5。",
+        "condition": "inputs >= 5"
+      },
+      {
+        "index": 5,
+        "label": "输入6",
+        "type": "number",
+        "description": "排序对象6。",
+        "condition": "inputs >= 6"
+      },
+      {
+        "index": 6,
+        "label": "输入7",
+        "type": "number",
+        "description": "排序对象7。",
+        "condition": "inputs >= 7"
+      },
+      {
+        "index": 7,
+        "label": "输入8",
+        "type": "number",
+        "description": "排序对象8。",
+        "condition": "inputs >= 8"
+      },
+      {
+        "index": 8,
+        "label": "输入9",
+        "type": "number",
+        "description": "排序对象9。",
+        "condition": "inputs >= 9"
+      },
+      {
+        "index": 9,
+        "label": "输入10",
+        "type": "number",
+        "description": "排序对象10。",
+        "condition": "inputs >= 10"
+      },
+      {
+        "index": 10,
+        "label": "输入11",
+        "type": "number",
+        "description": "排序对象11。",
+        "condition": "inputs >= 11"
+      },
+      {
+        "index": 11,
+        "label": "输入12",
+        "type": "number",
+        "description": "排序对象12。",
+        "condition": "inputs >= 12"
+      },
+      {
+        "index": 12,
+        "label": "输入13",
+        "type": "number",
+        "description": "排序对象13。",
+        "condition": "inputs >= 13"
+      },
+      {
+        "index": 13,
+        "label": "输入14",
+        "type": "number",
+        "description": "排序对象14。",
+        "condition": "inputs >= 14"
+      },
+      {
+        "index": 14,
+        "label": "输入15",
+        "type": "number",
+        "description": "排序对象15。",
+        "condition": "inputs >= 15"
+      },
+      {
+        "index": 15,
+        "label": "输入16",
+        "type": "number",
+        "description": "排序对象16。",
+        "condition": "inputs >= 16"
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "label": "输出1",
+        "type": "number",
+        "description": "排序后的输出1。",
+        "condition": "always"
+      },
+      {
+        "index": 1,
+        "label": "输出2",
+        "type": "number",
+        "description": "排序后的输出2。",
+        "condition": "always"
+      },
+      {
+        "index": 2,
+        "label": "输出3",
+        "type": "number",
+        "description": "排序后的输出3。",
+        "condition": "inputs >= 3"
+      },
+      {
+        "index": 3,
+        "label": "输出4",
+        "type": "number",
+        "description": "排序后的输出4。",
+        "condition": "inputs >= 4"
+      },
+      {
+        "index": 4,
+        "label": "输出5",
+        "type": "number",
+        "description": "排序后的输出5。",
+        "condition": "inputs >= 5"
+      },
+      {
+        "index": 5,
+        "label": "输出6",
+        "type": "number",
+        "description": "排序后的输出6。",
+        "condition": "inputs >= 6"
+      },
+      {
+        "index": 6,
+        "label": "输出7",
+        "type": "number",
+        "description": "排序后的输出7。",
+        "condition": "inputs >= 7"
+      },
+      {
+        "index": 7,
+        "label": "输出8",
+        "type": "number",
+        "description": "排序后的输出8。",
+        "condition": "inputs >= 8"
+      },
+      {
+        "index": 8,
+        "label": "输出9",
+        "type": "number",
+        "description": "排序后的输出9。",
+        "condition": "inputs >= 9"
+      },
+      {
+        "index": 9,
+        "label": "输出10",
+        "type": "number",
+        "description": "排序后的输出10。",
+        "condition": "inputs >= 10"
+      },
+      {
+        "index": 10,
+        "label": "输出11",
+        "type": "number",
+        "description": "排序后的输出11。",
+        "condition": "inputs >= 11"
+      },
+      {
+        "index": 11,
+        "label": "输出12",
+        "type": "number",
+        "description": "排序后的输出12。",
+        "condition": "inputs >= 12"
+      },
+      {
+        "index": 12,
+        "label": "输出13",
+        "type": "number",
+        "description": "排序后的输出13。",
+        "condition": "inputs >= 13"
+      },
+      {
+        "index": 13,
+        "label": "输出14",
+        "type": "number",
+        "description": "排序后的输出14。",
+        "condition": "inputs >= 14"
+      },
+      {
+        "index": 14,
+        "label": "输出15",
+        "type": "number",
+        "description": "排序后的输出15。",
+        "condition": "inputs >= 15"
+      },
+      {
+        "index": 15,
+        "label": "输出16",
+        "type": "number",
+        "description": "排序后的输出16。",
+        "condition": "inputs >= 16"
+      }
     ]
+  },
+  "template_json": {
+    "id": "{{__GEN_ID__}}",
+    "z": "{{__FLOW_ID__}}",
+    "type": "sort",
+    "name": "{{user_defined_name}}",
+    "inputs": "{{inputs}}",
+    "outputs": "{{inputs}}",
+    "lType": "{{lType}}",
+    "outOfService": 0,
+    "outOfServiceValue": 0,
+    "x": "{{__POS_X__}}",
+    "y": "{{__POS_Y__}}",
+    "wires": "{{wiresArray}}"
+  }
 }

@@ -41,16 +41,20 @@
     "注意事项: 所有输入信号必须是整型数;位与、位或、位异或需要至少2个输入,最多16个;位非只有1个输入;注意位运算是对二进制位进行操作,不是普通的逻辑运算;理解补码表示对位非运算结果的影响。"
   ],
   "parameters_schema": {
-    "name": {
+    "user_defined_name": {
       "type": "string",
       "description": "模块显示名称,由用户根据实际应用场景定义。",
-      "maxLength": 50,
-      "default": "user_defined_name"
+      "default": "位运算"
     },
     "lType": {
       "type": "string",
       "description": "位运算模式。AND为位与,OR为位或,XOR为位异或,NOT为位非。",
-      "enum": ["AND", "OR", "XOR", "NOT"],
+      "enum": [
+        "AND",
+        "OR",
+        "XOR",
+        "NOT"
+      ],
       "default": "AND"
     },
     "inputs": {
@@ -91,8 +95,8 @@
     "lType": "{{lType}}",
     "outOfService": 0,
     "outOfServiceValue": 0,
-            "x": "{{__POS_X__}}",
-            "y": "{{__POSY__}}",
-    "wires": "{{__WIRES__}}"
+    "x": "{{__POS_X__}}",
+    "y": "{{__POS_Y__}}",
+    "wires": "{{wiresArray}}"
   }
 }
